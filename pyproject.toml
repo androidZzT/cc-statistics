@@ -23,7 +23,11 @@ Homepage = "https://github.com/androidZzT/cc-statistics"
 Repository = "https://github.com/androidZzT/cc-statistics"
 
 [tool.setuptools.packages.find]
-include = ["cc_stats*"]
+include = ["cc_stats*", "cc_stats_app*"]
+
+[tool.setuptools.package-data]
+cc_stats_app = ["web/**/*"]
 
 [project.scripts]
 cc-stats = "cc_stats.cli:main"
+cc-stats-app = "cc_stats_app.__main__:main"

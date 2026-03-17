@@ -35,7 +35,7 @@ pipx install cc-statistics
 pip install cc-statistics
 ```
 
-无第三方依赖，仅使用 Python 标准库。
+CLI 工具（`cc-stats`）无第三方依赖，仅使用 Python 标准库。
 
 ### 从源码安装（开发用）
 
@@ -48,6 +48,8 @@ pip install -e .
 ```
 
 ## 使用
+
+### CLI 命令行
 
 ```bash
 # 列出所有项目
@@ -75,6 +77,28 @@ cc-stats --all --since 1h           # 最近 1 小时
 cc-stats --all --since 2026-03-01 --until 2026-03-15  # 指定日期区间
 cc-stats sailor --since 2026-03-13T10:00               # 精确到分钟
 ```
+
+### macOS 状态栏面板
+
+在 macOS 状态栏常驻 Claude logo 图标 + 当日 Token 用量，点击图标打开可视化统计面板。
+
+> 需要 macOS 环境 + Xcode Command Line Tools（用于编译 Swift 菜单栏组件，首次启动自动完成）。
+
+```bash
+# 从源码安装后启动
+pip install -e .
+cc-stats-app
+```
+
+**功能说明：**
+
+- 状态栏显示 Claude logo + 当日 Token 用量（每 30 秒自动刷新）
+- 点击图标弹出暗色主题统计面板（960×680），包含：
+  - 项目选择器 + 时间范围切换（Today / 7d / 30d / All）
+  - 5 项指标卡片：指令数、工具调用、活跃时长、代码变更、Token
+  - 4 张图表：工具使用分布、时间分配、代码变更按语言、Token 分布
+  - 每日活跃趋势折线图
+- 点击面板外自动关闭，再次点击图标重新打开
 
 ## 示例输出
 
