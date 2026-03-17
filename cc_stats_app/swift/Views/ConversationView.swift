@@ -35,7 +35,7 @@ struct ConversationView: View {
     private var sessionList: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("会话列表")
+                Text(L10n.sessionList)
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(Theme.textPrimary)
                 Spacer()
@@ -69,7 +69,7 @@ struct ConversationView: View {
     private func sessionRow(_ session: Session) -> some View {
         let isSelected = selectedSession?.id == session.id
         let userMessages = session.messages.filter { $0.role == "human" || $0.role == "user" }
-        let preview = userMessages.first?.content.prefix(80) ?? "暂无消息"
+        let preview = userMessages.first.map { String($0.content.prefix(80)) } ?? L10n.noMessages
 
         return Button {
             selectedSession = session
@@ -119,7 +119,7 @@ struct ConversationView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(Theme.textPrimary)
                     }
-                    Text("\(session.messages.count) 条消息")
+                    Text("\(session.messages.count) \(L10n.messagesCount)")
                         .font(.system(size: 10))
                         .foregroundColor(Theme.textTertiary)
                 }
@@ -158,7 +158,7 @@ struct ConversationView: View {
         let isUser = message.role == "human" || message.role == "user"
         let bubbleColor = isUser ? Theme.cyan.opacity(0.1) : Theme.purple.opacity(0.1)
         let borderColor = isUser ? Theme.cyan.opacity(0.2) : Theme.purple.opacity(0.2)
-        let roleLabel = isUser ? "你" : "助手"
+        let roleLabel = isUser ? L10n.you : L10n.assistant
         let roleColor = isUser ? Theme.cyan : Theme.purple
 
         return VStack(alignment: .leading, spacing: 4) {
@@ -187,7 +187,7 @@ struct ConversationView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "hammer.fill")
                         .font(.system(size: 8))
-                    Text("\(message.toolCalls.count) 次工具调用")
+                    Text("\(message.toolCalls.count) \(L10n.toolCallsCount)")
                         .font(.system(size: 9, weight: .medium))
                 }
                 .foregroundColor(Theme.textTertiary)
@@ -212,7 +212,7 @@ struct ConversationView: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: 32, weight: .light))
                 .foregroundColor(Theme.textTertiary)
-            Text("请选择一个会话")
+            Text(L10n.selectSession)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(Theme.textSecondary)
         }

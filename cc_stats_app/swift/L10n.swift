@@ -57,4 +57,13 @@ enum L10n {
     static var showDashboard: String { isChinese ? "显示仪表盘" : "Show Dashboard" }
     static var showChat: String { isChinese ? "显示对话" : "Show Chat" }
     static var quit: String { isChinese ? "退出" : "Quit" }
+
+    // MARK: - Conversation
+    static var sessionList: String { isChinese ? "会话列表" : "Sessions" }
+    static var noMessages: String { isChinese ? "暂无消息" : "No messages" }
+    static var messagesCount: String { isChinese ? "条消息" : "messages" }
+    static var toolCallsCount: String { isChinese ? "次工具调用" : "tool calls" }
+    static var you: String { isChinese ? "你" : "You" }
+    static var assistant: String { isChinese ? "助手" : "Assistant" }
+    static var selectSession: String { isChinese ? "请选择一个会话" : "Select a session" }
 }
