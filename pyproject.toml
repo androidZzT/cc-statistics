@@ -22,5 +22,8 @@ classifiers = [
 Homepage = "https://github.com/androidZzT/cc-statistics"
 Repository = "https://github.com/androidZzT/cc-statistics"
 
+[tool.setuptools.packages.find]
+include = ["cc_stats*"]
+
 [project.scripts]
 cc-stats = "cc_stats.cli:main"

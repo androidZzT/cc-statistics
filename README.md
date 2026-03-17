@@ -28,12 +28,24 @@ Claude Code 会话统计工具 — 从本地 `~/.claude/` 数据中提取 AI Cod
 ## 安装
 
 ```bash
+# 推荐：pipx 全局安装（隔离环境，任意终端可用）
+pipx install cc-statistics
+
+# 或者 pip 安装
+pip install cc-statistics
+```
+
+无第三方依赖，仅使用 Python 标准库。
+
+### 从源码安装（开发用）
+
+```bash
+git clone https://github.com/androidZzT/cc-statistics.git
+cd cc-statistics
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
-
-无第三方依赖，仅使用 Python 标准库。
 
 ## 使用
 
