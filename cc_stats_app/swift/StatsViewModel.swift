@@ -64,6 +64,7 @@ final class StatsViewModel: ObservableObject {
     }
 
     private var refreshTimer: Timer?
+    private var refreshTask: Task<Void, Never>?
 
     init() {
         startAutoRefresh()
@@ -79,7 +80,8 @@ final class StatsViewModel: ObservableObject {
     // MARK: - Public Methods
 
     func refresh() {
-        Task {
+        refreshTask?.cancel()
+        refreshTask = Task {
             await performRefresh()
         }
     }
@@ -95,7 +97,6 @@ final class StatsViewModel: ObservableObject {
     }
 
     func performRefresh() async {
-        guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
 
@@ -197,16 +198,12 @@ final class StatsViewModel: ObservableObject {
 
     func selectProject(_ project: ProjectInfo?) {
         selectedProject = project
-        Task {
-            await performRefresh()
-        }
+        refresh()
     }
 
     func setTimeFilter(_ filter: TimeFilter) {
         timeFilter = filter
-        Task {
-            await performRefresh()
-        }
+        refresh()
     }
 
     func toggleConversationPanel() {

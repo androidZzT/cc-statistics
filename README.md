@@ -2,28 +2,17 @@
 
 Claude Code 会话统计工具 — 从本地 `~/.claude/` 数据中提取 AI Coding 工程指标。
 
-## 统计指标
+<img src="docs/screenshot.png" width="420" alt="CC Stats Dashboard">
 
-| # | 指标 | 说明 |
-|---|------|------|
-| ① | 用户指令数 | 对话轮次（不含工具返回和系统消息） |
-| ② | AI 工具调用 | 总次数 + 按工具拆分（附带柱状图和工具说明） |
-| ③ | 开发时长 | 总时长 / AI 处理时长 / 用户活跃时长 / 活跃率 / 平均轮次耗时 |
-| ④ | 代码变更 | Git 已提交变更 + AI 工具变更（Edit/Write），按语言拆分 |
-| ⑤ | Token 消耗 | input / output / cache，按模型拆分 |
+## 核心亮点
 
-### 时长计算方式
-
-将会话切分为**对话轮次**（用户发消息 → AI 处理 → AI 回复），分别统计：
-
-- **AI 处理时长**：每轮从用户消息到 AI 最后一条响应的耗时
-- **用户活跃时长**：上轮 AI 回复到下轮用户消息的间隔（超过 5 分钟视为离开，不计入）
-- **活跃时长** = AI 处理 + 用户活跃
-
-### 代码变更来源
-
-- **Git 已提交**：会话时间段内 `git log --numstat` 的所有 commit（包含用户和 AI 的提交）
-- **AI 工具变更**：从 JSONL 中 `Edit`/`Write` 工具调用的参数提取（仅 AI 侧）
+- **费用估算** — 根据 Opus / Sonnet / Haiku 定价自动计算每日、每项目的预估花费，状态栏实时展示
+- **会话搜索 & 恢复** — 搜索历史会话内容，点击即可复制 `claude --resume` 命令，一键恢复之前的对话
+- **多维统计** — 指令数、工具调用 Top 10、开发时长（AI vs 用户）、代码变更（按语言拆分）、Token 消耗（按模型拆分）
+- **每日趋势** — 14 天费用趋势图，直观掌握 AI 使用规律
+- **纯本地** — 所有数据读取自本地文件，不联网，不上传
+- **双模式** — CLI 命令行 + macOS 原生 SwiftUI 状态栏面板
+- **双语** — 自动跟随系统语言，支持中文 / English 手动切换
 
 ## 安装
 
@@ -52,128 +41,46 @@ pip install -e .
 ### CLI 命令行
 
 ```bash
-# 列出所有项目
-cc-stats --list
-
-# 分析当前目录的所有会话
-cc-stats
-
-# 按关键词匹配项目
-cc-stats compose-album
-
-# 分析指定项目目录
-cc-stats /path/to/project
-
-# 分析指定 JSONL 文件
-cc-stats ~/.claude/projects/-Users-foo-bar/SESSION_ID.jsonl
-
-# 只看最近 N 个会话
-cc-stats compose-album --last 3
-
-# 时间范围过滤
-cc-stats --all --since 3d           # 最近 3 天
-cc-stats --all --since 2w           # 最近 2 周
-cc-stats --all --since 1h           # 最近 1 小时
-cc-stats --all --since 2026-03-01 --until 2026-03-15  # 指定日期区间
-cc-stats sailor --since 2026-03-13T10:00               # 精确到分钟
+cc-stats                     # 分析当前目录的所有会话
+cc-stats --list              # 列出所有项目
+cc-stats compose-album       # 按关键词匹配项目
+cc-stats --all --since 3d    # 最近 3 天所有项目
+cc-stats --all --since 2w    # 最近 2 周
+cc-stats sailor --last 3     # 某项目最近 3 个会话
 ```
 
 ### macOS 状态栏面板
 
-在 macOS 状态栏常驻 Claude logo 图标 + 当日 Token 用量，点击图标打开可视化统计面板。
-
-<img src="docs/screenshot.png" width="420" alt="CC Stats Dashboard">
-
-> 前置条件：macOS + Xcode Command Line Tools（`xcode-select --install`）。Swift 菜单栏组件在首次启动时自动编译。
-
 ```bash
-# pip / pipx 安装
-pip install cc-statistics
-cc-stats-app
-
-# 或从源码安装
-git clone https://github.com/androidZzT/cc-statistics.git
-cd cc-statistics && pip install -e .
 cc-stats-app
 ```
 
-**功能说明：**
+> 需要 macOS + Xcode Command Line Tools（`xcode-select --install`），Swift 组件首次启动自动编译。
 
-- 状态栏常驻 Claude logo 图标 + 当日 Token 用量（自动刷新）
-- 点击图标从状态栏下方弹出暗色主题原生 SwiftUI 面板，包含：
-  - 项目选择器 + 时间范围切换（今天 / 本周 / 本月 / 全部）
-  - 4 项指标卡片：会话数、指令数、活跃时长、Token 消耗
-  - 开发时间分布：AI 占比环形图 + 时长明细
-  - 代码变更：Git commit 统计 + 按语言拆分（新增/删除行数）
-  - Token 用量：按模型堆叠条形图 + 分类汇总
-  - 工具调用排行：Top 10 柱状图
-- 点击面板外自动收起（带淡出动画），再次点击图标重新弹出
-- 支持全局快捷键 `Cmd+Shift+C` 切换面板
-- 右键状态栏图标可显示菜单（仪表盘 / 对话 / 退出）
+**状态栏：**
+- Claude logo + 当日 Token 用量 + 预估费用
+- 右键菜单切换显示模式（Token+费用 / Token / 费用 / 会话数）
+- 支持开机自启
 
-## 示例输出
+**统计面板：**
+- 项目选择器 + 时间范围切换（今天 / 本周 / 本月 / 全部）
+- 4 项指标卡片：会话数、指令数、活跃时长、预估费用
+- 每日趋势：14 天费用条形图
+- 开发时间：AI 占比环形图 + 时长明细
+- 代码变更：Git commit 统计 + 按语言拆分
+- Token 用量：按模型堆叠条形图 + 每模型费用
+- 工具调用：Top 10 排行
 
-```
-╔══════════════════════════════════════════════════════════╗
-║           Claude Code 会话统计报告                      ║
-╚══════════════════════════════════════════════════════════╝
+**会话管理：**
+- 搜索历史会话内容
+- 点击会话自动复制 `claude --resume` 命令
+- 支持查看完整对话记录
 
-  会话数: 3
-  时间范围: 2026-03-13 07:24 ~ 2026-03-14 14:16
-
-  ① 用户指令数
-────────────────────────────────────────────────────────────
-  对话轮次: 58
-
-  ② AI 工具调用
-────────────────────────────────────────────────────────────
-  总调用次数: 336
-
-  Bash        ███████████████    90  执行 Shell 命令
-  Read        ██████████░░░░░    61  读取文件内容
-  Edit        █████████░░░░░░    56  编辑文件（精确替换）
-  TaskUpdate  ███████░░░░░░░░    44  更新任务状态
-  Agent       ████░░░░░░░░░░░    24  启动子代理执行子任务
-  Grep        ████░░░░░░░░░░░    24  按内容搜索文件
-  TaskCreate  ██░░░░░░░░░░░░░    17  创建任务
-
-  ③ 开发时长
-────────────────────────────────────────────────────────────
-  总时长:       30h 51m 52s
-  活跃时长:     2h 13m 5s
-    AI 处理:    1h 42m 42s
-    用户活跃:   30m 22s
-  活跃率:       7%
-  AI 占比:      77%
-  平均轮次耗时: 2m 13s/轮 (46 轮)
-
-  ④ 代码变更
-────────────────────────────────────────────────────────────
-  [Git 已提交]  60 个 commit
-  总新增: +30342  总删除: -18228  净增: +12114
-
-  Kotlin    +11472  -1894   net +9578
-  Markdown  +490    -50     net +440
-
-  [AI 工具变更]  来自 Edit/Write 调用
-  总新增: +1538  总删除: -315  净增: +1223
-
-  Kotlin    +810    -196    net +614
-  Markdown  +591    -43     net +548
-  Swift     +137    -76     net +61
-
-  ⑤ Token 消耗
-────────────────────────────────────────────────────────────
-  Input tokens:                 924
-  Output tokens:              98.0K
-  Cache read tokens:          53.6M
-  Cache creation tokens:     814.3K
-  ────────────────────────────────────────
-  合计:                       54.6M
-
-  按模型拆分:
-    claude-opus-4-6: input=924 output=98.0K cache_read=53.6M total=54.6M
-```
+**更多：**
+- 全局快捷键 `Cmd+Shift+C`
+- 导出统计数据（JSON / CSV）
+- 设置页：开机自启、语言切换
+- 点击面板外自动收起（带动画）
 
 ## 数据来源
 
