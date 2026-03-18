@@ -8,21 +8,31 @@ struct DashboardView: View {
     @ObservedObject var viewModel: StatsViewModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Top toolbar
-            toolbarSection
-
-            // Tab switcher (hidden, code retained)
-            // tabSwitcher
-
-            if viewModel.activeTab == .claudeCode {
-                claudeCodeContent
+        Group {
+            if viewModel.showSettings {
+                SettingsView(
+                    isPresented: $viewModel.showSettings,
+                    onLanguageChanged: { viewModel.languageVersion += 1 }
+                )
             } else {
-                cursorContent
-            }
+                VStack(spacing: 0) {
+                    // Top toolbar
+                    toolbarSection
 
-            // Bottom bar
-            footerSection
+                    // Tab switcher (hidden, code retained)
+                    // tabSwitcher
+
+                    if viewModel.activeTab == .claudeCode {
+                        claudeCodeContent
+                    } else {
+                        cursorContent
+                    }
+
+                    // Bottom bar
+                    footerSection
+                }
+                .id(viewModel.languageVersion)
+            }
         }
         .frame(width: 480)
         .frame(maxHeight: 640)
@@ -102,80 +112,101 @@ struct DashboardView: View {
     // MARK: - Toolbar
 
     private var toolbarSection: some View {
-        HStack(spacing: 10) {
-            // Project selector
-            Menu {
-                Button {
-                    viewModel.selectProject(nil)
-                } label: {
-                    HStack {
-                        Text(L10n.allProjects)
-                        if viewModel.selectedProject == nil {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-                Divider()
-                ForEach(viewModel.projects) { project in
+        VStack(spacing: 0) {
+            // Row 1: Project selector + export + settings
+            HStack(spacing: 6) {
+                // Project selector
+                Menu {
                     Button {
-                        viewModel.selectProject(project)
+                        viewModel.selectProject(nil)
                     } label: {
                         HStack {
-                            Text(project.name)
-                            if viewModel.selectedProject == project {
+                            Text(L10n.allProjects)
+                            if viewModel.selectedProject == nil {
                                 Image(systemName: "checkmark")
                             }
                         }
                     }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Theme.cyan)
-                    Text(viewModel.selectedProject?.name ?? L10n.allProjects)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(Theme.textTertiary)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Theme.cardBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(Theme.border, lineWidth: 1)
-                        )
-                )
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-
-            Spacer()
-
-            // Export button
-            if let stats = viewModel.stats {
-                Menu {
-                    Button(L10n.exportJSON) { exportJSON(stats: stats) }
-                    Button(L10n.exportCSV) { exportCSV(stats: stats) }
+                    Divider()
+                    ForEach(viewModel.projects) { project in
+                        Button {
+                            viewModel.selectProject(project)
+                        } label: {
+                            HStack {
+                                Text(project.name)
+                                if viewModel.selectedProject == project {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
                 } label: {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(Theme.textSecondary)
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Theme.cyan)
+                        Text(viewModel.selectedProject?.name ?? L10n.allProjects)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Theme.textPrimary)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(Theme.textTertiary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Theme.cardBackground)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Theme.border, lineWidth: 1)
+                            )
+                    )
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-            }
 
-            // Time filter pills
-            timeFilterPills
+                Spacer()
+
+                // Export button
+                if let stats = viewModel.stats {
+                    Menu {
+                        Button(L10n.exportJSON) { exportJSON(stats: stats) }
+                        Button(L10n.exportCSV) { exportCSV(stats: stats) }
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(Theme.textSecondary)
+                            .frame(width: 24, height: 24)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                }
+
+                // Settings button (tight spacing with export)
+                Button {
+                    viewModel.showSettings.toggle()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(viewModel.showSettings ? Theme.cyan : Theme.textSecondary)
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+
+            // Row 2: Time filter pills
+            HStack {
+                timeFilterPills
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
         .background(Theme.background)
         .overlay(
             Rectangle()

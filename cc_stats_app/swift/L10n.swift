@@ -1,11 +1,17 @@
 import Foundation
 
-/// 简单的国际化支持，跟随系统语言
+/// 简单的国际化支持，跟随系统语言或用户设置
 enum L10n {
-    private static let isChinese: Bool = {
-        let lang = Locale.preferredLanguages.first ?? ""
-        return lang.hasPrefix("zh")
-    }()
+    static var isChinese: Bool {
+        let setting = UserDefaults.standard.string(forKey: "cc_stats_language") ?? "auto"
+        switch setting {
+        case "zh": return true
+        case "en": return false
+        default:
+            let lang = Locale.preferredLanguages.first ?? ""
+            return lang.hasPrefix("zh")
+        }
+    }
 
     // MARK: - Time Filter
     static var today: String { isChinese ? "今天" : "Today" }
@@ -91,6 +97,13 @@ enum L10n {
         isChinese ? "今日已消耗 \(cost)" : "Today's usage: \(cost)"
     }
 
-    // MARK: - Launch at Login
+    // MARK: - Settings
+    static var settings: String { isChinese ? "设置" : "Settings" }
+    static var general: String { isChinese ? "通用" : "General" }
     static var launchAtLogin: String { isChinese ? "开机启动" : "Launch at Login" }
+    static var launchAtLoginDesc: String { isChinese ? "登录时自动启动 CC Stats" : "Automatically start CC Stats on login" }
+    static var language: String { isChinese ? "语言" : "Language" }
+    static var displayLanguage: String { isChinese ? "显示语言" : "Display Language" }
+    static var followSystem: String { isChinese ? "跟随系统" : "Follow System" }
+    static var about: String { isChinese ? "关于" : "About" }
 }

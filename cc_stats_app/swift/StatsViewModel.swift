@@ -55,6 +55,8 @@ final class StatsViewModel: ObservableObject {
     @Published var todayCost: Double = 0
     @Published var todaySessions: Int = 0
     @Published var dailyStats: [DailyStatPoint] = []
+    @Published var showSettings: Bool = false
+    @Published var languageVersion: Int = 0  // 递增以触发 UI 刷新
 
     enum StatsTab: String, CaseIterable {
         case claudeCode = "Claude Code"
