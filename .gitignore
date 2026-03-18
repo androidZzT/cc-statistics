@@ -5,3 +5,4 @@ dist/
 build/
 *.pyc
 .claude/
+cc_stats_app/swift/CCStats

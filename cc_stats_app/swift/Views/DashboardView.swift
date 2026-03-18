@@ -77,6 +77,7 @@ struct DashboardView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 14) {
                         headerCards(stats: stats)
+                        trendChart
                         developmentTimeSection(stats: stats)
                         codeChangesSection(stats: stats)
                         tokenUsageSection(stats: stats)
@@ -437,6 +438,52 @@ struct DashboardView: View {
                     Text(CostEstimator.formatCost(stats.estimatedCost))
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundColor(Theme.amber)
+                }
+            }
+        }
+    }
+
+    // MARK: - Trend Chart
+
+    private var trendChart: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader(icon: "chart.xyaxis.line", title: L10n.dailyTrend, accentColor: Theme.cyan)
+
+                let data = viewModel.dailyStats.filter { $0.tokens > 0 || $0.sessions > 0 }
+                if data.isEmpty {
+                    Text(L10n.noData)
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                        .padding(.vertical, 8)
+                } else {
+                    // Mini bar chart using SwiftUI shapes
+                    let maxCost = data.map(\.cost).max() ?? 1
+                    HStack(alignment: .bottom, spacing: 3) {
+                        ForEach(viewModel.dailyStats) { point in
+                            VStack(spacing: 2) {
+                                if point.cost > 0 {
+                                    Text(CostEstimator.formatCost(point.cost))
+                                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                                        .foregroundColor(Theme.amber)
+                                }
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [Theme.cyan.opacity(0.8), Theme.purple.opacity(0.8)],
+                                            startPoint: .bottom,
+                                            endPoint: .top
+                                        )
+                                    )
+                                    .frame(height: max(2, CGFloat(point.cost / maxCost) * 60))
+                                Text(point.label.suffix(3))
+                                    .font(.system(size: 7))
+                                    .foregroundColor(Theme.textTertiary)
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .frame(height: 90)
                 }
             }
         }

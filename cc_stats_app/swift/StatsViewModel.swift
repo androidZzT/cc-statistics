@@ -54,6 +54,7 @@ final class StatsViewModel: ObservableObject {
     @Published var todayTokens: Int = 0
     @Published var todayCost: Double = 0
     @Published var todaySessions: Int = 0
+    @Published var dailyStats: [DailyStatPoint] = []
 
     enum StatsTab: String, CaseIterable {
         case claudeCode = "Claude Code"
@@ -88,6 +89,7 @@ final class StatsViewModel: ObservableObject {
         let todayTokens: Int
         let todayCost: Double
         let todaySessions: Int
+        let dailyStats: [DailyStatPoint]
     }
 
     func performRefresh() async {
@@ -135,13 +137,41 @@ final class StatsViewModel: ObservableObject {
             }
             let todayStats = SessionAnalyzer.analyze(sessions: todaySessions)
 
+            // 每日聚合（最近 14 天）
+            let calendar = Calendar.current
+            let today = Date()
+            var daily: [DailyStatPoint] = []
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MM/dd"
+            for i in (0..<14).reversed() {
+                guard let dayStart = calendar.date(byAdding: .day, value: -i, to: calendar.startOfDay(for: today)) else { continue }
+                let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
+                let daySessions = allSessions.filter { session in
+                    session.messages.contains { msg in
+                        guard let ts = msg.timestamp else { return false }
+                        return ts >= dayStart && ts < dayEnd
+                    }
+                }
+                let dayStats = SessionAnalyzer.analyze(sessions: daySessions)
+                daily.append(DailyStatPoint(
+                    date: dayStart,
+                    label: formatter.string(from: dayStart),
+                    sessions: daySessions.count,
+                    messages: dayStats.userInstructions,
+                    tokens: dayStats.totalTokens,
+                    cost: dayStats.estimatedCost,
+                    activeMinutes: dayStats.aiProcessingTime / 60 + dayStats.userActiveTime / 60
+                ))
+            }
+
             return RefreshResult(
                 projects: loadedProjects,
                 stats: stats,
                 recentSessions: recent,
                 todayTokens: todayStats.totalTokens,
                 todayCost: todayStats.estimatedCost,
-                todaySessions: todaySessions.count
+                todaySessions: todaySessions.count,
+                dailyStats: daily
             )
         }.value
 
@@ -151,6 +181,7 @@ final class StatsViewModel: ObservableObject {
         self.todayTokens = result.todayTokens
         self.todayCost = result.todayCost
         self.todaySessions = result.todaySessions
+        self.dailyStats = result.dailyStats
 
         // Also parse Cursor stats
         let cursorSince = currentFilter.startDate

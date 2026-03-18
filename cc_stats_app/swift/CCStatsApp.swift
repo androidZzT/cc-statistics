@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import Carbon.HIToolbox
+import ServiceManagement
 
 // MARK: - PanelManager
 
@@ -178,19 +179,61 @@ class StatusBarController {
     private var lastCost: Double = 0
     private var lastSessions: Int = 0
 
+    private var iconView: NSImageView!
+    private var label1: NSTextField!
+    private var label2: NSTextField!
+
     init(onToggle: @escaping () -> Void, onToggleChat: @escaping () -> Void) {
         self.onToggle = onToggle
         self.onToggleChat = onToggleChat
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem.button {
-            button.image = drawClaudeLogo(size: NSSize(width: 22, height: 22))
-            button.imagePosition = .imageLeading
-            button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-            button.title = ""
             button.action = #selector(handleClick(_:))
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+
+            // Custom layout: icon + stacked labels
+            let icon = NSImageView()
+            icon.image = drawClaudeLogo(size: NSSize(width: 22, height: 22))
+            icon.translatesAutoresizingMaskIntoConstraints = false
+
+            let l1 = NSTextField(labelWithString: "")
+            l1.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+            l1.textColor = .headerTextColor
+            l1.alignment = .left
+            l1.translatesAutoresizingMaskIntoConstraints = false
+
+            let l2 = NSTextField(labelWithString: "")
+            l2.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+            l2.textColor = .headerTextColor
+            l2.alignment = .left
+            l2.translatesAutoresizingMaskIntoConstraints = false
+
+            let stack = NSStackView(views: [l1, l2])
+            stack.orientation = .vertical
+            stack.spacing = -1
+            stack.alignment = .leading
+            stack.translatesAutoresizingMaskIntoConstraints = false
+
+            let container = NSStackView(views: [icon, stack])
+            container.orientation = .horizontal
+            container.spacing = 3
+            container.alignment = .centerY
+            container.translatesAutoresizingMaskIntoConstraints = false
+
+            button.addSubview(container)
+            NSLayoutConstraint.activate([
+                container.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                container.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 4),
+                container.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -4),
+                icon.widthAnchor.constraint(equalToConstant: 22),
+                icon.heightAnchor.constraint(equalToConstant: 22),
+            ])
+
+            self.iconView = icon
+            self.label1 = l1
+            self.label2 = l2
         }
     }
 
@@ -226,6 +269,16 @@ class StatusBarController {
         menu.addItem(displayItem)
 
         menu.addItem(NSMenuItem.separator())
+
+        // Launch at login
+        let loginItem = NSMenuItem(title: L10n.launchAtLogin, action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        loginItem.target = self
+        if #available(macOS 13.0, *) {
+            loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        }
+        menu.addItem(loginItem)
+
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: L10n.showDashboard, action: #selector(showDashboard), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.showChat, action: #selector(showChat), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
@@ -245,6 +298,18 @@ class StatusBarController {
         }
     }
 
+    @objc func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        if #available(macOS 13.0, *) {
+            do {
+                if SMAppService.mainApp.status == .enabled {
+                    try SMAppService.mainApp.unregister()
+                } else {
+                    try SMAppService.mainApp.register()
+                }
+            } catch {}
+        }
+    }
+
     @objc func showDashboard() { onToggle() }
     @objc func showChat() { onToggleChat() }
 
@@ -258,21 +323,24 @@ class StatusBarController {
     private func refreshLabel() {
         guard let button = statusItem.button else { return }
 
-        var text = ""
+        var line1 = ""
+        var line2 = ""
+
         switch displayMode {
         case .tokenAndCost:
-            if lastTokens > 0 {
-                let costStr = lastCost > 0 ? " \(CostEstimator.formatCost(lastCost))" : ""
-                text = " \(Self.formatTokens(lastTokens))\(costStr)"
-            }
+            if lastTokens > 0 { line1 = Self.formatTokens(lastTokens) }
+            if lastCost > 0 { line2 = CostEstimator.formatCost(lastCost) }
         case .tokenOnly:
-            if lastTokens > 0 { text = " \(Self.formatTokens(lastTokens))" }
+            if lastTokens > 0 { line1 = Self.formatTokens(lastTokens) }
         case .costOnly:
-            if lastCost > 0 { text = " \(CostEstimator.formatCost(lastCost))" }
+            if lastCost > 0 { line1 = CostEstimator.formatCost(lastCost) }
         case .sessionCount:
-            if lastSessions > 0 { text = " \(lastSessions)" }
+            if lastSessions > 0 { line1 = "\(lastSessions)" }
         }
-        button.title = text
+
+        label1.stringValue = line1
+        label2.stringValue = line2
+        label2.isHidden = line2.isEmpty
     }
 
     private static func formatTokens(_ n: Int) -> String {

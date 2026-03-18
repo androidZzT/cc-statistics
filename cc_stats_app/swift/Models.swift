@@ -200,6 +200,19 @@ struct SessionStats {
     }
 }
 
+// MARK: - Daily Stat Point
+
+struct DailyStatPoint: Identifiable {
+    let id = UUID()
+    let date: Date
+    let label: String  // "03/18"
+    let sessions: Int
+    let messages: Int
+    let tokens: Int
+    let cost: Double
+    let activeMinutes: Double
+}
+
 // MARK: - Cost Estimation
 
 struct ModelPricing {

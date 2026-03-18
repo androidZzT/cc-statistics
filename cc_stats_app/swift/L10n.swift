@@ -73,6 +73,9 @@ enum L10n {
     static var estimatedCost: String { isChinese ? "预估费用" : "Est. Cost" }
     static var cost: String { isChinese ? "费用" : "Cost" }
 
+    // MARK: - Trend
+    static var dailyTrend: String { isChinese ? "每日趋势" : "Daily Trend" }
+
     // MARK: - Status Bar
     static var statusBarDisplay: String { isChinese ? "状态栏显示" : "Display" }
 
@@ -81,4 +84,13 @@ enum L10n {
     static var exportJSON: String { "JSON" }
     static var exportCSV: String { "CSV" }
     static var exported: String { isChinese ? "已导出" : "Exported" }
+
+    // MARK: - Notification
+    static var tokenAlert: String { isChinese ? "Token 用量提醒" : "Token Usage Alert" }
+    static func tokenAlertBody(_ cost: String) -> String {
+        isChinese ? "今日已消耗 \(cost)" : "Today's usage: \(cost)"
+    }
+
+    // MARK: - Launch at Login
+    static var launchAtLogin: String { isChinese ? "开机启动" : "Launch at Login" }
 }
