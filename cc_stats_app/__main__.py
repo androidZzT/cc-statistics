@@ -2,7 +2,6 @@
 
 import glob
 import os
-import signal
 import subprocess
 import sys
 
@@ -54,19 +53,24 @@ def _compile_swift():
 def main():
     _compile_swift()
 
-    proc = subprocess.Popen([_swift_bin])
-
-    def on_signal(sig, frame):
-        proc.terminate()
+    # 自动后台运行：fork 进程后父进程退出，不占用终端
+    if os.fork() != 0:
+        # 父进程：打印提示后退出
+        print("CCStats is running in the background.")
         sys.exit(0)
 
-    signal.signal(signal.SIGINT, on_signal)
-    signal.signal(signal.SIGTERM, on_signal)
+    # 子进程：脱离终端
+    os.setsid()
 
-    try:
-        proc.wait()
-    except KeyboardInterrupt:
-        proc.terminate()
+    # 关闭标准输入输出
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+
+    # 启动 Swift app
+    os.execv(_swift_bin, [_swift_bin])
 
 
 if __name__ == "__main__":
