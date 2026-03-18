@@ -1,34 +1,23 @@
 # cc-statistics
 
-A CLI tool that extracts AI coding engineering metrics from local `~/.claude/` Claude Code session data.
+Claude Code session statistics tool — extract AI coding metrics from local `~/.claude/` data.
 
-## Metrics
+<img src="docs/screenshot.png" width="420" alt="CC Stats Dashboard">
 
-| # | Metric | Description |
-|---|--------|-------------|
-| ① | User Instructions | Conversation turns (excluding tool results and system messages) |
-| ② | AI Tool Calls | Total count + per-tool breakdown (with bar chart and descriptions) |
-| ③ | Dev Duration | Total / AI processing / User active / Activity rate / Avg turn time |
-| ④ | Code Changes | Git committed changes + AI tool changes (Edit/Write), split by language |
-| ⑤ | Token Usage | input / output / cache, split by model |
+## Highlights
 
-### Duration Calculation
-
-Sessions are split into **conversation turns** (user message → AI processing → AI response):
-
-- **AI Processing**: Time from user message to AI's last response per turn
-- **User Active**: Gap between previous AI response and next user message (gaps > 5 min are treated as idle)
-- **Active Duration** = AI Processing + User Active
-
-### Code Change Sources
-
-- **Git Committed**: All commits within the session time range via `git log --numstat` (includes both user and AI commits)
-- **AI Tool Changes**: Extracted from `Edit`/`Write` tool call parameters in JSONL (AI-side only)
+- **Cost Estimation** — Auto-calculate daily/per-project costs based on Opus / Sonnet / Haiku pricing, shown in real-time on status bar
+- **Session Search & Resume** — Search past conversations by keyword, click to copy `claude --resume` command and instantly restore any session
+- **Multi-dimensional Stats** — Instructions, Tool calls Top 10, Dev time (AI vs User), Code changes (by language), Token usage (by model)
+- **Daily Trend** — 14-day cost trend chart to spot usage patterns
+- **100% Local** — All data read from local files, nothing uploaded
+- **Dual Mode** — CLI command line + macOS native SwiftUI menu bar panel
+- **Bilingual** — Auto-follows system language, supports manual Chinese / English switch
 
 ## Installation
 
 ```bash
-# Recommended: pipx for global install (isolated env, available in any terminal)
+# Recommended: pipx for global install
 pipx install cc-statistics
 
 # Or via pip
@@ -37,7 +26,7 @@ pip install cc-statistics
 
 The CLI tool (`cc-stats`) has zero dependencies — Python stdlib only.
 
-### From Source (development)
+### From Source
 
 ```bash
 git clone https://github.com/androidZzT/cc-statistics.git
@@ -52,128 +41,46 @@ pip install -e .
 ### CLI
 
 ```bash
-# List all projects
-cc-stats --list
-
-# Analyze all sessions for current directory
-cc-stats
-
-# Match project by keyword
-cc-stats compose-album
-
-# Analyze a specific project directory
-cc-stats /path/to/project
-
-# Analyze a specific JSONL file
-cc-stats ~/.claude/projects/-Users-foo-bar/SESSION_ID.jsonl
-
-# Only the last N sessions
-cc-stats compose-album --last 3
-
-# Time range filters
-cc-stats --all --since 3d           # Last 3 days
-cc-stats --all --since 2w           # Last 2 weeks
-cc-stats --all --since 1h           # Last 1 hour
-cc-stats --all --since 2026-03-01 --until 2026-03-15  # Date range
-cc-stats sailor --since 2026-03-13T10:00               # Down to the minute
+cc-stats                     # Analyze current directory sessions
+cc-stats --list              # List all projects
+cc-stats compose-album       # Match project by keyword
+cc-stats --all --since 3d    # Last 3 days, all projects
+cc-stats --all --since 2w    # Last 2 weeks
+cc-stats sailor --last 3     # Last 3 sessions for a project
 ```
 
 ### macOS Menu Bar Panel
 
-A native SwiftUI panel that lives in your macOS menu bar, showing Claude logo + today's token usage. Click to open a dark-themed statistics dashboard.
-
-<img src="docs/screenshot.png" width="420" alt="CC Stats Dashboard">
-
-> Requires macOS + Xcode Command Line Tools (`xcode-select --install`). The Swift component is automatically compiled on first launch.
-
 ```bash
-# pip / pipx install
-pip install cc-statistics
-cc-stats-app
-
-# Or from source
-git clone https://github.com/androidZzT/cc-statistics.git
-cd cc-statistics && pip install -e .
 cc-stats-app
 ```
 
-**Features:**
+> Requires macOS + Xcode Command Line Tools (`xcode-select --install`). Swift component auto-compiles on first launch.
 
-- Menu bar icon with real-time today's token usage (auto-refresh)
-- Click to open a native SwiftUI dark-themed panel:
-  - Project selector + time range filter (Today / Week / Month / All)
-  - 4 stat cards: Sessions, Instructions, Duration, Tokens
-  - Dev time breakdown: AI ratio ring + time details
-  - Code changes: Git commits + per-language additions/deletions
-  - Token usage: stacked bar by model + category summary
-  - Tool calls: Top 10 bar chart
-- Click outside to dismiss (with fade animation), click icon to reopen
-- Global hotkey `Cmd+Shift+C` to toggle panel
-- Right-click menu bar icon for quick actions (Dashboard / Chat / Quit)
+**Status Bar:**
+- Claude logo + today's token usage + estimated cost
+- Right-click to switch display mode (Token+Cost / Token / Cost / Sessions)
+- Launch at login support
 
-## Sample Output
+**Dashboard Panel:**
+- Project selector + time range filter (Today / Week / Month / All)
+- 4 stat cards: Sessions, Instructions, Duration, Estimated Cost
+- Daily trend: 14-day cost bar chart
+- Dev time: AI ratio ring + time breakdown
+- Code changes: Git commits + per-language breakdown
+- Token usage: stacked bar by model + per-model cost
+- Tool calls: Top 10 ranking
 
-```
-╔══════════════════════════════════════════════════════════╗
-║        Claude Code Session Statistics                   ║
-╚══════════════════════════════════════════════════════════╝
+**Session Management:**
+- Search past sessions by content
+- Click to copy `claude --resume` command
+- View full conversation history
 
-  Sessions: 3
-  Time Range: 2026-03-13 15:24 ~ 2026-03-14 22:16
-
-  ① User Instructions
-────────────────────────────────────────────────────────────
-  Turns: 58
-
-  ② AI Tool Calls
-────────────────────────────────────────────────────────────
-  Total: 336
-
-  Bash        ███████████████    90  Run shell commands
-  Read        ██████████░░░░░    61  Read file contents
-  Edit        █████████░░░░░░    56  Edit file (exact replace)
-  TaskUpdate  ███████░░░░░░░░    44  Update task status
-  Agent       ████░░░░░░░░░░░    24  Launch sub-agent
-  Grep        ████░░░░░░░░░░░    24  Search file contents
-  TaskCreate  ██░░░░░░░░░░░░░    17  Create task
-
-  ③ Dev Duration
-────────────────────────────────────────────────────────────
-  Total:          30h 51m 52s
-  Active:         2h 13m 5s
-    AI Processing:  1h 42m 42s
-    User Active:    30m 22s
-  Activity Rate:  7%
-  AI Share:       77%
-  Avg Turn Time:  2m 13s/turn (46 turns)
-
-  ④ Code Changes
-────────────────────────────────────────────────────────────
-  [Git Committed]  60 commits
-  Added: +30342  Removed: -18228  Net: +12114
-
-  Kotlin    +11472  -1894   net +9578
-  Markdown  +490    -50     net +440
-
-  [AI Tool Changes]  from Edit/Write calls
-  Added: +1538  Removed: -315  Net: +1223
-
-  Kotlin    +810    -196    net +614
-  Markdown  +591    -43     net +548
-  Swift     +137    -76     net +61
-
-  ⑤ Token Usage
-────────────────────────────────────────────────────────────
-  Input tokens:                 924
-  Output tokens:              98.0K
-  Cache read tokens:          53.6M
-  Cache creation tokens:     814.3K
-  ────────────────────────────────────────
-  Total:                      54.6M
-
-  By model:
-    claude-opus-4-6: input=924 output=98.0K cache_read=53.6M total=54.6M
-```
+**More:**
+- Global hotkey `Cmd+Shift+C`
+- Export stats to JSON / CSV (auto-saves to Desktop)
+- Settings: Launch at login, language switch
+- Click outside to dismiss (with animation)
 
 ## Data Sources
 

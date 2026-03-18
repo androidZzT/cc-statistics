@@ -91,6 +91,7 @@ enum L10n {
     static var exportJSON: String { "JSON" }
     static var exportCSV: String { "CSV" }
     static var exported: String { isChinese ? "已导出" : "Exported" }
+    static var exportedToDesktop: String { isChinese ? "已导出到桌面" : "Exported to Desktop" }
 
     // MARK: - Notification
     static var tokenAlert: String { isChinese ? "Token 用量提醒" : "Token Usage Alert" }

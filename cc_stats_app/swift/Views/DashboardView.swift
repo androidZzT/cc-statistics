@@ -6,8 +6,10 @@ import UniformTypeIdentifiers
 
 struct DashboardView: View {
     @ObservedObject var viewModel: StatsViewModel
+    @State private var toastMessage: String?
 
     var body: some View {
+        ZStack {
         Group {
             if viewModel.showSettings {
                 SettingsView(
@@ -32,6 +34,27 @@ struct DashboardView: View {
                     footerSection
                 }
                 .id(viewModel.languageVersion)
+            }
+        }
+
+            // Toast overlay
+            if let msg = toastMessage {
+                VStack {
+                    Spacer()
+                    Text(msg)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Theme.green.opacity(0.9))
+                        )
+                        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .padding(.bottom, 16)
+                }
+                .animation(.easeInOut(duration: 0.25), value: toastMessage != nil)
             }
         }
         .frame(width: 480)
@@ -733,13 +756,15 @@ struct DashboardView: View {
     }
 
     private func saveToFile(content: String, ext: String) {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = ext == "json" ? [.json] : [.commaSeparatedText]
-        panel.nameFieldStringValue = "cc-stats-export.\(ext)"
-        panel.begin { response in
-            if response == .OK, let url = panel.url {
-                try? content.write(to: url, atomically: true, encoding: .utf8)
-            }
+        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
+        let fileName = "cc-stats-export.\(ext)"
+        let url = desktop.appendingPathComponent(fileName)
+        try? content.write(to: url, atomically: true, encoding: .utf8)
+        NSWorkspace.shared.open(url)
+
+        withAnimation { toastMessage = L10n.exportedToDesktop }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation { toastMessage = nil }
         }
     }
 }
