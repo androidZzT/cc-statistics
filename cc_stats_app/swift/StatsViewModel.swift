@@ -59,6 +59,9 @@ final class StatsViewModel: ObservableObject {
     @Published var showSettings: Bool = false
     @Published var languageVersion: Int = 0  // 递增以触发 UI 刷新
     @Published var themeMode: String = UserDefaults.standard.string(forKey: "cc_stats_theme") ?? "auto"
+    @Published var alertMessages: [String] = []
+    @Published var isOverDailyLimit: Bool = false
+    @Published var isOverWeeklyLimit: Bool = false
 
     enum StatsTab: String, CaseIterable {
         case claudeCode = "Claude Code"
@@ -96,6 +99,7 @@ final class StatsViewModel: ObservableObject {
         let todayCost: Double
         let todaySessions: Int
         let dailyStats: [DailyStatPoint]
+        let weeklyCost: Double
     }
 
     func selectSource(_ source: DataSource) {
@@ -200,6 +204,9 @@ final class StatsViewModel: ObservableObject {
                 ))
             }
 
+            // 计算最近 7 天费用
+            let weeklyCost = daily.suffix(7).reduce(0.0) { $0 + $1.cost }
+
             return RefreshResult(
                 projects: loadedProjects,
                 stats: stats,
@@ -207,7 +214,8 @@ final class StatsViewModel: ObservableObject {
                 todayTokens: todayStats.totalTokens,
                 todayCost: todayStats.estimatedCost,
                 todaySessions: todaySessions.count,
-                dailyStats: daily
+                dailyStats: daily,
+                weeklyCost: weeklyCost
             )
         }.value
 
@@ -231,6 +239,59 @@ final class StatsViewModel: ObservableObject {
         }
 
         self.lastRefreshed = Date()
+
+        // 检查用量预警
+        checkAlerts(dailyCost: result.todayCost, weeklyCost: result.weeklyCost)
+    }
+
+    private func checkAlerts(dailyCost: Double, weeklyCost: Double) {
+        let dailyLimit = UserDefaults.standard.double(forKey: "cc_stats_daily_cost_limit")
+        let weeklyLimit = UserDefaults.standard.double(forKey: "cc_stats_weekly_cost_limit")
+
+        var alerts: [String] = []
+        let wasDailyOver = isOverDailyLimit
+        let wasWeeklyOver = isOverWeeklyLimit
+
+        if dailyLimit > 0 && dailyCost > dailyLimit {
+            isOverDailyLimit = true
+            let msg = L10n.alertExceeded(
+                CostEstimator.formatCost(dailyCost),
+                CostEstimator.formatCost(dailyLimit) + " " + L10n.alertDaily
+            )
+            alerts.append(msg)
+            // 刚超限时弹通知
+            if !wasDailyOver {
+                sendSystemNotification(title: L10n.tokenAlert, body: msg)
+            }
+        } else {
+            isOverDailyLimit = false
+        }
+
+        if weeklyLimit > 0 && weeklyCost > weeklyLimit {
+            isOverWeeklyLimit = true
+            let msg = L10n.alertExceeded(
+                CostEstimator.formatCost(weeklyCost),
+                CostEstimator.formatCost(weeklyLimit) + " " + L10n.alertWeekly
+            )
+            alerts.append(msg)
+            if !wasWeeklyOver {
+                sendSystemNotification(title: L10n.tokenAlert, body: msg)
+            }
+        } else {
+            isOverWeeklyLimit = false
+        }
+
+        alertMessages = alerts
+    }
+
+    private func sendSystemNotification(title: String, body: String) {
+        let script = """
+        display notification "\(body)" with title "\(title)" sound name "Glass"
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        try? process.run()
     }
 
     func selectProject(_ project: ProjectInfo?) {

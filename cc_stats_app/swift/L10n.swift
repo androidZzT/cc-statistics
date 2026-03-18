@@ -116,4 +116,16 @@ enum L10n {
     static var themeAuto: String { isChinese ? "跟随系统" : "System" }
     static var themeDark: String { isChinese ? "深色" : "Dark" }
     static var themeLight: String { isChinese ? "浅色" : "Light" }
+
+    // MARK: - Alerts
+    static var alerts: String { isChinese ? "用量预警" : "Usage Alerts" }
+    static var dailyCostLimit: String { isChinese ? "单日费用上限" : "Daily Cost Limit" }
+    static var dailyCostLimitDesc: String { isChinese ? "超过后状态栏变红提醒" : "Status bar turns red when exceeded" }
+    static var weeklyCostLimit: String { isChinese ? "每周费用上限" : "Weekly Cost Limit" }
+    static var weeklyCostLimitDesc: String { isChinese ? "7天累计超过后提醒" : "Alert when 7-day total exceeds limit" }
+    static func alertExceeded(_ current: String, _ limit: String) -> String {
+        isChinese ? "⚠️ 当前 \(current) 已超过 \(limit) 上限" : "⚠️ Current \(current) exceeded \(limit) limit"
+    }
+    static var alertDaily: String { isChinese ? "单日" : "Daily" }
+    static var alertWeekly: String { isChinese ? "每周" : "Weekly" }
 }

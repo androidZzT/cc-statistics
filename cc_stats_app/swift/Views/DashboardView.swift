@@ -22,6 +22,22 @@ struct DashboardView: View {
                     // Top toolbar
                     toolbarSection
 
+                    // Alert banner
+                    if !viewModel.alertMessages.isEmpty {
+                        VStack(spacing: 4) {
+                            ForEach(viewModel.alertMessages, id: \.self) { msg in
+                                HStack(spacing: 6) {
+                                    Text(msg)
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundColor(.white)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                                .background(Theme.red.opacity(0.85))
+                            }
+                        }
+                    }
+
                     if viewModel.selectedSource == .cursor {
                         cursorContent
                     } else {

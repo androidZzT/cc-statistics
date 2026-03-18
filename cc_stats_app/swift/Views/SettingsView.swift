@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var launchAtLogin: Bool = false
     @State private var language: String = "auto"
     @State private var theme: String = "auto"
+    @State private var dailyCostLimit: String = ""
+    @State private var weeklyCostLimit: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -76,6 +78,25 @@ struct SettingsView: View {
                                 ("dark", L10n.themeDark),
                                 ("light", L10n.themeLight),
                             ]
+                        )
+                    }
+
+                    // Alerts section
+                    settingsSection(title: L10n.alerts, icon: "exclamationmark.triangle.fill") {
+                        alertInput(
+                            icon: "sun.max",
+                            title: L10n.dailyCostLimit,
+                            subtitle: L10n.dailyCostLimitDesc,
+                            text: $dailyCostLimit,
+                            key: "cc_stats_daily_cost_limit"
+                        )
+                        Divider().background(Theme.border)
+                        alertInput(
+                            icon: "calendar",
+                            title: L10n.weeklyCostLimit,
+                            subtitle: L10n.weeklyCostLimitDesc,
+                            text: $weeklyCostLimit,
+                            key: "cc_stats_weekly_cost_limit"
                         )
                     }
 
@@ -183,6 +204,47 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Alert Input
+
+    private func alertInput(icon: String, title: String, subtitle: String, text: Binding<String>, key: String) -> some View {
+        HStack {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundColor(Theme.amber)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Theme.textPrimary)
+                Text(subtitle)
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.textTertiary)
+            }
+            Spacer()
+            HStack(spacing: 2) {
+                Text("$")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Theme.textSecondary)
+                TextField("0", text: text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .frame(width: 50)
+                    .foregroundColor(Theme.textPrimary)
+                    .onChange(of: text.wrappedValue) { newValue in
+                        let filtered = newValue.filter { $0.isNumber || $0 == "." }
+                        if filtered != newValue { text.wrappedValue = filtered }
+                        UserDefaults.standard.set(Double(filtered) ?? 0, forKey: key)
+                    }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Theme.cardBackground)
+            )
+        }
+    }
+
     // MARK: - Settings Logic
 
     private func loadSettings() {
@@ -191,6 +253,10 @@ struct SettingsView: View {
         }
         language = UserDefaults.standard.string(forKey: "cc_stats_language") ?? "auto"
         theme = UserDefaults.standard.string(forKey: "cc_stats_theme") ?? "auto"
+        let daily = UserDefaults.standard.double(forKey: "cc_stats_daily_cost_limit")
+        dailyCostLimit = daily > 0 ? String(format: "%.0f", daily) : ""
+        let weekly = UserDefaults.standard.double(forKey: "cc_stats_weekly_cost_limit")
+        weeklyCostLimit = weekly > 0 ? String(format: "%.0f", weekly) : ""
     }
 
     private func toggleLaunchAtLogin(_ enable: Bool) {

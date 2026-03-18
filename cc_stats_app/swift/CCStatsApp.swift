@@ -282,8 +282,10 @@ class StatusBarController {
         menu.addItem(NSMenuItem(title: L10n.showDashboard, action: #selector(showDashboard), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.showChat, action: #selector(showChat), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: L10n.quit, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        for item in menu.items { item.target = self }
+        let quitItem = NSMenuItem(title: L10n.quit, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quitItem.target = NSApp
+        menu.addItem(quitItem)
+        for item in menu.items where item.target == nil { item.target = self }
 
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
@@ -313,10 +315,13 @@ class StatusBarController {
     @objc func showDashboard() { onToggle() }
     @objc func showChat() { onToggleChat() }
 
-    func updateTokenLabel(_ totalTokens: Int, cost: Double = 0, sessions: Int = 0) {
+    var isOverLimit: Bool = false
+
+    func updateTokenLabel(_ totalTokens: Int, cost: Double = 0, sessions: Int = 0, overLimit: Bool = false) {
         lastTokens = totalTokens
         lastCost = cost
         lastSessions = sessions
+        isOverLimit = overLimit
         refreshLabel()
     }
 
@@ -338,6 +343,9 @@ class StatusBarController {
             if lastSessions > 0 { line1 = "\(lastSessions)" }
         }
 
+        let labelColor: NSColor = isOverLimit ? .systemRed : .headerTextColor
+        label1.textColor = labelColor
+        label2.textColor = labelColor
         label1.stringValue = line1
         label2.stringValue = line2
         label2.isHidden = line2.isEmpty
@@ -539,7 +547,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] tokens, cost, sessions in
                 guard let self = self else { return }
-                self.statusBarController?.updateTokenLabel(tokens, cost: cost, sessions: sessions)
+                let overLimit = self.viewModel.isOverDailyLimit || self.viewModel.isOverWeeklyLimit
+                self.statusBarController?.updateTokenLabel(tokens, cost: cost, sessions: sessions, overLimit: overLimit)
             }
             .store(in: &cancellables)
     }
