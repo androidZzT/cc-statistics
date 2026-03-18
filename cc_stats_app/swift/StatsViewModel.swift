@@ -104,6 +104,7 @@ final class StatsViewModel: ObservableObject {
 
     func selectSource(_ source: DataSource) {
         selectedSource = source
+        activeTab = (source == .cursor) ? .cursor : .claudeCode
         refresh()
     }
 

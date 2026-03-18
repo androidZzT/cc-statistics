@@ -70,6 +70,33 @@ struct DashboardView: View {
                 }
                 .animation(.easeInOut(duration: 0.25), value: toastMessage != nil)
             }
+
+            // Full-view loading overlay
+            ZStack {
+                if viewModel.isLoading {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+
+                    VStack(spacing: 16) {
+                        TimelineView(.animation) { timeline in
+                            Circle()
+                                .trim(from: 0, to: 0.7)
+                                .stroke(Theme.cyan, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                                .frame(width: 40, height: 40)
+                                .rotationEffect(.degrees(timeline.date.timeIntervalSince1970 * 200))
+                        }
+
+                        Text(L10n.loading)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Theme.textPrimary)
+                    }
+                    .padding(28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Theme.cardBackground.opacity(0.95))
+                    )
+                }
+            }
         }
         .frame(width: 480)
         .frame(maxHeight: 640)
@@ -112,7 +139,8 @@ struct DashboardView: View {
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    viewModel.activeTab = tab
+                    let source: DataSource = tab == .claudeCode ? .claudeCode : .cursor
+                    viewModel.selectSource(source)
                 }
             }
         }

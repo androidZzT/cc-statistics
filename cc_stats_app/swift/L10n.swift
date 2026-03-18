@@ -59,6 +59,7 @@ enum L10n {
     static var refresh: String { isChinese ? "刷新" : "Refresh" }
 
     // MARK: - Empty/Loading
+    static var loading: String { isChinese ? "加载中" : "Loading" }
     static var noData: String { isChinese ? "暂无会话数据" : "No session data" }
     static var noDataHint: String { isChinese ? "启动 Claude Code 会话即可查看统计数据。" : "Start a Claude Code session to see statistics." }
 
