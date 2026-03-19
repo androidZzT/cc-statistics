@@ -136,6 +136,17 @@ enum L10n {
     // MARK: - Loading
     static var loading: String { isChinese ? "加载中..." : "Loading..." }
 
+    // MARK: - Efficiency
+    static var efficiency: String { isChinese ? "效率评分" : "Efficiency" }
+    static var codeOutput: String { isChinese ? "代码产出" : "Code Output" }
+    static var precision: String { isChinese ? "指令精准" : "Precision" }
+    static var aiUtilization: String { isChinese ? "AI 利用率" : "AI Util." }
+    static var linesPerKToken: String { isChinese ? "行/K Token" : "lines/K" }
+    static var tokensPerMsg: String { "Token/" + (isChinese ? "条" : "msg") }
+    static var costPrediction: String { isChinese ? "成本预测" : "Cost Prediction" }
+    static var dailyAvg: String { isChinese ? "日均" : "Daily Avg" }
+    static var monthProjection: String { isChinese ? "月度预测" : "Monthly" }
+
     // MARK: - Process Manager
     static var processes: String { isChinese ? "进程管理" : "Processes" }
     static var active: String { isChinese ? "活跃" : "Active" }

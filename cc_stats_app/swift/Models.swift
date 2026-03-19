@@ -255,6 +255,56 @@ struct SessionStats {
     var estimatedCost: Double {
         CostEstimator.estimateCost(tokenUsage: tokenUsage)
     }
+
+    // MARK: - Efficiency Score
+
+    var totalCodeLines: Int {
+        var total = 0
+        for c in codeChanges { total += c.additions + c.deletions }
+        return total
+    }
+
+    var codePerKToken: Double {
+        let total = Double(totalTokens)
+        guard total > 0 else { return 0 }
+        return Double(totalCodeLines) / (total / 1000.0)
+    }
+
+    var avgTokensPerInstruction: Int {
+        guard userInstructions > 0 else { return 0 }
+        return totalTokens / userInstructions
+    }
+
+    var aiUtilizationRate: Double {
+        let activeTime = aiProcessingTime + userActiveTime
+        guard activeTime > 0 else { return 0 }
+        return aiProcessingTime / activeTime * 100
+    }
+
+    var efficiencyCodeScore: Int {
+        min(40, Int(codePerKToken / 0.5 * 40))
+    }
+
+    var efficiencyPrecisionScore: Int {
+        max(0, min(30, Int((1 - Double(min(avgTokensPerInstruction, 200_000)) / 200_000) * 30)))
+    }
+
+    var efficiencyUtilScore: Int {
+        min(30, Int(aiUtilizationRate / 70 * 30))
+    }
+
+    var efficiencyTotalScore: Int {
+        efficiencyCodeScore + efficiencyPrecisionScore + efficiencyUtilScore
+    }
+
+    var efficiencyGrade: String {
+        let s = efficiencyTotalScore
+        if s >= 90 { return "S" }
+        if s >= 75 { return "A" }
+        if s >= 60 { return "B" }
+        if s >= 40 { return "C" }
+        return "D"
+    }
 }
 
 // MARK: - Process Info

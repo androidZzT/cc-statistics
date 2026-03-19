@@ -160,6 +160,7 @@ struct DashboardView: View {
                         codeChangesSection(stats: stats)
                         tokenUsageSection(stats: stats)
                         toolCallsSection(stats: stats)
+                        efficiencySection(stats: stats)
                         processSection
                     }
                     .padding(.horizontal, 16)
@@ -744,6 +745,117 @@ struct DashboardView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
+    }
+
+    // MARK: - Efficiency Section
+
+    private func efficiencySection(stats: SessionStats) -> some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(icon: "gauge.with.dots.needle.33percent", title: L10n.efficiency, accentColor: Theme.amber)
+
+                // Grade badge
+                HStack(spacing: 12) {
+                    let grade = stats.efficiencyGrade
+                    let score = stats.efficiencyTotalScore
+                    let gradeColor = (grade == "S" || grade == "A") ? Theme.green :
+                                     grade == "B" ? Theme.amber : Theme.red
+
+                    Text(grade)
+                        .font(.system(size: 28, weight: .black, design: .rounded))
+                        .foregroundColor(gradeColor)
+                        .frame(width: 50, height: 50)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(gradeColor.opacity(0.15))
+                        )
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(score)/100")
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundColor(Theme.textPrimary)
+
+                        // Score bar
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(Theme.textTertiary.opacity(0.2))
+                                    .frame(height: 6)
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [gradeColor.opacity(0.7), gradeColor],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .frame(width: geo.size.width * CGFloat(score) / 100.0, height: 6)
+                            }
+                        }
+                        .frame(height: 6)
+                    }
+
+                    Spacer()
+                }
+
+                // Dimension breakdown
+                VStack(spacing: 6) {
+                    efficiencyRow(
+                        label: L10n.codeOutput,
+                        value: String(format: "%.2f %@", stats.codePerKToken, L10n.linesPerKToken),
+                        score: stats.efficiencyCodeScore,
+                        maxScore: 40,
+                        color: Theme.cyan
+                    )
+                    efficiencyRow(
+                        label: L10n.precision,
+                        value: formatTokens(stats.avgTokensPerInstruction) + " " + L10n.tokensPerMsg,
+                        score: stats.efficiencyPrecisionScore,
+                        maxScore: 30,
+                        color: Theme.purple
+                    )
+                    efficiencyRow(
+                        label: L10n.aiUtilization,
+                        value: String(format: "%.0f%%", stats.aiUtilizationRate),
+                        score: stats.efficiencyUtilScore,
+                        maxScore: 30,
+                        color: Theme.green
+                    )
+                }
+            }
+        }
+    }
+
+    private func efficiencyRow(label: String, value: String, score: Int, maxScore: Int, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(Theme.textSecondary)
+                .frame(width: 60, alignment: .leading)
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Theme.textTertiary.opacity(0.15))
+                        .frame(height: 4)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(color)
+                        .frame(width: geo.size.width * CGFloat(score) / CGFloat(maxScore), height: 4)
+                }
+            }
+            .frame(height: 4)
+
+            Text(value)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundColor(Theme.textTertiary)
+                .frame(width: 90, alignment: .trailing)
+
+            Text("\(score)/\(maxScore)")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(color)
+                .frame(width: 35, alignment: .trailing)
+        }
+        .frame(height: 16)
     }
 
     // MARK: - Process Manager
