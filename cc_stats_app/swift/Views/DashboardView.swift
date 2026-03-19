@@ -70,11 +70,32 @@ struct DashboardView: View {
                 }
                 .animation(.easeInOut(duration: 0.25), value: toastMessage != nil)
             }
+
+            // Loading overlay
+            if viewModel.isLoading && viewModel.stats != nil {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(1.2)
+                        .tint(.white)
+                    Text(L10n.loading)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white)
+                }
+                .padding(20)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                )
+                .transition(.opacity)
+            }
         }
         .frame(width: 480)
         .frame(maxHeight: 640)
         .background(Theme.background)
         .preferredColorScheme(resolvedColorScheme)
+        .animation(.easeInOut(duration: 0.15), value: viewModel.isLoading)
     }
 
     private var resolvedColorScheme: ColorScheme? {

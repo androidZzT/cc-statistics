@@ -276,20 +276,24 @@ struct SettingsView: View {
 
     // MARK: - Version
 
-    private var currentVersion: String { "0.6.1" }
+    static let appVersion = "0.6.2"
+    private var currentVersion: String { Self.appVersion }
 
     private func checkForUpdate() {
         guard !checkingUpdate else { return }
         checkingUpdate = true
 
-        // 查询 PyPI 最新版本
-        guard let url = URL(string: "https://pypi.org/pypi/cc-statistics/json") else { return }
-        URLSession.shared.dataTask(with: url) { data, _, error in
+        // 查询 GitHub Releases 最新版本
+        guard let url = URL(string: "https://api.github.com/repos/androidZzT/cc-statistics/releases/latest") else { return }
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        URLSession.shared.dataTask(with: request) { data, _, error in
             defer { DispatchQueue.main.async { checkingUpdate = false } }
             guard let data = data, error == nil,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let info = json["info"] as? [String: Any],
-                  let version = info["version"] as? String else { return }
+                  let tagName = json["tag_name"] as? String else { return }
+            // tag_name 格式为 "v0.6.1"，去掉 "v" 前缀
+            let version = tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName
             DispatchQueue.main.async {
                 latestVersion = version
             }

@@ -132,4 +132,7 @@ enum L10n {
     // MARK: - Update
     static var newVersion: String { isChinese ? "发现新版本" : "New version" }
     static var updateNow: String { isChinese ? "立即更新" : "Update" }
+
+    // MARK: - Loading
+    static var loading: String { isChinese ? "加载中..." : "Loading..." }
 }
