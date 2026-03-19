@@ -123,7 +123,19 @@ def main(argv: list[str] | None = None) -> None:
         help="只包含此时间之前的会话（如 2026-03-14, 1d）",
     )
 
+    parser.add_argument(
+        "--report",
+        choices=["week", "month"],
+        metavar="PERIOD",
+        help="生成周报(week)或月报(month)，输出 Markdown 格式",
+    )
+
     args = parser.parse_args(argv)
+
+    if args.report:
+        from .reporter import generate_report
+        print(generate_report(args.report))
+        return
 
     if args.list_projects:
         _list_projects()

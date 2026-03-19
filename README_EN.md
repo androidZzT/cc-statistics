@@ -50,6 +50,8 @@ cc-stats compose-album       # Match project by keyword
 cc-stats --all --since 3d    # Last 3 days, all projects
 cc-stats --all --since 2w    # Last 2 weeks
 cc-stats sailor --last 3     # Last 3 sessions for a project
+cc-stats --report week       # Generate weekly report (Markdown)
+cc-stats --report month      # Generate monthly report
 ```
 
 ### Web Dashboard (All Platforms: macOS / Windows / Linux)

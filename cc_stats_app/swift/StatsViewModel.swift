@@ -70,6 +70,11 @@ final class StatsViewModel: ObservableObject {
 
     private var refreshTimer: Timer?
     private var refreshTask: Task<Void, Never>?
+    // 缓存：解析后的全量会话（避免重复磁盘 IO）
+    private var cachedSessions: [Session] = []
+    private var cachedProjects: [ProjectInfo] = []
+    private var cachedSource: DataSource?
+    private var cachedProject: ProjectInfo?
 
     init() {
         startAutoRefresh()
@@ -104,7 +109,15 @@ final class StatsViewModel: ObservableObject {
 
     func selectSource(_ source: DataSource) {
         selectedSource = source
+        invalidateCache()
         refresh()
+    }
+
+    private func invalidateCache() {
+        cachedSessions = []
+        cachedProjects = []
+        cachedSource = nil
+        cachedProject = nil
     }
 
     func performRefresh() async {
@@ -115,43 +128,67 @@ final class StatsViewModel: ObservableObject {
         let currentProject = selectedProject
         let currentSource = selectedSource
 
+        // 判断是否需要重新解析（source 或 project 变了才需要磁盘 IO）
+        let needReparse = cachedSessions.isEmpty
+            || cachedSource != currentSource
+            || cachedProject != currentProject
+
+        let allSessions: [Session]
+        let loadedProjects: [ProjectInfo]
+
+        if needReparse {
+            let result: ([ProjectInfo], [Session]) = await Task.detached(priority: .userInitiated) {
+                let claudeParser = SessionParser()
+                let codexParser = CodexParser()
+
+                var projects: [ProjectInfo] = []
+                var sessions: [Session] = []
+
+                switch currentSource {
+                case .all:
+                    projects = claudeParser.findAllProjects() + codexParser.findAllProjects()
+                    if let project = currentProject {
+                        sessions = claudeParser.parseSessions(forProject: project.path)
+                            + codexParser.parseSessions(forProject: project.path)
+                    } else {
+                        sessions = claudeParser.parseAllSessions() + codexParser.parseAllSessions()
+                    }
+                case .claudeCode:
+                    projects = claudeParser.findAllProjects()
+                    if let project = currentProject {
+                        sessions = claudeParser.parseSessions(forProject: project.path)
+                    } else {
+                        sessions = claudeParser.parseAllSessions()
+                    }
+                case .codex:
+                    projects = codexParser.findAllProjects()
+                    if let project = currentProject {
+                        sessions = codexParser.parseSessions(forProject: project.path)
+                    } else {
+                        sessions = codexParser.parseAllSessions()
+                    }
+                case .cursor:
+                    projects = claudeParser.findAllProjects()
+                    sessions = []
+                }
+                return (projects, sessions)
+            }.value
+
+            loadedProjects = result.0
+            allSessions = result.1
+            // 更新缓存
+            cachedSessions = allSessions
+            cachedProjects = loadedProjects
+            cachedSource = currentSource
+            cachedProject = currentProject
+        } else {
+            // 复用缓存，跳过磁盘 IO
+            allSessions = cachedSessions
+            loadedProjects = cachedProjects
+        }
+
+        // 以下为纯内存操作，很快
         let result: RefreshResult = await Task.detached(priority: .userInitiated) {
-            let claudeParser = SessionParser()
-            let codexParser = CodexParser()
-
-            // 根据 source 获取 projects 和 sessions
-            var loadedProjects: [ProjectInfo] = []
-            var allSessions: [Session] = []
-
-            switch currentSource {
-            case .all:
-                loadedProjects = claudeParser.findAllProjects() + codexParser.findAllProjects()
-                if let project = currentProject {
-                    allSessions = claudeParser.parseSessions(forProject: project.path)
-                        + codexParser.parseSessions(forProject: project.path)
-                } else {
-                    allSessions = claudeParser.parseAllSessions() + codexParser.parseAllSessions()
-                }
-            case .claudeCode:
-                loadedProjects = claudeParser.findAllProjects()
-                if let project = currentProject {
-                    allSessions = claudeParser.parseSessions(forProject: project.path)
-                } else {
-                    allSessions = claudeParser.parseAllSessions()
-                }
-            case .codex:
-                loadedProjects = codexParser.findAllProjects()
-                if let project = currentProject {
-                    allSessions = codexParser.parseSessions(forProject: project.path)
-                } else {
-                    allSessions = codexParser.parseAllSessions()
-                }
-            case .cursor:
-                // Cursor uses a different parser (CursorParser), sessions handled separately
-                loadedProjects = claudeParser.findAllProjects()
-                allSessions = []
-            }
-
             // 按时间范围过滤（用于面板展示）
             var filteredSessions = allSessions
             if let startDate = currentFilter.startDate {
@@ -297,6 +334,7 @@ final class StatsViewModel: ObservableObject {
 
     func selectProject(_ project: ProjectInfo?) {
         selectedProject = project
+        invalidateCache()
         refresh()
     }
 

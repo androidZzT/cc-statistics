@@ -50,6 +50,8 @@ cc-stats compose-album       # 按关键词匹配项目
 cc-stats --all --since 3d    # 最近 3 天所有项目
 cc-stats --all --since 2w    # 最近 2 周
 cc-stats sailor --last 3     # 某项目最近 3 个会话
+cc-stats --report week       # 生成周报（Markdown）
+cc-stats --report month      # 生成月报
 ```
 
 ### Web Dashboard（全平台：macOS / Windows / Linux）
