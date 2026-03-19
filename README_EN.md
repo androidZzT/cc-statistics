@@ -1,17 +1,20 @@
 # cc-statistics
 
+English | [中文](README.md)
+
 Claude Code session statistics tool — extract AI coding metrics from local `~/.claude/` data.
 
 <img src="docs/screenshot.png" width="420" alt="CC Stats Dashboard">
 
 ## Highlights
 
-- **Cost Estimation** — Auto-calculate daily/per-project costs based on Opus / Sonnet / Haiku pricing, shown in real-time on status bar
-- **Session Search & Resume** — Search past conversations by keyword, click to copy `claude --resume` command and instantly restore any session
+- **Cost Estimation** — Auto-calculate costs based on Opus / Sonnet / Haiku / GPT-4o pricing
+- **Session Search & Resume** — Search past conversations, click to copy `claude --resume` command
 - **Multi-dimensional Stats** — Instructions, Tool calls Top 10, Dev time (AI vs User), Code changes (by language), Token usage (by model)
 - **Daily Trend** — 14-day cost trend chart to spot usage patterns
+- **Usage Alerts** — Set daily/weekly cost limits, status bar turns red + system notification when exceeded
 - **100% Local** — All data read from local files, nothing uploaded
-- **Dual Mode** — CLI command line + macOS native SwiftUI menu bar panel
+- **Three Modes** — CLI + Web Dashboard (cross-platform) + macOS native menu bar panel
 - **Bilingual** — Auto-follows system language, supports manual Chinese / English switch
 
 ## Installation
@@ -24,7 +27,7 @@ pipx install cc-statistics
 pip install cc-statistics
 ```
 
-The CLI tool (`cc-stats`) has zero dependencies — Python stdlib only.
+Zero dependencies — Python stdlib only.
 
 ### From Source
 
@@ -38,7 +41,7 @@ pip install -e .
 
 ## Usage
 
-### CLI
+### CLI (All Platforms)
 
 ```bash
 cc-stats                     # Analyze current directory sessions
@@ -49,40 +52,51 @@ cc-stats --all --since 2w    # Last 2 weeks
 cc-stats sailor --last 3     # Last 3 sessions for a project
 ```
 
-### macOS Menu Bar Panel
+### Web Dashboard (All Platforms: macOS / Windows / Linux)
 
 ```bash
-cc-stats-app
+cc-stats-web
 ```
 
-> Requires macOS + Xcode Command Line Tools (`xcode-select --install`). Swift component auto-compiles on first launch.
+Auto-opens browser with a dark-themed statistics dashboard:
 
-**Status Bar:**
-- Claude logo + today's token usage + estimated cost
-- Right-click to switch display mode (Token+Cost / Token / Cost / Sessions)
-- Launch at login support
-
-**Dashboard Panel:**
-- Project selector + time range filter (Today / Week / Month / All)
-- 4 stat cards: Sessions, Instructions, Duration, Estimated Cost
+- Project selector + time range filter (Today / 7d / 30d / All)
+- 4 stat cards: Instructions, Tool calls, Active time, Estimated cost
 - Daily trend: 14-day cost bar chart
 - Dev time: AI ratio ring + time breakdown
 - Code changes: Git commits + per-language breakdown
 - Token usage: stacked bar by model + per-model cost
 - Tool calls: Top 10 ranking
 
-**Session Management:**
-- Search past sessions by content
-- Click to copy `claude --resume` command
-- View full conversation history
+### macOS Menu Bar Panel (macOS Only)
 
-**More:**
-- Global hotkey `Cmd+Shift+C`
-- Multi-source support: Claude Code / Codex / Cursor, switch or aggregate
+```bash
+cc-stats-app
+```
+
+> Requires Xcode Command Line Tools (`xcode-select --install`). Swift component auto-compiles on first launch.
+
+**Status Bar:**
+- Claude logo + today's token usage + estimated cost
+- Right-click to switch display mode (Token+Cost / Token / Cost / Sessions)
+- Turns red when over limit
+
+**Dashboard Panel (Native SwiftUI):**
+- Multi-source: Claude Code / Codex / Cursor, switch or aggregate
 - Theme: Follow System / Dark / Light
+- Usage alerts: daily/weekly cost limits with system notifications
 - Export stats to JSON / CSV (auto-saves to Desktop)
-- Settings: Launch at login, language switch, theme
-- Click outside to dismiss (with animation)
+- Settings: Launch at login, language switch, theme, version update check
+- Session search + one-click resume (`claude --resume`)
+- Global hotkey `Cmd+Shift+C`
+
+## Commands Overview
+
+| Command | Platform | Description |
+|---------|----------|-------------|
+| `cc-stats` | All | CLI terminal output |
+| `cc-stats-web` | All | Browser web dashboard |
+| `cc-stats-app` | macOS only | Native menu bar panel |
 
 ## Data Sources
 

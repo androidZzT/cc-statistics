@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cc-statistics"
-version = "0.6.2"
+version = "0.7.0"
 description = "Claude Code 会话统计工具 — 分析 AI Coding 工程指标"
 requires-python = ">=3.10"
 dependencies = []
@@ -23,11 +23,13 @@ Homepage = "https://github.com/androidZzT/cc-statistics"
 Repository = "https://github.com/androidZzT/cc-statistics"
 
 [tool.setuptools.packages.find]
-include = ["cc_stats*", "cc_stats_app*"]
+include = ["cc_stats*", "cc_stats_app*", "cc_stats_web*"]
 
 [tool.setuptools.package-data]
 cc_stats_app = ["swift/**/*.swift"]
+cc_stats_web = ["web/**/*"]
 
 [project.scripts]
 cc-stats = "cc_stats.cli:main"
 cc-stats-app = "cc_stats_app.__main__:main"
+cc-stats-web = "cc_stats_web.__main__:main"

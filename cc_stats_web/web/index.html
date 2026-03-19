@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CC Statistics</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#6e7681;--cyan:#58a6ff;--purple:#bc8cff;--green:#3fb950;--amber:#f0883e;--red:#f85149;--pink:#f778ba}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+.app{max-width:900px;margin:0 auto;padding:20px}
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px}
+.header h1{font-size:22px;font-weight:700;background:linear-gradient(135deg,var(--cyan),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.controls{display:flex;gap:8px;align-items:center}
+select{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer}
+select:hover{border-color:var(--cyan)}
+.time-btns{display:flex;gap:2px;background:var(--card);border-radius:6px;padding:2px;border:1px solid var(--border)}
+.time-btn{background:none;border:none;color:var(--text2);padding:5px 14px;border-radius:5px;font-size:12px;font-weight:500;cursor:pointer}
+.time-btn:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.time-btn.active{background:var(--cyan);color:#fff}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+.metric{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;transition:.2s}
+.metric:hover{border-color:rgba(255,255,255,.12);transform:translateY(-1px)}
+.metric-label{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.metric-value{font-size:26px;font-weight:700;letter-spacing:-1px}
+.metric-sub{font-size:11px;color:var(--text3);margin-top:2px}
+.metric[data-t="msg"] .metric-value{color:var(--cyan)}
+.metric[data-t="tool"] .metric-value{color:var(--purple)}
+.metric[data-t="dur"] .metric-value{color:var(--green)}
+.metric[data-t="cost"] .metric-value{color:var(--amber)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
+.card-title{font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px}
+.bar-row{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.bar-label{font-size:11px;color:var(--text2);width:70px;text-align:right;flex-shrink:0}
+.bar-track{flex:1;height:16px;background:rgba(255,255,255,.03);border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px;transition:width .5s ease}
+.bar-count{font-size:11px;color:var(--text3);width:30px;text-align:right}
+.trend{margin-bottom:16px}
+.trend-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
+.trend-bars{display:flex;align-items:flex-end;gap:4px;height:120px}
+.trend-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px}
+.trend-bar{width:100%;border-radius:3px 3px 0 0;background:linear-gradient(to top,rgba(88,166,255,.6),rgba(188,140,255,.6));transition:height .5s ease;min-height:2px}
+.trend-label{font-size:8px;color:var(--text3)}
+.trend-val{font-size:8px;color:var(--amber);font-weight:500}
+.ring-section{display:flex;gap:20px;align-items:center}
+.ring-wrap{position:relative;width:100px;height:100px;flex-shrink:0}
+.ring-wrap svg{transform:rotate(-90deg)}
+.ring-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
+.ring-pct{font-size:18px;font-weight:700;color:var(--cyan)}
+.ring-lbl{font-size:9px;color:var(--text3)}
+.time-rows{flex:1}
+.time-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)}
+.time-row:last-child{border:none}
+.time-row .label{font-size:12px;color:var(--text2)}
+.time-row .value{font-size:12px;font-weight:600;color:var(--text)}
+.lang-row{display:flex;align-items:center;gap:8px;padding:4px 0}
+.lang-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.lang-name{font-size:11px;color:var(--text2);flex:1}
+.lang-add{font-size:11px;color:var(--green);font-weight:500}
+.lang-del{font-size:11px;color:var(--red);font-weight:500}
+.model-row{padding:8px 0;border-bottom:1px solid var(--border)}
+.model-row:last-child{border:none}
+.model-header{display:flex;justify-content:space-between;margin-bottom:4px}
+.model-name{font-size:11px;font-weight:600;color:var(--text);font-family:monospace}
+.model-cost{font-size:11px;font-weight:700;color:var(--amber);font-family:monospace}
+.model-tokens{font-size:10px;color:var(--text3);font-family:monospace}
+.stacked-bar{height:8px;border-radius:4px;display:flex;overflow:hidden;margin-top:4px}
+.stacked-seg{height:100%;transition:width .5s ease}
+.info{font-size:11px;color:var(--text3);text-align:center;padding-top:10px}
+.empty{text-align:center;padding:60px 20px;color:var(--text3)}
+.loading{display:flex;align-items:center;justify-content:center;padding:40px;color:var(--text3);font-size:13px}
+@media(max-width:700px){.metrics{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <h1>CC Statistics</h1>
+    <div class="controls">
+      <select id="project-select"><option value="">All Projects</option></select>
+      <select id="source-select">
+        <option value="">All Sources</option>
+        <option value="claude">Claude Code</option>
+        <option value="codex">Codex</option>
+      </select>
+      <div class="time-btns">
+        <button class="time-btn active" data-days="1">Today</button>
+        <button class="time-btn" data-days="7">7d</button>
+        <button class="time-btn" data-days="30">30d</button>
+        <button class="time-btn" data-days="0">All</button>
+      </div>
+    </div>
+  </div>
+  <div class="metrics" id="metrics">
+    <div class="metric" data-t="msg"><div class="metric-label">Instructions</div><div class="metric-value" id="v-msg">—</div><div class="metric-sub" id="s-msg"></div></div>
+    <div class="metric" data-t="tool"><div class="metric-label">Tool Calls</div><div class="metric-value" id="v-tool">—</div><div class="metric-sub" id="s-tool"></div></div>
+    <div class="metric" data-t="dur"><div class="metric-label">Active Time</div><div class="metric-value" id="v-dur">—</div><div class="metric-sub" id="s-dur"></div></div>
+    <div class="metric" data-t="cost"><div class="metric-label">Est. Cost</div><div class="metric-value" id="v-cost">—</div><div class="metric-sub" id="s-cost"></div></div>
+  </div>
+  <div class="trend"><div class="trend-card"><div class="card-title">Daily Trend</div><div class="trend-bars" id="trend"></div></div></div>
+  <div class="grid">
+    <div class="card"><div class="card-title">Dev Time</div><div id="time-section" class="ring-section"></div></div>
+    <div class="card"><div class="card-title">Code Changes</div><div id="code-section"></div></div>
+    <div class="card"><div class="card-title">Token Usage</div><div id="token-section"></div></div>
+    <div class="card"><div class="card-title">Tool Calls</div><div id="tools-section"></div></div>
+  </div>
+  <div class="info" id="info"></div>
+</div>
+<script>
+let currentProject='',currentDays=1;
+const COLORS=['#58a6ff','#bc8cff','#3fb950','#f0883e','#f85149','#f778ba','#39d2c0','#d29922'];
+function fmt(n){if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toLocaleString()}
+function fmtCost(n){return n>=100?'$'+n.toFixed(0):n>=1?'$'+n.toFixed(2):n>=.01?'$'+n.toFixed(3):'$'+n.toFixed(4)}
+
+async function api(path,params){
+  const url=new URL(path,location.origin);
+  if(params)Object.entries(params).forEach(([k,v])=>{if(v!=null&&v!=='')url.searchParams.set(k,v)});
+  return(await fetch(url)).json();
+}
+
+async function loadProjects(){
+  const sel=document.getElementById('project-select');
+  const projects=await api('/api/projects');
+  sel.innerHTML='<option value="">All Projects</option>';
+  projects.forEach(p=>{
+    const o=document.createElement('option');o.value=p.dir_name;
+    const parts=p.display_name.split('/');o.textContent=parts.slice(-1)[0]+' ('+p.session_count+')';
+    sel.appendChild(o);
+  });
+}
+
+async function loadStats(){
+  const days=currentDays>0?currentDays:null;
+  const [stats,daily]=await Promise.all([
+    api('/api/stats',{project:currentProject||null,days}),
+    api('/api/daily_stats',{project:currentProject||null,days:currentDays>0?currentDays:30}),
+  ]);
+  if(stats.error){document.getElementById('info').textContent=stats.error;return;}
+  updateMetrics(stats);
+  updateTrend(daily);
+  updateTime(stats);
+  updateCode(stats);
+  updateTokens(stats);
+  updateTools(stats);
+  const info=document.getElementById('info');
+  info.textContent=stats.session_count+' sessions analyzed';
+}
+
+function updateMetrics(d){
+  document.getElementById('v-msg').textContent=fmt(d.user_message_count);
+  document.getElementById('s-msg').textContent=d.turn_count+' turns';
+  document.getElementById('v-tool').textContent=fmt(d.tool_call_total);
+  document.getElementById('s-tool').textContent=d.tool_calls.length>0?'Top: '+d.tool_calls[0].name:'';
+  document.getElementById('v-dur').textContent=d.active_duration_fmt;
+  const aiPct=d.active_duration>0?Math.round(d.ai_duration/d.active_duration*100):0;
+  document.getElementById('s-dur').textContent='AI '+aiPct+'% | Total '+d.total_duration_fmt;
+  document.getElementById('v-cost').textContent=fmtCost(d.estimated_cost);
+  document.getElementById('s-cost').textContent=fmt(d.token_usage.total)+' tokens';
+}
+
+function updateTrend(daily){
+  const el=document.getElementById('trend');
+  const data=daily.filter(d=>d.cost>0||d.sessions>0);
+  if(!data.length){el.innerHTML='<div class="empty">No data</div>';return;}
+  const max=Math.max(...daily.map(d=>d.cost),1);
+  el.innerHTML=daily.map(d=>{
+    const h=Math.max(2,d.cost/max*100);
+    const label=d.date.slice(5);
+    return '<div class="trend-col">'+(d.cost>0?'<div class="trend-val">'+fmtCost(d.cost)+'</div>':'')+'<div class="trend-bar" style="height:'+h+'px"></div><div class="trend-label">'+label+'</div></div>';
+  }).join('');
+}
+
+function updateTime(d){
+  const active=d.ai_duration+d.user_duration;
+  const pct=active>0?Math.round(d.ai_duration/active*100):0;
+  const r=40,c=2*Math.PI*r,off=c*(1-pct/100);
+  document.getElementById('time-section').innerHTML=
+    '<div class="ring-wrap"><svg width="100" height="100"><circle cx="50" cy="50" r="'+r+'" fill="none" stroke="var(--border)" stroke-width="8"/><circle cx="50" cy="50" r="'+r+'" fill="none" stroke="var(--cyan)" stroke-width="8" stroke-linecap="round" stroke-dasharray="'+c+'" stroke-dashoffset="'+off+'"/></svg><div class="ring-center"><div class="ring-pct">'+pct+'%</div><div class="ring-lbl">AI</div></div></div>'
+    +'<div class="time-rows"><div class="time-row"><span class="label">Total</span><span class="value">'+d.total_duration_fmt+'</span></div><div class="time-row"><span class="label">AI</span><span class="value">'+d.ai_duration_fmt+'</span></div><div class="time-row"><span class="label">User</span><span class="value">'+d.user_duration_fmt+'</span></div></div>';
+}
+
+function updateCode(d){
+  const el=document.getElementById('code-section');
+  let html='';
+  if(d.git_available)html+='<div style="font-size:10px;color:var(--text3);margin-bottom:6px">'+d.git_commit_count+' commits | +'+fmt(d.git_total_added)+' -'+fmt(d.git_total_removed)+'</div>';
+  const net=d.total_added-d.total_removed;
+  html+='<div style="font-size:12px;font-weight:600;margin-bottom:8px"><span style="color:var(--green)">+'+fmt(d.total_added)+'</span> <span style="color:var(--red)">-'+fmt(d.total_removed)+'</span> <span style="color:var(--text2)">net '+(net>=0?'+':'')+fmt(net)+'</span></div>';
+  d.lines_by_lang.slice(0,8).forEach((l,i)=>{
+    html+='<div class="lang-row"><div class="lang-dot" style="background:'+COLORS[i%8]+'"></div><div class="lang-name">'+l.lang+'</div><div class="lang-add">+'+l.added+'</div><div class="lang-del">-'+l.removed+'</div></div>';
+  });
+  if(!d.lines_by_lang.length)html+='<div style="color:var(--text3);font-size:11px">No code changes</div>';
+  el.innerHTML=html;
+}
+
+function updateTokens(d){
+  const el=document.getElementById('token-section');
+  let html='';
+  d.token_by_model.forEach(m=>{
+    const total=m.total||1;
+    html+='<div class="model-row"><div class="model-header"><span class="model-name">'+m.model+'</span><span class="model-cost">'+fmtCost(m.cost)+'</span><span class="model-tokens">'+fmt(m.total)+'</span></div>'
+      +'<div class="stacked-bar"><div class="stacked-seg" style="width:'+Math.round(m.input_tokens/total*100)+'%;background:var(--cyan)"></div><div class="stacked-seg" style="width:'+Math.round(m.output_tokens/total*100)+'%;background:var(--purple)"></div><div class="stacked-seg" style="width:'+Math.round(m.cache_read/total*100)+'%;background:var(--green)"></div><div class="stacked-seg" style="width:'+Math.round(m.cache_creation/total*100)+'%;background:var(--amber)"></div></div></div>';
+  });
+  html+='<div style="display:flex;gap:12px;margin-top:8px;font-size:10px"><span style="color:var(--cyan)">In: '+fmt(d.token_usage.input_tokens)+'</span><span style="color:var(--purple)">Out: '+fmt(d.token_usage.output_tokens)+'</span><span style="color:var(--green)">Cache: '+fmt(d.token_usage.cache_read+d.token_usage.cache_creation)+'</span><span style="color:var(--amber);font-weight:700">'+fmtCost(d.estimated_cost)+'</span></div>';
+  el.innerHTML=html;
+}
+
+function updateTools(d){
+  const el=document.getElementById('tools-section');
+  const items=d.tool_calls.slice(0,10);
+  const max=items[0]?.count||1;
+  el.innerHTML=items.map((t,i)=>'<div class="bar-row"><div class="bar-label">'+t.name+'</div><div class="bar-track"><div class="bar-fill" style="width:'+Math.round(t.count/max*100)+'%;background:'+COLORS[i%8]+'80"></div></div><div class="bar-count">'+t.count+'</div></div>').join('');
+}
+
+document.getElementById('project-select').addEventListener('change',e=>{currentProject=e.target.value;loadStats()});
+document.querySelectorAll('.time-btn').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.time-btn').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');currentDays=parseInt(b.dataset.days);loadStats();
+}));
+
+loadProjects();loadStats();
+</script>
+</body>
+</html>
