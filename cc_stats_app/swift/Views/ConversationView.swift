@@ -189,6 +189,21 @@ struct ConversationView: View {
 
                     Label("\(userMessages.count)", systemImage: "text.bubble")
                     Label("\(session.messages.count)", systemImage: "message")
+
+                    // Context usage badge
+                    let ctxPct = session.contextUsagePercent
+                    if ctxPct > 0 {
+                        let ctxColor = ctxPct >= 80 ? Theme.red : ctxPct >= 50 ? Theme.amber : Theme.green
+                        Text(String(format: "ctx %.0f%%", ctxPct))
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(ctxColor)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(
+                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                    .fill(ctxColor.opacity(0.15))
+                            )
+                    }
                 }
                 .font(.system(size: 9))
                 .foregroundColor(Theme.textTertiary)
@@ -222,6 +237,26 @@ struct ConversationView: View {
                         .font(.system(size: 10))
                         .foregroundColor(Theme.textTertiary)
                 }
+                // Context usage indicator
+                let ctxPct = session.contextUsagePercent
+                if ctxPct > 0 {
+                    let ctxColor = ctxPct >= 80 ? Theme.red : ctxPct >= 50 ? Theme.amber : Theme.green
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(ctxColor)
+                            .frame(width: 6, height: 6)
+                        Text(String(format: "ctx %.0f%%", ctxPct))
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(ctxColor)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(ctxColor.opacity(0.1))
+                    )
+                }
+
                 Spacer()
                 if let duration = formattedDuration(session.duration) {
                     Text(duration)
