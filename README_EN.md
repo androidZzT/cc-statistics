@@ -88,6 +88,8 @@ cc-stats-app
 - Export stats to JSON / CSV (auto-saves to Desktop)
 - Settings: Launch at login, language switch, theme, version update check
 - Session search + one-click resume (`claude --resume`)
+- Process manager: view all Claude process memory usage
+- Tool call breakdown: Skill and MCP tools expanded to specific names
 - Global hotkey `Cmd+Shift+C`
 
 ## Commands Overview
