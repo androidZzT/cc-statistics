@@ -161,7 +161,20 @@ class SessionAnalyzer {
         var counts: [String: Int] = [:]
         for msg in messages where msg.role == "assistant" {
             for call in msg.toolCalls {
-                counts[call.name, default: 0] += 1
+                // 展开 Skill 和 MCP 工具为具体名称
+                var displayName = call.name
+                if call.name == "Skill" {
+                    let skillName = call.input["skill"] as? String ?? ""
+                    if !skillName.isEmpty {
+                        displayName = "Skill:\(skillName)"
+                    }
+                } else if call.name.hasPrefix("mcp__") {
+                    let parts = call.name.components(separatedBy: "__")
+                    if parts.count >= 3 {
+                        displayName = "MCP:\(parts[1])/\(parts[2])"
+                    }
+                }
+                counts[displayName, default: 0] += 1
             }
         }
         return counts

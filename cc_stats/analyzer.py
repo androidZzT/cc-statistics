@@ -277,8 +277,21 @@ def analyze_session(session: Session) -> SessionStats:
         if msg.role == "assistant":
             for tc in msg.tool_calls:
                 stats.tool_call_total += 1
-                stats.tool_call_counts[tc.name] = (
-                    stats.tool_call_counts.get(tc.name, 0) + 1
+
+                # 展开 Skill 和 MCP 工具为具体名称
+                display_name = tc.name
+                if tc.name == "Skill":
+                    skill_name = tc.input.get("skill", "")
+                    if skill_name:
+                        display_name = f"Skill:{skill_name}"
+                elif tc.name.startswith("mcp__"):
+                    # mcp__server__method → MCP:server/method
+                    parts = tc.name.split("__")
+                    if len(parts) >= 3:
+                        display_name = f"MCP:{parts[1]}/{parts[2]}"
+
+                stats.tool_call_counts[display_name] = (
+                    stats.tool_call_counts.get(display_name, 0) + 1
                 )
 
                 # -------- 4. 代码行数（从 Edit/Write 工具提取） --------

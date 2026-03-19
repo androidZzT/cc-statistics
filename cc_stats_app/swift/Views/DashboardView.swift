@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct DashboardView: View {
     @ObservedObject var viewModel: StatsViewModel
     @State private var toastMessage: String?
+    @State private var processes: [ProcessInfo2] = []
 
     var body: some View {
         ZStack {
@@ -159,6 +160,7 @@ struct DashboardView: View {
                         codeChangesSection(stats: stats)
                         tokenUsageSection(stats: stats)
                         toolCallsSection(stats: stats)
+                        processSection
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
@@ -742,6 +744,80 @@ struct DashboardView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
+    }
+
+    // MARK: - Process Manager
+
+    private var processSection: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    SectionHeader(icon: "memorychip", title: L10n.processes, accentColor: Theme.cyan)
+                    Spacer()
+                    Button {
+                        DispatchQueue.global().async {
+                            let p = ProcessInfo2.scan()
+                            DispatchQueue.main.async { processes = p }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Theme.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if processes.isEmpty {
+                    Text("—")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                } else {
+                    let totalMB = processes.reduce(0.0) { $0 + $1.memoryMB }
+                    Text(String(format: "%.0f MB / %d processes", totalMB, processes.count))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundColor(Theme.textSecondary)
+
+                    ForEach(processes) { proc in
+                        HStack(spacing: 6) {
+                            Text(proc.displayName)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(Theme.textPrimary)
+                                .lineLimit(1)
+
+                            Spacer()
+
+                            Text(String(format: "%.0f MB", proc.memoryMB))
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundColor(Theme.amber)
+                                .frame(width: 55, alignment: .trailing)
+
+                            // Kill button (not for self)
+                            if !proc.command.contains("CCStats") {
+                                Button {
+                                    ProcessInfo2.kill(pid: proc.pid)
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                        Task.detached { let p = ProcessInfo2.scan(); await MainActor.run { processes = p } }
+                                    }
+                                } label: {
+                                    Image(systemName: "xmark.circle")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(Theme.red.opacity(0.6))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            // 延迟加载，不阻塞面板弹出
+            DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+                let p = ProcessInfo2.scan()
+                DispatchQueue.main.async { processes = p }
+            }
+        }
     }
 
     // MARK: - Helpers

@@ -135,4 +135,11 @@ enum L10n {
 
     // MARK: - Loading
     static var loading: String { isChinese ? "加载中..." : "Loading..." }
+
+    // MARK: - Process Manager
+    static var processes: String { isChinese ? "进程管理" : "Processes" }
+    static var active: String { isChinese ? "活跃" : "Active" }
+    static var idle: String { isChinese ? "空闲" : "Idle" }
+    static var cleanIdle: String { isChinese ? "清理空闲" : "Clean Idle" }
+    static var killed: String { isChinese ? "已清理" : "Cleaned" }
 }

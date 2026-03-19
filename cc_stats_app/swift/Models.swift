@@ -257,6 +257,71 @@ struct SessionStats {
     }
 }
 
+// MARK: - Process Info
+
+struct ProcessInfo2: Identifiable {
+    let id = UUID()
+    let pid: Int32
+    let memoryMB: Double
+    let command: String
+
+    var displayName: String {
+        if command.contains("CCStats") { return "CC Stats Panel" }
+        if command.contains("cc-stats-web") { return "CC Stats Web" }
+        if command.contains("--resume") {
+            let parts = command.components(separatedBy: "--resume ")
+            if parts.count > 1 {
+                let sessionId = parts[1].trimmingCharacters(in: .whitespaces)
+                return "Session: \(sessionId.prefix(20))..."
+            }
+        }
+        if command.contains("--agent-id") { return "Agent Sub-process" }
+        if command.contains("claude init") { return "Claude Init" }
+        if command.contains("claude") { return "Claude Code" }
+        return command.components(separatedBy: "/").last ?? command
+    }
+
+    static func scan() -> [ProcessInfo2] {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["aux"]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        process.qualityOfService = .background
+        do { try process.run() } catch { return [] }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard let output = String(data: data, encoding: .utf8) else { return [] }
+
+        var results: [ProcessInfo2] = []
+        for line in output.components(separatedBy: "\n") {
+            let lower = line.lowercased()
+            guard lower.contains("claude") || lower.contains("ccstats") || lower.contains("cc-stats") || lower.contains("cc_stats") else { continue }
+            guard !line.contains("grep") else { continue }
+
+            let parts = line.split(separator: " ", maxSplits: 10, omittingEmptySubsequences: true)
+            guard parts.count >= 11 else { continue }
+
+            guard let pid = Int32(parts[1]) else { continue }
+            let memKB = Double(parts[5]) ?? 0
+            let command = parts[10...].joined(separator: " ")
+
+            results.append(ProcessInfo2(
+                pid: pid,
+                memoryMB: memKB / 1024,
+                command: command
+            ))
+        }
+        return results.sorted { $0.memoryMB > $1.memoryMB }
+    }
+
+    static func kill(pid: Int32) {
+        Foundation.kill(pid, SIGTERM)
+    }
+}
+
 // MARK: - Daily Stat Point
 
 struct DailyStatPoint: Identifiable {
