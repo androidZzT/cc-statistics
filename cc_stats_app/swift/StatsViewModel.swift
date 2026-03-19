@@ -166,9 +166,10 @@ final class StatsViewModel: ObservableObject {
             }
 
             let stats = SessionAnalyzer.analyze(sessions: filteredSessions)
-            let recent = filteredSessions
-                .sorted(by: { ($0.startTime ?? .distantPast) > ($1.startTime ?? .distantPast) })
-                .prefix(20).map { $0 }
+            // 会话列表不受时间筛选影响，按最近活跃时间排序
+            let recent = allSessions
+                .sorted(by: { ($0.endTime ?? .distantPast) > ($1.endTime ?? .distantPast) })
+                .prefix(30).map { $0 }
 
             // 计算当天 token（从同一批数据中过滤，保证同步）
             let todayStart = Calendar.current.startOfDay(for: Date())

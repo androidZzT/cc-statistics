@@ -140,6 +140,34 @@ struct Session: Identifiable {
         messages.compactMap(\.timestamp).max()
     }
 
+    /// 峰值上下文使用量（input + cache_read + cache_creation 的最大值）
+    var peakContextTokens: Int {
+        messages.compactMap { msg -> Int? in
+            guard let usage = msg.tokenUsage else { return nil }
+            return usage.inputTokens + usage.cacheReadInputTokens + usage.cacheCreationInputTokens
+        }.max() ?? 0
+    }
+
+    /// 上下文使用率（峰值 / 模型窗口大小）
+    var contextUsagePercent: Double {
+        let peak = peakContextTokens
+        guard peak > 0 else { return 0 }
+        let windowSize = contextWindowSize
+        return Double(peak) / Double(windowSize) * 100
+    }
+
+    /// 根据模型名推断上下文窗口大小
+    private var contextWindowSize: Int {
+        let model = messages.compactMap(\.model).first ?? ""
+        let lower = model.lowercased()
+        if lower.contains("opus") { return 200_000 }
+        if lower.contains("sonnet") { return 200_000 }
+        if lower.contains("haiku") { return 200_000 }
+        if lower.contains("gpt-4o") { return 128_000 }
+        if lower.contains("o1") || lower.contains("o3") { return 200_000 }
+        return 200_000  // default
+    }
+
     var duration: TimeInterval {
         guard let start = startTime, let end = endTime else { return 0 }
         return end.timeIntervalSince(start)

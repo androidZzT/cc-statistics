@@ -12,13 +12,18 @@ struct ConversationView: View {
     @State private var searchText: String = ""
 
     private var filteredSessions: [Session] {
-        if searchText.isEmpty { return sessions }
-        let query = searchText.lowercased()
-        return sessions.filter { session in
-            session.messages.contains { msg in
-                msg.content.lowercased().contains(query)
+        let base: [Session]
+        if searchText.isEmpty {
+            base = sessions
+        } else {
+            let query = searchText.lowercased()
+            base = sessions.filter { session in
+                session.messages.contains { msg in
+                    msg.content.lowercased().contains(query)
+                }
             }
         }
+        return base
     }
 
     var body: some View {
@@ -153,14 +158,23 @@ struct ConversationView: View {
             }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
-                if let start = session.startTime {
-                    HStack(spacing: 4) {
-                        Text(start, style: .date)
-                        Text(start, style: .time)
+                HStack {
+                    if let start = session.startTime {
+                        HStack(spacing: 4) {
+                            Text(start, style: .date)
+                            Text(start, style: .time)
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(isSelected ? Theme.cyan : Theme.textSecondary)
                     }
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(isSelected ? Theme.cyan : Theme.textSecondary)
+                    Spacer()
+                    if let dur = formattedDuration(session.duration) {
+                        Text(dur)
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundColor(Theme.textTertiary)
+                    }
                 }
+
                 Text(preview)
                     .font(.system(size: 10))
                     .foregroundColor(Theme.textSecondary)
@@ -182,6 +196,7 @@ struct ConversationView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(isSelected ? Theme.cyan.opacity(0.12) : Color.clear)
