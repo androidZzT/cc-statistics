@@ -54,6 +54,10 @@ final class PanelManager: ObservableObject {
             closeObserver = nil
         }
     }
+
+    func updateAppearance(_ appearance: NSAppearance?) {
+        panel?.appearance = appearance
+    }
 }
 
 // MARK: - Global Hotkey Manager
@@ -532,9 +536,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func observeTheme() {
         viewModel.$themeMode
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                guard let self = self, let window = self.mainWindow as? NSPanel else { return }
-                self.applyThemeToPanel(window)
+            .sink { [weak self] theme in
+                guard let self = self else { return }
+                if let window = self.mainWindow as? NSPanel {
+                    self.applyThemeToPanel(window)
+                }
+                // 同步更新对话面板
+                let panelAppearance: NSAppearance?
+                switch theme {
+                case "dark": panelAppearance = NSAppearance(named: .darkAqua)
+                case "light": panelAppearance = NSAppearance(named: .aqua)
+                default: panelAppearance = nil
+                }
+                self.panelManager.updateAppearance(panelAppearance)
             }
             .store(in: &cancellables)
     }

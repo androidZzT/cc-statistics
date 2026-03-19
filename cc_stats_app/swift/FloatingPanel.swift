@@ -27,13 +27,21 @@ class FloatingPanel: NSPanel {
         minSize = NSSize(width: 340, height: 400)
 
         let visualEffect = NSVisualEffectView(frame: contentRect)
-        visualEffect.material = .hudWindow
+        visualEffect.material = .sidebar
         visualEffect.state = .active
         visualEffect.blendingMode = .behindWindow
         visualEffect.wantsLayer = true
         visualEffect.layer?.cornerRadius = 16
         visualEffect.layer?.masksToBounds = true
         contentView = visualEffect
+
+        // 跟随主题设置
+        let theme = UserDefaults.standard.string(forKey: "cc_stats_theme") ?? "auto"
+        switch theme {
+        case "dark": appearance = NSAppearance(named: .darkAqua)
+        case "light": appearance = NSAppearance(named: .aqua)
+        default: appearance = nil
+        }
     }
 
     override var canBecomeKey: Bool { true }
