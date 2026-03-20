@@ -26,6 +26,11 @@ class Message:
     is_tool_result: bool = False
     is_meta: bool = False
     session_id: str = ""
+    # API message ID (e.g. "msg_17738...") for deduplication.
+    # Claude Code writes multiple JSONL entries per streaming API call:
+    # prefill records (output_tokens=1) then a final record with real output.
+    # All entries share the same message_id.
+    message_id: str = ""
 
 
 @dataclass
@@ -92,7 +97,13 @@ def parse_jsonl(path: Path) -> Session:
                 is_tool_result=is_tool_result,
                 is_meta=obj.get("isMeta", False),
                 session_id=obj.get("sessionId", session_id),
+                message_id=raw_msg.get("id", ""),
             ))
+
+    # Deduplicate streaming records: same message_id may appear multiple times
+    # (prefill with output_tokens=1, then final with real output_tokens).
+    # Keep only the record with the largest output_tokens for each message_id.
+    messages = _deduplicate_messages(messages)
 
     return Session(
         session_id=session_id,
@@ -100,6 +111,36 @@ def parse_jsonl(path: Path) -> Session:
         file_path=path,
         messages=messages,
     )
+
+
+def _deduplicate_messages(messages: list[Message]) -> list[Message]:
+    """Deduplicate assistant messages that share the same API message ID.
+
+    Claude Code's JSONL logs multiple entries per streaming API call:
+    prefill records (output_tokens ≤ 1) followed by a final record with real output.
+    For each message_id, keep only the record with the largest output_tokens.
+    Messages without a message_id (e.g. user messages) are kept as-is.
+    """
+    best: dict[str, tuple[int, int]] = {}  # message_id -> (index, output_tokens)
+    to_remove: set[int] = set()
+
+    for i, msg in enumerate(messages):
+        if msg.role != "assistant" or not msg.message_id:
+            continue
+        out = msg.usage.get("output_tokens", 0) or 0
+        if msg.message_id in best:
+            old_idx, old_out = best[msg.message_id]
+            if out > old_out:
+                to_remove.add(old_idx)
+                best[msg.message_id] = (i, out)
+            else:
+                to_remove.add(i)
+        else:
+            best[msg.message_id] = (i, out)
+
+    if not to_remove:
+        return messages
+    return [m for i, m in enumerate(messages) if i not in to_remove]
 
 
 def _path_to_dirname(path: Path) -> str:

@@ -109,6 +109,14 @@ final class SessionParser {
     // MARK: - JSONL Parsing
 
     /// Parse a single JSONL session file into a Session object.
+    ///
+    /// ## Streaming deduplication
+    /// Claude Code writes multiple JSONL entries per API call during streaming:
+    /// - Several prefill records with `output_tokens = 1` (same `message.id`)
+    /// - One final record with real `output_tokens` (same `message.id`)
+    /// All share the same `message.id` and `input_tokens`.
+    /// We deduplicate by keeping only the record with the largest `output_tokens`
+    /// for each `message.id`, so token usage is not double-counted.
     private func parseSessionFile(_ filePath: String, projectPath: String) -> Session? {
         guard let data = fileManager.contents(atPath: filePath),
               let content = String(data: data, encoding: .utf8) else {
@@ -126,6 +134,11 @@ final class SessionParser {
 
         guard !messages.isEmpty else { return nil }
 
+        // Deduplicate streaming records: same message.id may appear multiple times
+        // (prefill with output_tokens=1, then final with real output_tokens).
+        // Keep only the record with the largest output_tokens for each message ID.
+        messages = deduplicateMessages(messages)
+
         let decodedProjectPath = decodeProjectPath(from: projectPath)
 
         return Session(
@@ -133,6 +146,42 @@ final class SessionParser {
             messages: messages,
             projectPath: decodedProjectPath
         )
+    }
+
+    /// Deduplicate assistant messages that share the same API message ID.
+    ///
+    /// Claude Code's JSONL logs multiple entries per streaming API call:
+    /// prefill records (output_tokens ≤ 1) followed by a final record with real output.
+    /// For each message ID, keep only the record with the largest output_tokens.
+    /// Messages without a messageId (e.g. user messages) are kept as-is.
+    private func deduplicateMessages(_ messages: [Message]) -> [Message] {
+        var bestByMsgId: [String: (index: Int, outputTokens: Int)] = [:]
+        var indicesToRemove = Set<Int>()
+
+        for (i, msg) in messages.enumerated() {
+            guard msg.role == "assistant",
+                  let msgId = msg.messageId,
+                  let usage = msg.tokenUsage else {
+                continue
+            }
+
+            if let existing = bestByMsgId[msgId] {
+                if usage.outputTokens > existing.outputTokens {
+                    indicesToRemove.insert(existing.index)
+                    bestByMsgId[msgId] = (index: i, outputTokens: usage.outputTokens)
+                } else {
+                    indicesToRemove.insert(i)
+                }
+            } else {
+                bestByMsgId[msgId] = (index: i, outputTokens: usage.outputTokens)
+            }
+        }
+
+        guard !indicesToRemove.isEmpty else { return messages }
+
+        return messages.enumerated().compactMap { (i, msg) in
+            indicesToRemove.contains(i) ? nil : msg
+        }
     }
 
     /// Parse a single JSONL line into a Message, if possible.
@@ -168,6 +217,9 @@ final class SessionParser {
         // Extract model
         let model = messageObj?["model"] as? String
 
+        // Extract API message ID for deduplication
+        let messageId = messageObj?["id"] as? String
+
         // Extract content and tool calls
         let (content, toolCalls) = extractContent(from: messageObj, timestamp: timestamp)
 
@@ -180,7 +232,8 @@ final class SessionParser {
             model: model,
             timestamp: timestamp,
             toolCalls: toolCalls,
-            tokenUsage: tokenUsage
+            tokenUsage: tokenUsage,
+            messageId: messageId
         )
     }
 

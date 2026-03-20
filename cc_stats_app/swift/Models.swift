@@ -98,6 +98,11 @@ struct Message: Identifiable, Equatable {
     let timestamp: Date?
     let toolCalls: [ToolCall]
     let tokenUsage: TokenDetail?
+    /// The API message ID from JSONL (e.g. "msg_17738...").
+    /// Used to deduplicate streaming records: Claude Code writes multiple JSONL entries
+    /// per API call (prefill records with output_tokens=1, then a final record with real output).
+    /// All entries share the same message ID.
+    let messageId: String?
 
     init(
         role: String,
@@ -105,7 +110,8 @@ struct Message: Identifiable, Equatable {
         model: String? = nil,
         timestamp: Date? = nil,
         toolCalls: [ToolCall] = [],
-        tokenUsage: TokenDetail? = nil
+        tokenUsage: TokenDetail? = nil,
+        messageId: String? = nil
     ) {
         self.role = role
         self.content = content
@@ -113,6 +119,7 @@ struct Message: Identifiable, Equatable {
         self.timestamp = timestamp
         self.toolCalls = toolCalls
         self.tokenUsage = tokenUsage
+        self.messageId = messageId
     }
 
     static func == (lhs: Message, rhs: Message) -> Bool {
