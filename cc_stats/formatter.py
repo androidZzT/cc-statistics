@@ -161,8 +161,23 @@ def format_stats(stats: SessionStats, session_count: int = 1) -> str:
 
     if stats.git_available:
         git_net = stats.git_total_added - stats.git_total_removed
-        lines.append(f"  {_yellow('[Git 已提交]')}  {stats.git_commit_count} 个 commit")
+        ai_pct = (
+            f" ({stats.git_ai_commit_count}/{stats.git_commit_count} AI)"
+            if stats.git_ai_commit_count > 0
+            else ""
+        )
+        lines.append(f"  {_yellow('[Git 已提交]')}  {stats.git_commit_count} 个 commit{_cyan(ai_pct)}")
         lines.append(f"  总新增: {_green(f'+{stats.git_total_added}')}  总删除: {_red(f'-{stats.git_total_removed}')}  净增: {_net_str(git_net)}")
+        if stats.git_ai_commit_count > 0:
+            ai_code_pct = round(
+                (stats.git_ai_added + stats.git_ai_removed)
+                / max(stats.git_total_added + stats.git_total_removed, 1)
+                * 100
+            )
+            lines.append(
+                f"  AI 代码: {_cyan(f'+{stats.git_ai_added}')} {_cyan(f'-{stats.git_ai_removed}')}  "
+                f"占比: {_cyan(f'{ai_code_pct}%')}"
+            )
         lines.append("")
 
         if stats.git_lines_by_lang:

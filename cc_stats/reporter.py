@@ -168,7 +168,11 @@ def generate_report(period: str = "week") -> str:
     ]
 
     if merged.git_available:
-        lines.append(f"| Git Commits | {merged.git_commit_count} |")
+        ai_info = ""
+        if merged.git_ai_commit_count > 0:
+            ai_pct = round(merged.git_ai_commit_count / max(merged.git_commit_count, 1) * 100)
+            ai_info = f" ({merged.git_ai_commit_count} AI, {ai_pct}%)"
+        lines.append(f"| Git Commits | {merged.git_commit_count}{ai_info} |")
 
     lines += [
         f"",
