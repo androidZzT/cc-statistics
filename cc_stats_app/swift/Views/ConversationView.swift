@@ -448,11 +448,7 @@ struct ConversationView: View {
                 }
             }
 
-            Text(message.content.prefix(500))
-                .font(.system(size: 11))
-                .foregroundColor(Theme.textPrimary)
-                .textSelection(.enabled)
-                .lineLimit(12)
+            ConversationMarkdownView(text: String(message.content.prefix(800)))
 
             if !message.toolCalls.isEmpty {
                 HStack(spacing: 4) {
@@ -748,6 +744,109 @@ struct MarkdownContentView: View {
             segments.append(.text(currentText))
         }
 
+        return segments
+    }
+}
+
+// MARK: - Conversation Markdown View (面板用，跟随 Theme 颜色)
+
+struct ConversationMarkdownView: View {
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(parseSegments().enumerated()), id: \.offset) { _, segment in
+                switch segment {
+                case .code(let lang, let code):
+                    VStack(alignment: .leading, spacing: 0) {
+                        if !lang.isEmpty {
+                            Text(lang)
+                                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                                .foregroundColor(Theme.textTertiary)
+                                .padding(.horizontal, 8)
+                                .padding(.top, 5)
+                                .padding(.bottom, 1)
+                        }
+                        Text(code)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(Theme.textPrimary)
+                            .lineSpacing(2)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, lang.isEmpty ? 6 : 3)
+                            .padding(.bottom, 3)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(Theme.background.opacity(0.6))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .strokeBorder(Theme.border.opacity(0.3), lineWidth: 0.5)
+                    )
+                case .text(let md):
+                    let trimmed = md.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        if let attr = try? AttributedString(markdown: trimmed, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                            Text(attr)
+                                .font(.system(size: 11))
+                                .foregroundColor(Theme.textPrimary)
+                                .lineSpacing(2)
+                                .textSelection(.enabled)
+                        } else {
+                            Text(trimmed)
+                                .font(.system(size: 11))
+                                .foregroundColor(Theme.textPrimary)
+                                .lineSpacing(2)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    enum Segment {
+        case text(String)
+        case code(lang: String, code: String)
+    }
+
+    private func parseSegments() -> [Segment] {
+        var segments: [Segment] = []
+        let lines = text.components(separatedBy: "\n")
+        var currentText = ""
+        var inCodeBlock = false
+        var codeLang = ""
+        var codeLines: [String] = []
+
+        for line in lines {
+            if line.hasPrefix("```") && !inCodeBlock {
+                if !currentText.isEmpty {
+                    segments.append(.text(currentText))
+                    currentText = ""
+                }
+                inCodeBlock = true
+                codeLang = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                codeLines = []
+            } else if line.hasPrefix("```") && inCodeBlock {
+                segments.append(.code(lang: codeLang, code: codeLines.joined(separator: "\n")))
+                inCodeBlock = false
+                codeLang = ""
+                codeLines = []
+            } else if inCodeBlock {
+                codeLines.append(line)
+            } else {
+                if !currentText.isEmpty { currentText += "\n" }
+                currentText += line
+            }
+        }
+
+        if inCodeBlock {
+            segments.append(.code(lang: codeLang, code: codeLines.joined(separator: "\n")))
+        }
+        if !currentText.isEmpty {
+            segments.append(.text(currentText))
+        }
         return segments
     }
 }
