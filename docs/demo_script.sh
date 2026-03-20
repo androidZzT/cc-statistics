@@ -3,7 +3,6 @@
 
 type_cmd() {
     echo ""
-    # Simulate typing
     for ((i=0; i<${#1}; i++)); do
         printf '%s' "${1:$i:1}"
         sleep 0.04
