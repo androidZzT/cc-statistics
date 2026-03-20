@@ -623,11 +623,7 @@ struct ShareCardView: View {
                 }
             }
 
-            Text(String(message.content.prefix(1500)))
-                .font(.system(size: 12, weight: .regular))
-                .foregroundColor(Color.white.opacity(0.88))
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
+            MarkdownContentView(text: String(message.content.prefix(2000)))
         }
         .padding(12)
         .background(
@@ -638,5 +634,120 @@ struct ShareCardView: View {
                         .strokeBorder(borderColor, lineWidth: 0.5)
                 )
         )
+    }
+}
+
+// MARK: - Markdown Content Renderer
+
+struct MarkdownContentView: View {
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(parseSegments().enumerated()), id: \.offset) { _, segment in
+                switch segment {
+                case .code(let lang, let code):
+                    codeBlockView(language: lang, code: code)
+                case .text(let md):
+                    if !md.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        markdownTextView(md)
+                    }
+                }
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func markdownTextView(_ md: String) -> some View {
+        Group {
+            if let attr = try? AttributedString(markdown: md, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                Text(attr)
+                    .font(.system(size: 12))
+                    .foregroundColor(Color.white.opacity(0.88))
+                    .lineSpacing(3)
+            } else {
+                Text(md)
+                    .font(.system(size: 12))
+                    .foregroundColor(Color.white.opacity(0.88))
+                    .lineSpacing(3)
+            }
+        }
+    }
+
+    private func codeBlockView(language: String, code: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !language.isEmpty {
+                Text(language)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.4))
+                    .padding(.horizontal, 10)
+                    .padding(.top, 6)
+                    .padding(.bottom, 2)
+            }
+            Text(code)
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .foregroundColor(Color(hex: "E0E0E0"))
+                .lineSpacing(2)
+                .padding(.horizontal, 10)
+                .padding(.vertical, language.isEmpty ? 8 : 4)
+                .padding(.bottom, 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
+        )
+    }
+
+    enum Segment {
+        case text(String)
+        case code(lang: String, code: String)
+    }
+
+    private func parseSegments() -> [Segment] {
+        var segments: [Segment] = []
+        let lines = text.components(separatedBy: "\n")
+        var currentText = ""
+        var inCodeBlock = false
+        var codeLang = ""
+        var codeLines: [String] = []
+
+        for line in lines {
+            if line.hasPrefix("```") && !inCodeBlock {
+                // 进入代码块
+                if !currentText.isEmpty {
+                    segments.append(.text(currentText))
+                    currentText = ""
+                }
+                inCodeBlock = true
+                codeLang = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                codeLines = []
+            } else if line.hasPrefix("```") && inCodeBlock {
+                // 结束代码块
+                segments.append(.code(lang: codeLang, code: codeLines.joined(separator: "\n")))
+                inCodeBlock = false
+                codeLang = ""
+                codeLines = []
+            } else if inCodeBlock {
+                codeLines.append(line)
+            } else {
+                if !currentText.isEmpty { currentText += "\n" }
+                currentText += line
+            }
+        }
+
+        // 处理未闭合
+        if inCodeBlock {
+            segments.append(.code(lang: codeLang, code: codeLines.joined(separator: "\n")))
+        }
+        if !currentText.isEmpty {
+            segments.append(.text(currentText))
+        }
+
+        return segments
     }
 }
