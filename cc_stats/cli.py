@@ -231,12 +231,27 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="对比所有项目的关键指标",
     )
+    parser.add_argument(
+        "--notify",
+        metavar="WEBHOOK_URL",
+        help="发送今日统计到 Webhook（自动检测飞书/钉钉/Slack）",
+    )
+    parser.add_argument(
+        "--platform",
+        choices=["feishu", "dingtalk", "slack"],
+        help="指定 Webhook 平台（配合 --notify 使用）",
+    )
 
     args = parser.parse_args(argv)
 
     if args.report:
         from .reporter import generate_report
         print(generate_report(args.report))
+        return
+
+    if args.notify:
+        from .webhook import send_notification
+        send_notification(args.notify, args.platform or "auto")
         return
 
     if args.compare:
