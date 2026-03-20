@@ -241,8 +241,34 @@ def main(argv: list[str] | None = None) -> None:
         choices=["feishu", "dingtalk", "slack"],
         help="指定 Webhook 平台（配合 --notify 使用）",
     )
+    parser.add_argument(
+        "--export-chat",
+        metavar="KEYWORD",
+        help="导出会话为 Markdown（按会话ID前缀或内容关键词搜索）",
+    )
+    parser.add_argument(
+        "--include-tools",
+        action="store_true",
+        help="导出时包含工具调用（配合 --export-chat 使用）",
+    )
 
     args = parser.parse_args(argv)
+
+    if args.export_chat:
+        from .exporter import find_and_export
+        result = find_and_export(
+            args.export_chat,
+            include_tools=args.include_tools,
+        )
+        if result:
+            # 保存到桌面
+            desktop = Path.home() / "Desktop"
+            out_file = desktop / f"chat-{args.export_chat[:12]}.md"
+            out_file.write_text(result, encoding="utf-8")
+            print(f"已导出到 {out_file}")
+        else:
+            print(f"未找到匹配的会话: {args.export_chat}", file=sys.stderr)
+        return
 
     if args.report:
         from .reporter import generate_report
