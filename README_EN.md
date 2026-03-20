@@ -1,5 +1,10 @@
 # cc-statistics
 
+[![PyPI](https://img.shields.io/pypi/v/cc-statistics?color=blue)](https://pypi.org/project/cc-statistics/)
+[![Downloads](https://img.shields.io/pypi/dm/cc-statistics?color=green)](https://pypi.org/project/cc-statistics/)
+[![GitHub stars](https://img.shields.io/github/stars/androidZzT/cc-statistics?style=social)](https://github.com/androidZzT/cc-statistics)
+[![License](https://img.shields.io/github/license/androidZzT/cc-statistics)](LICENSE)
+
 English | [中文](README.md)
 
 Claude Code session statistics tool — extract AI coding metrics from local `~/.claude/` data.

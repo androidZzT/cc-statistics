@@ -1,5 +1,10 @@
 # cc-statistics
 
+[![PyPI](https://img.shields.io/pypi/v/cc-statistics?color=blue)](https://pypi.org/project/cc-statistics/)
+[![Downloads](https://img.shields.io/pypi/dm/cc-statistics?color=green)](https://pypi.org/project/cc-statistics/)
+[![GitHub stars](https://img.shields.io/github/stars/androidZzT/cc-statistics?style=social)](https://github.com/androidZzT/cc-statistics)
+[![License](https://img.shields.io/github/license/androidZzT/cc-statistics)](LICENSE)
+
 [English](README_EN.md) | 中文
 
 Claude Code 会话统计工具 — 从本地 `~/.claude/` 数据中提取 AI Coding 工程指标。
