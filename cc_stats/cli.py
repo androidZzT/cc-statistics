@@ -63,6 +63,103 @@ def _resolve_project_name(proj_dir: Path, jsonl_files: list[Path]) -> str:
     return proj_dir.name
 
 
+def _compare_projects(args) -> None:
+    """对比所有项目的关键指标"""
+    from .formatter import _fmt_duration, _fmt_tokens
+
+    claude_projects = Path.home() / ".claude" / "projects"
+    if not claude_projects.exists():
+        print("未找到 Claude Code 项目数据")
+        return
+
+    projects: list[dict] = []
+
+    for proj in sorted(claude_projects.iterdir()):
+        if not proj.is_dir():
+            continue
+        jsonl_files = list(proj.glob("*.jsonl"))
+        if not jsonl_files:
+            continue
+
+        name = _resolve_project_name(proj, jsonl_files)
+        # 简化路径显示
+        short_name = Path(name).name if "/" in name else name
+
+        all_stats = []
+        for f in jsonl_files:
+            try:
+                session = parse_jsonl(f)
+                stats = analyze_session(session)
+
+                # 时间过滤
+                if args.since and stats.end_time and stats.end_time < args.since:
+                    continue
+                if args.until and stats.start_time and stats.start_time > args.until:
+                    continue
+
+                all_stats.append(stats)
+            except Exception:
+                continue
+
+        if not all_stats:
+            continue
+
+        merged = merge_stats(all_stats) if len(all_stats) > 1 else all_stats[0]
+
+        from .reporter import _estimate_cost
+        cost = _estimate_cost(merged)
+
+        projects.append({
+            "name": short_name,
+            "sessions": len(all_stats),
+            "instructions": merged.user_message_count,
+            "duration": merged.active_duration,
+            "tokens": merged.token_usage.total,
+            "cost": cost,
+            "added": merged.total_added + merged.git_total_added,
+            "removed": merged.total_removed + merged.git_total_removed,
+            "grade": merged.efficiencyGrade if hasattr(merged, 'efficiencyGrade') else "",
+        })
+
+    if not projects:
+        print("没有项目数据")
+        return
+
+    # 按 token 总量降序排列
+    projects.sort(key=lambda p: p["tokens"], reverse=True)
+
+    # 计算列宽
+    max_name = max(len(p["name"]) for p in projects)
+    max_name = max(max_name, 4)  # 最小宽度
+
+    # 表头
+    print()
+    print(f"  {'项目':<{max_name}}  {'会话':>4}  {'指令':>5}  {'活跃时长':>10}  {'Token':>8}  {'费用':>8}  {'代码':>10}")
+    print("─" * (max_name + 60))
+
+    total_sessions = 0
+    total_instructions = 0
+    total_tokens = 0
+    total_cost = 0.0
+
+    for p in projects:
+        dur_str = _fmt_duration(p["duration"])
+        tok_str = _fmt_tokens(p["tokens"])
+        cost_str = f"${p['cost']:.0f}" if p["cost"] >= 1 else f"${p['cost']:.2f}"
+        code_str = f"+{p['added']}/-{p['removed']}"
+
+        print(f"  {p['name']:<{max_name}}  {p['sessions']:>4}  {p['instructions']:>5}  {dur_str:>10}  {tok_str:>8}  {cost_str:>8}  {code_str:>10}")
+
+        total_sessions += p["sessions"]
+        total_instructions += p["instructions"]
+        total_tokens += p["tokens"]
+        total_cost += p["cost"]
+
+    print("─" * (max_name + 60))
+    print(f"  {'合计':<{max_name}}  {total_sessions:>4}  {total_instructions:>5}  {'':>10}  {_fmt_tokens(total_tokens):>8}  ${total_cost:>7.0f}")
+    print()
+
+
 def _list_projects() -> None:
     """列出所有已知项目"""
     claude_projects = Path.home() / ".claude" / "projects"
@@ -129,12 +226,21 @@ def main(argv: list[str] | None = None) -> None:
         metavar="PERIOD",
         help="生成周报(week)或月报(month)，输出 Markdown 格式",
     )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="对比所有项目的关键指标",
+    )
 
     args = parser.parse_args(argv)
 
     if args.report:
         from .reporter import generate_report
         print(generate_report(args.report))
+        return
+
+    if args.compare:
+        _compare_projects(args)
         return
 
     if args.list_projects:
