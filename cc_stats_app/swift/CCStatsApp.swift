@@ -50,6 +50,15 @@ final class PanelManager: ObservableObject {
         self.panel = newPanel
     }
 
+    var isVisible: Bool {
+        panel?.isVisible ?? false
+    }
+
+    func bringToFront() {
+        NSApp.activate(ignoringOtherApps: true)
+        panel?.makeKeyAndOrderFront(nil)
+    }
+
     func close() {
         panel?.close()
         panel = nil
@@ -579,21 +588,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] show in
                 guard let self = self else { return }
                 if show {
-                    self.panelManager.show(
-                        content: ConversationView(
-                            sessions: self.viewModel.recentSessions,
+                    // 如果面板已存在，拉到前面；否则新建
+                    if self.panelManager.isVisible {
+                        self.panelManager.bringToFront()
+                    } else {
+                        self.panelManager.show(
+                            content: ConversationView(
+                                sessions: self.viewModel.recentSessions,
+                                onClose: {
+                                    Task { @MainActor in
+                                        self.viewModel.showConversationPanel = false
+                                    }
+                                }
+                            ),
                             onClose: {
                                 Task { @MainActor in
                                     self.viewModel.showConversationPanel = false
                                 }
                             }
-                        ),
-                        onClose: {
-                            Task { @MainActor in
-                                self.viewModel.showConversationPanel = false
-                            }
-                        }
-                    )
+                        )
+                    }
                 } else {
                     self.panelManager.close()
                 }
