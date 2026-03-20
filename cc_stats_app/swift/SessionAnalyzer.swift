@@ -213,7 +213,7 @@ class SessionAnalyzer {
             return DurationResult(total: 0, aiProcessing: 0, userActive: 0)
         }
 
-        let totalDuration = timedMsgs.last!.ts.timeIntervalSince(timedMsgs.first!.ts)
+        // totalDuration 下面会改为 active time
 
         // 按轮次切分：每遇到 user_real 开启新轮
         // AI 时长 = 每轮从 user_real 到最后一条 assistant/user_tool 的时间
@@ -258,8 +258,9 @@ class SessionAnalyzer {
             aiTotal += lastAI.timeIntervalSince(start)
         }
 
+        // total = 活跃时长（AI + 用户），而非首尾差
         return DurationResult(
-            total: totalDuration,
+            total: aiTotal + userTotal,
             aiProcessing: aiTotal,
             userActive: userTotal
         )

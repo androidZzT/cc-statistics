@@ -351,7 +351,6 @@ def analyze_session(session: Session) -> SessionStats:
     if timed_msgs:
         stats.start_time = timed_msgs[0][0]
         stats.end_time = timed_msgs[-1][0]
-        stats.total_duration = stats.end_time - stats.start_time
 
         ai_total = timedelta()
         user_total = timedelta()
@@ -395,6 +394,8 @@ def analyze_session(session: Session) -> SessionStats:
         stats.ai_duration = ai_total
         stats.user_duration = user_total
         stats.active_duration = ai_total + user_total
+        # total_duration = 活跃时长（而非首尾差），避免 resume 会话跨天导致虚高
+        stats.total_duration = ai_total + user_total
         stats.turn_count = turn_count
 
     # -------- 4. 按语言汇总 --------
@@ -487,7 +488,7 @@ def merge_stats(all_stats: list[SessionStats]) -> SessionStats:
         merged.start_time = min(all_starts)
     if all_ends:
         merged.end_time = max(all_ends)
-    if merged.start_time and merged.end_time:
-        merged.total_duration = merged.end_time - merged.start_time
+    # total_duration = 活跃时长之和，而非首尾差
+    merged.total_duration = merged.active_duration
 
     return merged

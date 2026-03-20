@@ -144,13 +144,9 @@ def format_stats(stats: SessionStats, session_count: int = 1) -> str:
     # ── ③ 开发时长 ──
     lines.append(f"  {_cyan_bold('③')} {_bold('开发时长')}")
     lines.append(sep)
-    lines.append(f"  总时长:       {_white_bold(_fmt_duration(stats.total_duration))}")
     lines.append(f"  活跃时长:     {_green_bold(_fmt_duration(stats.active_duration))}")
     lines.append(f"    {_blue('AI 处理:')}    {_blue(_fmt_duration(stats.ai_duration))}")
     lines.append(f"    {_magenta('用户活跃:')}  {_magenta(_fmt_duration(stats.user_duration))}")
-    if stats.total_duration.total_seconds() > 0:
-        ratio = stats.active_duration.total_seconds() / stats.total_duration.total_seconds() * 100
-        lines.append(f"  活跃率:       {_green(f'{ratio:.0f}%')}")
     if stats.active_duration.total_seconds() > 0:
         ai_ratio = stats.ai_duration.total_seconds() / stats.active_duration.total_seconds() * 100
         lines.append(f"  AI 占比:      {_blue(f'{ai_ratio:.0f}%')}")
