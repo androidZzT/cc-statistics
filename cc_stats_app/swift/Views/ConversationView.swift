@@ -378,54 +378,45 @@ struct ConversationView: View {
         let selected = session.messages.filter { selectedMessageIDs.contains($0.id) }
         guard !selected.isEmpty else { return }
 
-        var md = "# Claude Code 对话片段\n\n"
+        // 构建分享卡片视图
+        let cardView = ShareCardView(
+            messages: selected,
+            projectName: session.projectPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "",
+            startTime: session.startTime
+        )
 
-        if let start = session.startTime {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd HH:mm"
-            md += "**\(formatter.string(from: start))**"
-            if let projectName = session.projectPath.map({ URL(fileURLWithPath: $0).lastPathComponent }) {
-                md += " | **\(projectName)**"
-            }
-            md += "\n\n---\n\n"
-        }
+        // 渲染为图片
+        let cardWidth: CGFloat = 520
+        let hostingView = NSHostingView(rootView: cardView.frame(width: cardWidth))
+        hostingView.frame = NSRect(x: 0, y: 0, width: cardWidth, height: 10000)
 
-        for msg in selected {
-            let isUser = msg.role == "human" || msg.role == "user"
-            let role = isUser ? "You" : "Claude"
-            let text = String(msg.content.prefix(2000))
+        // 计算实际内容高度
+        let fittingSize = hostingView.fittingSize
+        hostingView.frame = NSRect(x: 0, y: 0, width: cardWidth, height: fittingSize.height)
 
-            if let ts = msg.timestamp {
-                let formatter = DateFormatter()
-                formatter.dateFormat = "HH:mm:ss"
-                md += "### \(role) `\(formatter.string(from: ts))`\n\n"
-            } else {
-                md += "### \(role)\n\n"
-            }
-            md += "\(text)\n\n"
-        }
+        guard let bitmapRep = hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds) else { return }
+        hostingView.cacheDisplay(in: hostingView.bounds, to: bitmapRep)
 
-        md += "---\n*Shared via [cc-statistics](https://github.com/androidZzT/cc-statistics)*\n"
+        guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else { return }
 
-        // 保存到桌面并复制到剪贴板
+        // 保存到桌面
         let desktop = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
-        let fileName = "chat-share-\(selected.count)msgs.md"
+        let fileName = "chat-share-\(selected.count)msgs.png"
         let filePath = desktop.appendingPathComponent(fileName)
+        try? pngData.write(to: filePath)
 
-        do {
-            try md.write(to: filePath, atomically: true, encoding: .utf8)
-        } catch {
-            // 写入失败也不影响复制到剪贴板
-        }
-
+        // 复制图片到剪贴板
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(md, forType: .string)
+        NSPasteboard.general.setData(pngData, forType: .png)
 
         isSelectMode = false
         selectedMessageIDs.removeAll()
 
+        // 打开图片
+        NSWorkspace.shared.open(filePath)
+
         withAnimation {
-            toastMessage = L10n.isChinese ? "已复制并保存到桌面" : "Copied & saved to Desktop"
+            toastMessage = L10n.isChinese ? "已保存到桌面并打开" : "Saved to Desktop"
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation {
@@ -515,5 +506,137 @@ struct ConversationView: View {
             let m = (totalSeconds % 3600) / 60
             return m > 0 ? "\(h)h \(m)m" : "\(h)h"
         }
+    }
+}
+
+// MARK: - Share Card (渲染为长图)
+
+struct ShareCardView: View {
+    let messages: [Message]
+    let projectName: String
+    let startTime: Date?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack(spacing: 8) {
+                // Claude logo circle
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(hex: "00D4AA"), Color(hex: "7B61FF")],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 28, height: 28)
+                    Text("CC")
+                        .font(.system(size: 11, weight: .black, design: .rounded))
+                        .foregroundColor(.white)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Claude Code")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                    HStack(spacing: 6) {
+                        if !projectName.isEmpty {
+                            Text(projectName)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.6))
+                        }
+                        if let start = startTime {
+                            let formatter: DateFormatter = {
+                                let f = DateFormatter()
+                                f.dateFormat = "yyyy-MM-dd HH:mm"
+                                return f
+                            }()
+                            Text(formatter.string(from: start))
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.5))
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .padding(16)
+            .background(Color(hex: "1A1A2E"))
+
+            // Messages
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(messages) { msg in
+                    shareMessageBubble(msg)
+                }
+            }
+            .padding(16)
+            .background(Color(hex: "16213E"))
+
+            // Footer
+            HStack {
+                Text("cc-statistics")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.3))
+                Spacer()
+                Text("github.com/androidZzT/cc-statistics")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.25))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color(hex: "0F3460"))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .padding(8)
+        .background(Color(hex: "0A0A0A"))
+    }
+
+    private func shareMessageBubble(_ message: Message) -> some View {
+        let isUser = message.role == "human" || message.role == "user"
+        let bgColor = isUser ? Color(hex: "00D4AA").opacity(0.1) : Color(hex: "7B61FF").opacity(0.1)
+        let borderColor = isUser ? Color(hex: "00D4AA").opacity(0.25) : Color(hex: "7B61FF").opacity(0.25)
+        let roleLabel = isUser ? "You" : "Claude"
+        let roleColor = isUser ? Color(hex: "00D4AA") : Color(hex: "7B61FF")
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: isUser ? "person.fill" : "cpu")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(roleColor)
+                Text(roleLabel)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(roleColor)
+                Spacer()
+                if let ts = message.timestamp {
+                    let formatter: DateFormatter = {
+                        let f = DateFormatter()
+                        f.dateFormat = "HH:mm"
+                        return f
+                    }()
+                    Text(formatter.string(from: ts))
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.35))
+                }
+            }
+
+            Text(String(message.content.prefix(1500)))
+                .font(.system(size: 12, weight: .regular))
+                .foregroundColor(Color.white.opacity(0.88))
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(bgColor)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(borderColor, lineWidth: 0.5)
+                )
+        )
     }
 }
