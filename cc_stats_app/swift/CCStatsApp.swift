@@ -11,6 +11,7 @@ final class PanelManager: ObservableObject {
 
     func show<Content: View>(content: Content, onClose: @escaping () -> Void) {
         if let existing = panel {
+            NSApp.activate(ignoringOtherApps: true)
             existing.makeKeyAndOrderFront(nil)
             return
         }
@@ -34,6 +35,7 @@ final class PanelManager: ObservableObject {
         }
 
         newPanel.positionAtRightCenter()
+        NSApp.activate(ignoringOtherApps: true)
         newPanel.makeKeyAndOrderFront(nil)
 
         closeObserver = NotificationCenter.default.addObserver(
