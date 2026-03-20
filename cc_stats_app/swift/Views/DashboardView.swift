@@ -8,6 +8,53 @@ struct DashboardView: View {
     @ObservedObject var viewModel: StatsViewModel
     @State private var toastMessage: String?
     @State private var processes: [ProcessInfo2] = []
+    @State private var trendMetric: TrendMetric = .cost
+
+    enum TrendMetric: String, CaseIterable {
+        case cost, tokens, sessions, activeTime
+
+        var label: String {
+            switch self {
+            case .cost: return L10n.isChinese ? "费用" : "Cost"
+            case .tokens: return "Token"
+            case .sessions: return L10n.isChinese ? "会话" : "Sessions"
+            case .activeTime: return L10n.isChinese ? "时长" : "Time"
+            }
+        }
+
+        func value(for point: DailyStatPoint) -> Double {
+            switch self {
+            case .cost: return point.cost
+            case .tokens: return Double(point.tokens)
+            case .sessions: return Double(point.sessions)
+            case .activeTime: return point.activeMinutes
+            }
+        }
+
+        func format(_ value: Double) -> String {
+            switch self {
+            case .cost: return CostEstimator.formatCost(value)
+            case .tokens:
+                if value >= 1_000_000 { return String(format: "%.0fM", value / 1_000_000) }
+                if value >= 1_000 { return String(format: "%.0fK", value / 1_000) }
+                return String(format: "%.0f", value)
+            case .sessions: return String(format: "%.0f", value)
+            case .activeTime:
+                let h = Int(value) / 60
+                let m = Int(value) % 60
+                return h > 0 ? "\(h)h\(m)m" : "\(m)m"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .cost: return Theme.amber
+            case .tokens: return Theme.purple
+            case .sessions: return Theme.cyan
+            case .activeTime: return Theme.green
+            }
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -595,34 +642,56 @@ struct DashboardView: View {
     private var trendChart: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 8) {
-                SectionHeader(icon: "chart.xyaxis.line", title: L10n.dailyTrend, accentColor: Theme.cyan)
+                // Header with metric picker
+                HStack {
+                    SectionHeader(icon: "chart.xyaxis.line", title: L10n.dailyTrend, accentColor: Theme.cyan)
 
-                let data = viewModel.dailyStats.filter { $0.tokens > 0 || $0.sessions > 0 }
+                    HStack(spacing: 2) {
+                        ForEach(TrendMetric.allCases, id: \.self) { metric in
+                            Button {
+                                trendMetric = metric
+                            } label: {
+                                Text(metric.label)
+                                    .font(.system(size: 8, weight: trendMetric == metric ? .bold : .medium))
+                                    .foregroundColor(trendMetric == metric ? metric.color : Theme.textTertiary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                            .fill(trendMetric == metric ? metric.color.opacity(0.12) : Color.clear)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                let data = viewModel.dailyStats.filter { trendMetric.value(for: $0) > 0 || $0.sessions > 0 }
                 if data.isEmpty {
                     Text(L10n.noData)
                         .font(.system(size: 11))
                         .foregroundColor(Theme.textTertiary)
                         .padding(.vertical, 8)
                 } else {
-                    // Mini bar chart using SwiftUI shapes
-                    let maxCost = data.map(\.cost).max() ?? 1
+                    let maxVal = viewModel.dailyStats.map { trendMetric.value(for: $0) }.max() ?? 1
                     HStack(alignment: .bottom, spacing: 3) {
                         ForEach(viewModel.dailyStats) { point in
+                            let val = trendMetric.value(for: point)
                             VStack(spacing: 2) {
-                                if point.cost > 0 {
-                                    Text(CostEstimator.formatCost(point.cost))
+                                if val > 0 {
+                                    Text(trendMetric.format(val))
                                         .font(.system(size: 7, weight: .medium, design: .monospaced))
-                                        .foregroundColor(Theme.amber)
+                                        .foregroundColor(trendMetric.color)
                                 }
                                 RoundedRectangle(cornerRadius: 2)
                                     .fill(
                                         LinearGradient(
-                                            colors: [Theme.cyan.opacity(0.8), Theme.purple.opacity(0.8)],
+                                            colors: [trendMetric.color.opacity(0.6), trendMetric.color.opacity(0.9)],
                                             startPoint: .bottom,
                                             endPoint: .top
                                         )
                                     )
-                                    .frame(height: max(2, CGFloat(point.cost / maxCost) * 60))
+                                    .frame(height: max(2, CGFloat(val / maxVal) * 60))
                                 Text(point.label.suffix(3))
                                     .font(.system(size: 7))
                                     .foregroundColor(Theme.textTertiary)
