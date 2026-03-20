@@ -104,15 +104,12 @@ struct StatCard: View {
                     }
                     .buttonStyle(.plain)
                     .popover(isPresented: $showHelp, arrowEdge: .bottom) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(helpText ?? "")
-                                .font(.system(size: 11, weight: .regular))
-                                .lineSpacing(4)
-                        }
-                        .foregroundColor(.primary)
-                        .padding(12)
-                        .frame(width: 260, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                        Text(helpText ?? "")
+                            .font(.system(size: 11))
+                            .lineSpacing(3)
+                            .foregroundColor(.primary)
+                            .padding(10)
+                            .frame(minWidth: 180, maxWidth: 260)
                     }
                 }
             }
@@ -178,15 +175,12 @@ struct SectionHeader: View {
                 }
                 .buttonStyle(.plain)
                 .popover(isPresented: $showHelp, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(helpText ?? "")
-                            .font(.system(size: 11, weight: .regular))
-                            .lineSpacing(4)
-                    }
-                    .foregroundColor(.primary)
-                    .padding(12)
-                    .frame(width: 280, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(helpText ?? "")
+                        .font(.system(size: 11))
+                        .lineSpacing(3)
+                        .foregroundColor(.primary)
+                        .padding(10)
+                        .frame(minWidth: 200, maxWidth: 300)
                 }
             }
 

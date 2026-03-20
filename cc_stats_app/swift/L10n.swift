@@ -190,8 +190,8 @@ enum L10n {
     }
     static var helpEfficiency: String {
         isChinese
-            ? "三维度评分（满分100）：\n• 代码产出（40分）：每 1K Token 产出代码行数，0.5行/K满分\n• 指令精准（30分）：平均每条指令消耗 Token，越少越好\n• AI 利用率（30分）：AI处理时间占活跃时间比例，70%以上满分\nS≥90 A≥75 B≥60 C≥40 D<40"
-            : "Three dimensions (max 100):\n• Code Output (40pts): lines per 1K tokens, 0.5 lines/K = full\n• Precision (30pts): avg tokens per instruction, lower = better\n• AI Utilization (30pts): AI time / active time, 70%+ = full\nS≥90 A≥75 B≥60 C≥40 D<40"
+            ? "代码产出(40分): 行/K Token\n指令精准(30分): Token/条\nAI利用率(30分): AI时间占比\nS≥90 A≥75 B≥60 C≥40 D<40"
+            : "Code(40): lines/K Token\nPrecision(30): Token/msg\nAI Util(30): AI time ratio\nS≥90 A≥75 B≥60 C≥40 D<40"
     }
     static var helpCostPrediction: String {
         isChinese
