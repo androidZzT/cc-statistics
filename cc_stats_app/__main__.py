@@ -45,6 +45,10 @@ def _save_binary_version(version: str):
 
 def _try_download_binary() -> bool:
     """尝试从 GitHub Release 下载预编译二进制"""
+    # 如果本地源码比二进制新，跳过预编译，走本地编译
+    if _need_recompile():
+        return False
+
     current_version = _get_current_version()
     binary_version = _get_binary_version()
 
