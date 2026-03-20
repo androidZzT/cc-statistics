@@ -83,8 +83,6 @@ struct StatCard: View {
     let accentColor: Color
     var helpText: String? = nil
 
-    @State private var showHelp = false
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
@@ -94,23 +92,11 @@ struct StatCard: View {
                 Text(title)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(Theme.textSecondary)
-                if helpText != nil {
-                    Button {
-                        showHelp.toggle()
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 8))
-                            .foregroundColor(Theme.textTertiary.opacity(0.5))
-                    }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: $showHelp, arrowEdge: .bottom) {
-                        Text(helpText ?? "")
-                            .font(.system(size: 11))
-                            .lineSpacing(3)
-                            .foregroundColor(.primary)
-                            .padding(10)
-                            .frame(minWidth: 180, maxWidth: 260)
-                    }
+                if let help = helpText {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 8))
+                        .foregroundColor(Theme.textTertiary.opacity(0.5))
+                        .help(help)
                 }
             }
 
@@ -152,8 +138,6 @@ struct SectionHeader: View {
     var accentColor: Color = Theme.cyan
     var helpText: String? = nil
 
-    @State private var showHelp = false
-
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
@@ -165,23 +149,11 @@ struct SectionHeader: View {
                 .textCase(.uppercase)
                 .tracking(0.8)
 
-            if helpText != nil {
-                Button {
-                    showHelp.toggle()
-                } label: {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(Theme.textTertiary.opacity(0.6))
-                }
-                .buttonStyle(.plain)
-                .popover(isPresented: $showHelp, arrowEdge: .bottom) {
-                    Text(helpText ?? "")
-                        .font(.system(size: 11))
-                        .lineSpacing(3)
-                        .foregroundColor(.primary)
-                        .padding(10)
-                        .frame(minWidth: 200, maxWidth: 300)
-                }
+            if let help = helpText {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(Theme.textTertiary.opacity(0.6))
+                    .help(help)
             }
 
             Spacer()
