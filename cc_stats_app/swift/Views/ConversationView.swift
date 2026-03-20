@@ -338,8 +338,9 @@ struct ConversationView: View {
 
             // Messages
             ScrollView(.vertical, showsIndicators: true) {
+                let visibleMessages = session.messages.filter { !$0.isToolResult && !$0.isMeta }
                 LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(session.messages) { message in
+                    ForEach(visibleMessages) { message in
                         HStack(spacing: 6) {
                             if isSelectMode {
                                 Button {

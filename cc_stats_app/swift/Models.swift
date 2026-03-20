@@ -98,6 +98,8 @@ struct Message: Identifiable, Equatable {
     let timestamp: Date?
     let toolCalls: [ToolCall]
     let tokenUsage: TokenDetail?
+    let isToolResult: Bool
+    let isMeta: Bool
 
     init(
         role: String,
@@ -105,7 +107,9 @@ struct Message: Identifiable, Equatable {
         model: String? = nil,
         timestamp: Date? = nil,
         toolCalls: [ToolCall] = [],
-        tokenUsage: TokenDetail? = nil
+        tokenUsage: TokenDetail? = nil,
+        isToolResult: Bool = false,
+        isMeta: Bool = false
     ) {
         self.role = role
         self.content = content
@@ -113,6 +117,8 @@ struct Message: Identifiable, Equatable {
         self.timestamp = timestamp
         self.toolCalls = toolCalls
         self.tokenUsage = tokenUsage
+        self.isToolResult = isToolResult
+        self.isMeta = isMeta
     }
 
     static func == (lhs: Message, rhs: Message) -> Bool {

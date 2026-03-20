@@ -174,14 +174,29 @@ final class SessionParser {
         // Extract token usage
         let tokenUsage = extractTokenUsage(from: messageObj)
 
+        // Detect tool_result and meta messages
+        let isToolResult = (type == "tool_result") || checkIsToolResult(messageObj)
+        let isMeta = json["isMeta"] as? Bool ?? false
+
         return Message(
             role: role,
             content: content,
             model: model,
             timestamp: timestamp,
             toolCalls: toolCalls,
-            tokenUsage: tokenUsage
+            tokenUsage: tokenUsage,
+            isToolResult: isToolResult,
+            isMeta: isMeta
         )
+    }
+
+    /// Check if message content contains tool_result blocks
+    private func checkIsToolResult(_ messageObj: [String: Any]?) -> Bool {
+        guard let content = messageObj?["content"] else { return false }
+        if let arr = content as? [[String: Any]] {
+            return arr.contains { ($0["type"] as? String) == "tool_result" }
+        }
+        return false
     }
 
     // MARK: - Content Extraction
