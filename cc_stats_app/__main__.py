@@ -116,11 +116,16 @@ def _compile_swift():
     # 收集所有 Swift 文件
     swift_files = glob.glob(os.path.join(_swift_dir, "**", "*.swift"), recursive=True)
 
+    import platform
+    arch = "arm64" if platform.machine() == "arm64" else "x86_64"
+    target = f"{arch}-apple-macosx12.0"
+
     result = subprocess.run(
         [
             "swiftc",
             *swift_files,
             "-o", _swift_bin,
+            "-target", target,
             "-framework", "Cocoa",
             "-framework", "SwiftUI",
             "-framework", "Carbon",

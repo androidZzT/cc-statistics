@@ -149,7 +149,6 @@ struct SectionHeader: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundColor(Theme.textPrimary)
                 .textCase(.uppercase)
-                .tracking(0.8)
 
             if helpText != nil {
                 InfoBubble(text: helpText!, showHelp: $showHelp)

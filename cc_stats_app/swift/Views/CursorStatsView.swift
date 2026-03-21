@@ -203,7 +203,6 @@ struct CursorStatsView: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundColor(Theme.textSecondary)
                 .textCase(.uppercase)
-                .tracking(0.5)
 
             let days = Array(stats.dailyCodeStats.prefix(7).reversed())
             let maxVal = days.map { $0.totalSuggested }.max() ?? 1
