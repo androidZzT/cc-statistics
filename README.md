@@ -7,7 +7,7 @@
 
 [English](README_EN.md) | 中文
 
-Claude Code 会话统计工具 — 从本地 `~/.claude/` 数据中提取 AI Coding 工程指标。
+AI Coding 会话统计工具 — 支持 Claude Code / Gemini CLI / Codex / Cursor，从本地数据中提取工程指标。
 
 <img src="docs/screenshot.png" width="420" alt="CC Stats Dashboard">
 
@@ -15,22 +15,24 @@ Claude Code 会话统计工具 — 从本地 `~/.claude/` 数据中提取 AI Cod
 
 <img src="docs/demo.gif" width="600" alt="CC Stats CLI Demo">
 
+## 核心亮点
+
+- **多数据源** — 支持 Claude Code、Gemini CLI、Codex、Cursor，可切换或聚合统计
+- **费用估算** — 内置 Opus / Sonnet / Haiku / Gemini 2.5 Pro / Flash / GPT-4o 等模型定价
+- **多维统计** — 指令数、工具调用 Top 10、开发时长（AI vs 用户）、代码变更（按语言）、Token（按模型）
+- **每日趋势** — 14 天费用趋势图，直观掌握 AI 使用规律
+- **用量预警** — 设置单日/每周费用上限，超限时状态栏变红 + 系统通知
+- **会话搜索 & 恢复** — 搜索历史会话内容，一键复制 `claude --resume` 恢复对话
+- **周报/月报** — 自动生成 Markdown 统计报告，支持飞书/钉钉/Slack 推送
+- **纯本地** — 所有数据读取自本地文件，不联网，不上传
+- **三种模式** — CLI 命令行 + Web Dashboard（跨平台）+ macOS 原生状态栏面板
+- **双语** — 自动跟随系统语言，支持中文 / English 手动切换
+
 ## 请 cc 吃 Token
 
 如果这个工具对你有帮助，欢迎请 cc 吃点 Token :)
 
 <img src="docs/donate.jpg" width="200" alt="微信赞赏码">
-
-## 核心亮点
-
-- **费用估算** — 根据 Opus / Sonnet / Haiku / GPT-4o 定价自动计算预估花费
-- **会话搜索 & 恢复** — 搜索历史会话内容，点击即可复制 `claude --resume` 命令，一键恢复对话
-- **多维统计** — 指令数、工具调用 Top 10、开发时长（AI vs 用户）、代码变更（按语言拆分）、Token 消耗（按模型拆分）
-- **每日趋势** — 14 天费用趋势图，直观掌握 AI 使用规律
-- **用量预警** — 设置单日/每周费用上限，超限时状态栏变红 + 系统通知
-- **纯本地** — 所有数据读取自本地文件，不联网，不上传
-- **三种模式** — CLI 命令行 + Web Dashboard（跨平台）+ macOS 原生状态栏面板
-- **双语** — 自动跟随系统语言，支持中文 / English 手动切换
 
 ## 安装
 
@@ -60,7 +62,7 @@ pip install -e .
 
 ```bash
 cc-stats                     # 分析当前目录的所有会话
-cc-stats --list              # 列出所有项目
+cc-stats --list              # 列出所有项目（Claude + Gemini）
 cc-stats compose-album       # 按关键词匹配项目
 cc-stats --all --since 3d    # 最近 3 天所有项目
 cc-stats --all --since 2w    # 最近 2 周
@@ -106,6 +108,7 @@ cc-stats-web
 
 启动后自动打开浏览器，展示暗色主题统计面板：
 
+- 数据源切换：Claude Code / Gemini CLI / All Sources
 - 项目选择器 + 时间范围切换（Today / 7d / 30d / All）
 - 4 项指标卡片：指令数、工具调用、活跃时长、预估费用
 - 每日趋势：14 天费用条形图
@@ -128,7 +131,7 @@ cc-stats-app
 - 超限变红预警
 
 **统计面板（原生 SwiftUI）：**
-- 多数据源：Claude Code / Codex / Cursor，可切换或聚合展示
+- 多数据源：Claude Code / Gemini CLI / Codex / Cursor，可切换或聚合展示
 - 主题切换：跟随系统 / 深色 / 浅色
 - 用量预警：单日/每周费用上限，超限系统通知
 - 导出统计数据（JSON / CSV，自动保存到桌面并打开）
@@ -148,11 +151,12 @@ cc-stats-app
 
 ## 数据来源
 
-所有数据读取自 `~/.claude/` 本地文件，不联网，不上传：
+所有数据读取自本地文件，不联网，不上传：
 
-| 数据 | 来源 |
-|------|------|
-| 会话消息 | `~/.claude/projects/<project>/<session>.jsonl` |
-| 工具调用 | JSONL 中 assistant 消息的 `tool_use` 块 |
-| Token 用量 | JSONL 中 assistant 消息的 `usage` 字段 |
+| 数据源 | 路径 |
+|--------|------|
+| Claude Code | `~/.claude/projects/<project>/<session>.jsonl` |
+| Gemini CLI | `~/.gemini/tmp/<project>/chats/<session>.json` |
+| Codex | `~/.codex/sessions/*.jsonl` |
+| Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | Git 变更 | 项目目录的 `git log --numstat` |
