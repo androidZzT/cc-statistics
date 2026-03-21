@@ -29,10 +29,13 @@ Claude Code session statistics tool — extract AI coding metrics from local `~/
 ## Installation
 
 ```bash
-# Recommended: pipx for global install
+# uv (recommended, fastest)
+uv tool install cc-statistics
+
+# pipx
 pipx install cc-statistics
 
-# Or via pip
+# pip
 pip install cc-statistics
 ```
 
@@ -43,9 +46,7 @@ Zero dependencies — Python stdlib only.
 ```bash
 git clone https://github.com/androidZzT/cc-statistics.git
 cd cc-statistics
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+uv sync           # or: pip install -e .
 ```
 
 ## Usage
