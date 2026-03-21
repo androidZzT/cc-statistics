@@ -415,8 +415,13 @@ struct ConversationView: View {
         bitmapRep.size = NSSize(width: cardWidth, height: fittingSize.height)
 
         NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmapRep)
-        hostingView.displayIgnoringOpacity(hostingView.bounds, in: NSGraphicsContext.current!)
+        guard let ctx = NSGraphicsContext(bitmapImageRep: bitmapRep) else {
+            NSGraphicsContext.restoreGraphicsState()
+            return
+        }
+        NSGraphicsContext.current = ctx
+        ctx.cgContext.scaleBy(x: scale, y: scale)
+        hostingView.displayIgnoringOpacity(hostingView.bounds, in: ctx)
         NSGraphicsContext.restoreGraphicsState()
 
         guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else { return }
