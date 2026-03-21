@@ -126,6 +126,9 @@ final class SessionParser {
 
         guard !messages.isEmpty else { return nil }
 
+        // 流式去重：同一条 API 消息可能写多条 JSONL 记录
+        messages = deduplicateMessages(messages)
+
         let decodedProjectPath = decodeProjectPath(from: projectPath)
 
         return Session(
@@ -174,6 +177,9 @@ final class SessionParser {
         // Extract token usage
         let tokenUsage = extractTokenUsage(from: messageObj)
 
+        // Extract API message ID for deduplication
+        let messageId = messageObj?["id"] as? String
+
         // Detect tool_result and meta messages
         let isToolResult = (type == "tool_result") || checkIsToolResult(messageObj)
         let isMeta = json["isMeta"] as? Bool ?? false
@@ -186,8 +192,38 @@ final class SessionParser {
             toolCalls: toolCalls,
             tokenUsage: tokenUsage,
             isToolResult: isToolResult,
-            isMeta: isMeta
+            isMeta: isMeta,
+            messageId: messageId
         )
+    }
+
+    /// 按 messageId 去重 assistant 消息，保留 outputTokens 最大的记录。
+    /// Claude Code 流式写入时，同一条消息会产生 prefill（outputTokens=1）+ final（实际值）多条记录。
+    private func deduplicateMessages(_ messages: [Message]) -> [Message] {
+        var bestByMsgId: [String: (index: Int, outputTokens: Int)] = [:]
+        var indicesToRemove = Set<Int>()
+
+        for (i, msg) in messages.enumerated() {
+            guard msg.role == "assistant",
+                  let msgId = msg.messageId,
+                  let usage = msg.tokenUsage else {
+                continue
+            }
+
+            if let existing = bestByMsgId[msgId] {
+                if usage.outputTokens > existing.outputTokens {
+                    indicesToRemove.insert(existing.index)
+                    bestByMsgId[msgId] = (index: i, outputTokens: usage.outputTokens)
+                } else {
+                    indicesToRemove.insert(i)
+                }
+            } else {
+                bestByMsgId[msgId] = (index: i, outputTokens: usage.outputTokens)
+            }
+        }
+
+        guard !indicesToRemove.isEmpty else { return messages }
+        return messages.enumerated().compactMap { indicesToRemove.contains($0.offset) ? nil : $0.element }
     }
 
     /// Check if message content contains tool_result blocks

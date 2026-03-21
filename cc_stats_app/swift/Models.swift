@@ -103,6 +103,7 @@ struct Message: Identifiable, Equatable {
     let tokenUsage: TokenDetail?
     let isToolResult: Bool
     let isMeta: Bool
+    let messageId: String?  // API message ID，用于流式去重
 
     init(
         role: String,
@@ -112,7 +113,8 @@ struct Message: Identifiable, Equatable {
         toolCalls: [ToolCall] = [],
         tokenUsage: TokenDetail? = nil,
         isToolResult: Bool = false,
-        isMeta: Bool = false
+        isMeta: Bool = false,
+        messageId: String? = nil
     ) {
         self.role = role
         self.content = content
@@ -122,6 +124,7 @@ struct Message: Identifiable, Equatable {
         self.tokenUsage = tokenUsage
         self.isToolResult = isToolResult
         self.isMeta = isMeta
+        self.messageId = messageId
     }
 
     static func == (lhs: Message, rhs: Message) -> Bool {

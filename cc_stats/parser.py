@@ -26,6 +26,7 @@ class Message:
     is_tool_result: bool = False
     is_meta: bool = False
     session_id: str = ""
+    message_id: str = ""  # API message ID，用于流式去重
 
 
 @dataclass
@@ -93,7 +94,13 @@ def parse_jsonl(path: Path) -> Session:
                 is_tool_result=is_tool_result,
                 is_meta=obj.get("isMeta", False),
                 session_id=obj.get("sessionId", session_id),
+                message_id=raw_msg.get("id", ""),
             ))
+
+    # 流式去重：Claude Code 对同一条 API 消息会写多条 JSONL 记录
+    # （prefill 记录 output_tokens=1 + 最终记录 output_tokens=实际值）
+    # 按 message_id 去重，保留 output_tokens 最大的记录
+    messages = _deduplicate_messages(messages)
 
     return Session(
         session_id=session_id,
@@ -101,6 +108,30 @@ def parse_jsonl(path: Path) -> Session:
         file_path=path,
         messages=messages,
     )
+
+
+def _deduplicate_messages(messages: list[Message]) -> list[Message]:
+    """按 message_id 去重 assistant 消息，保留 output_tokens 最大的记录"""
+    best: dict[str, tuple[int, int]] = {}  # message_id -> (index, output_tokens)
+    to_remove: set[int] = set()
+
+    for i, msg in enumerate(messages):
+        if msg.role != "assistant" or not msg.message_id:
+            continue
+        out = msg.usage.get("output_tokens", 0) or 0
+        if msg.message_id in best:
+            old_idx, old_out = best[msg.message_id]
+            if out > old_out:
+                to_remove.add(old_idx)
+                best[msg.message_id] = (i, out)
+            else:
+                to_remove.add(i)
+        else:
+            best[msg.message_id] = (i, out)
+
+    if not to_remove:
+        return messages
+    return [m for i, m in enumerate(messages) if i not in to_remove]
 
 
 def _path_to_dirname(path: Path) -> str:
