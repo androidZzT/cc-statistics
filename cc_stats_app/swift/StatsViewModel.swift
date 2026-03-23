@@ -340,8 +340,15 @@ final class StatsViewModel: ObservableObject {
     }
 
     private func sendSystemNotification(title: String, body: String) {
+        // Escape backslashes and double quotes to prevent AppleScript injection
+        let safeTitle = title
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let safeBody = body
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
         let script = """
-        display notification "\(body)" with title "\(title)" sound name "Glass"
+        display notification "\(safeBody)" with title "\(safeTitle)" sound name "Glass"
         """
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
