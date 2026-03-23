@@ -91,16 +91,7 @@ class SessionAnalyzer {
             }
 
             for (model, detail) in s.tokenUsage {
-                if let existing = mergedTokenUsage[model] {
-                    mergedTokenUsage[model] = TokenDetail(
-                        inputTokens: existing.inputTokens + detail.inputTokens,
-                        outputTokens: existing.outputTokens + detail.outputTokens,
-                        cacheCreationInputTokens: existing.cacheCreationInputTokens + detail.cacheCreationInputTokens,
-                        cacheReadInputTokens: existing.cacheReadInputTokens + detail.cacheReadInputTokens
-                    )
-                } else {
-                    mergedTokenUsage[model] = detail
-                }
+                mergedTokenUsage[model, default: TokenDetail()] += detail
             }
 
             mergedCodeChanges.append(contentsOf: s.codeChanges)
@@ -139,7 +130,6 @@ class SessionAnalyzer {
         let duration = calculateDuration(messages)
         let codeChanges = collectCodeChanges(messages)
         let tokenUsage = aggregateTokenUsage(messages)
-        let gitStats = collectGitStats(session: session)
 
         return SessionStats(
             userInstructions: userInstructions,
@@ -150,9 +140,9 @@ class SessionAnalyzer {
             codeChanges: codeChanges,
             tokenUsage: tokenUsage,
             sessionCount: 1,
-            gitCommits: gitStats.commits,
-            gitAdditions: gitStats.additions,
-            gitDeletions: gitStats.deletions
+            gitCommits: 0,
+            gitAdditions: 0,
+            gitDeletions: 0
         )
     }
 
@@ -333,100 +323,9 @@ class SessionAnalyzer {
         var usage: [String: TokenDetail] = [:]
         for msg in messages {
             guard let model = msg.model, let detail = msg.tokenUsage else { continue }
-            if let existing = usage[model] {
-                usage[model] = TokenDetail(
-                    inputTokens: existing.inputTokens + detail.inputTokens,
-                    outputTokens: existing.outputTokens + detail.outputTokens,
-                    cacheCreationInputTokens: existing.cacheCreationInputTokens + detail.cacheCreationInputTokens,
-                    cacheReadInputTokens: existing.cacheReadInputTokens + detail.cacheReadInputTokens
-                )
-            } else {
-                usage[model] = detail
-            }
+            usage[model, default: TokenDetail()] += detail
         }
         return usage
     }
 
-    // MARK: - Git Stats
-
-    private struct GitStats {
-        let commits: Int
-        let additions: Int
-        let deletions: Int
-    }
-
-    private static func collectGitStats(session: Session) -> GitStats {
-        guard let projectPath = session.projectPath else {
-            return GitStats(commits: 0, additions: 0, deletions: 0)
-        }
-
-        let timestamped = session.messages.compactMap { $0.timestamp }
-        guard let startDate = timestamped.min(),
-              let endDate = timestamped.max() else {
-            return GitStats(commits: 0, additions: 0, deletions: 0)
-        }
-
-        let formatter = ISO8601DateFormatter()
-        let afterStr = formatter.string(from: startDate)
-        let beforeStr = formatter.string(from: endDate)
-
-        let process = Process()
-        let pipe = Pipe()
-
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = [
-            "log",
-            "--numstat",
-            "--after=\(afterStr)",
-            "--before=\(beforeStr)",
-        ]
-        process.currentDirectoryURL = URL(fileURLWithPath: projectPath)
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return GitStats(commits: 0, additions: 0, deletions: 0)
-        }
-
-        guard process.terminationStatus == 0 else {
-            return GitStats(commits: 0, additions: 0, deletions: 0)
-        }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8) else {
-            return GitStats(commits: 0, additions: 0, deletions: 0)
-        }
-
-        return parseGitLog(output)
-    }
-
-    private static func parseGitLog(_ output: String) -> GitStats {
-        var commits = 0
-        var additions = 0
-        var deletions = 0
-
-        let lines = output.components(separatedBy: "\n")
-        for line in lines {
-            if line.hasPrefix("commit ") {
-                commits += 1
-                continue
-            }
-
-            // numstat lines: <additions>\t<deletions>\t<file>
-            let parts = line.components(separatedBy: "\t")
-            if parts.count >= 3 {
-                if let add = Int(parts[0]) {
-                    additions += add
-                }
-                if let del = Int(parts[1]) {
-                    deletions += del
-                }
-            }
-        }
-
-        return GitStats(commits: commits, additions: additions, deletions: deletions)
-    }
 }
