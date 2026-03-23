@@ -145,10 +145,8 @@ final class StatsViewModel: ObservableObject {
     // MARK: - Core Refresh Pipeline
 
     /// 完整刷新 = 磁盘加载（重） + 内存筛选（轻）
+    /// isLoading 由 applyFilterAndUpdate 统一管理。
     private func fullRefresh() async {
-        isLoading = true
-        defer { isLoading = false }
-
         await loadData()
         await applyFilterAndUpdate()
     }
@@ -256,26 +254,17 @@ final class StatsViewModel: ObservableObject {
                 .sorted { ($0.endTime ?? .distantPast) > ($1.endTime ?? .distantPast) }
                 .prefix(30).map { $0 }
 
-            // 计算当天 token
-            let todayStart = Calendar.current.startOfDay(for: Date())
-            let todaySessions = sessions.filter { session in
-                session.messages.contains { $0.timestamp.map { $0 >= todayStart } ?? false }
-            }
-            let todayStats = SessionAnalyzer.analyze(
-                sessions: todaySessions,
-                since: todayStart
-            )
-
-            // 14 天日统计（单次分桶算法）
+            // 14 天日统计（单次分桶算法，today 是最后一个桶）
             let daily = Self.computeDailyStats(from: sessions)
+            let todayPoint = daily.last
             let weeklyCost = daily.suffix(7).reduce(0.0) { $0 + $1.cost }
 
             return FilterResult(
                 stats: stats,
                 recentSessions: recent,
-                todayTokens: todayStats.totalTokens,
-                todayCost: todayStats.estimatedCost,
-                todaySessions: todaySessions.count,
+                todayTokens: todayPoint?.tokens ?? 0,
+                todayCost: todayPoint?.cost ?? 0,
+                todaySessions: todayPoint?.sessions ?? 0,
                 dailyStats: daily,
                 weeklyCost: weeklyCost
             )
@@ -314,6 +303,7 @@ final class StatsViewModel: ObservableObject {
 
     /// 单次遍历将 sessions 按天分桶，替代 14 次循环遍历。
     /// 复杂度从 O(14 × N × M) 降到 O(N × M + 14 × bucket_size)。
+    /// 最后一个桶（index 13）是今天的数据，可直接用于 todayTokens/todayCost。
     nonisolated static func computeDailyStats(from sessions: [Session]) -> [DailyStatPoint] {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
@@ -322,9 +312,9 @@ final class StatsViewModel: ObservableObject {
         }
 
         // 一次遍历，按天分桶
-        var buckets: [Set<Int>] = Array(repeating: [], count: 14)
+        var buckets: [[Session]] = Array(repeating: [], count: 14)
 
-        for (sessionIdx, session) in sessions.enumerated() {
+        for session in sessions {
             var seenDays = Set<Int>()
             for msg in session.messages {
                 guard let ts = msg.timestamp, ts >= rangeStart else { continue }
@@ -333,7 +323,7 @@ final class StatsViewModel: ObservableObject {
                 seenDays.insert(dayOffset)
             }
             for day in seenDays {
-                buckets[day].insert(sessionIdx)
+                buckets[day].append(session)
             }
         }
 
@@ -343,7 +333,7 @@ final class StatsViewModel: ObservableObject {
 
         return (0..<14).map { i in
             let dayStart = calendar.date(byAdding: .day, value: i, to: rangeStart)!
-            let daySessions = buckets[i].map { sessions[$0] }
+            let daySessions = buckets[i]
             let dayStats = SessionAnalyzer.analyze(sessions: daySessions, since: dayStart)
 
             return DailyStatPoint(
