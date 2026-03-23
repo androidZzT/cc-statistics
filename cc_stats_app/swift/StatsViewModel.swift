@@ -69,36 +69,8 @@ final class StatsViewModel: ObservableObject {
         case cursor = "Cursor"
     }
 
-    private var refreshTimer: Timer?
-    private var refreshTask: Task<Void, Never>?
-    // 缓存：解析后的全量会话（避免重复磁盘 IO）
-    private var cachedSessions: [Session] = []
-    private var cachedProjects: [ProjectInfo] = []
-    private var cachedSource: DataSource?
-    private var cachedProject: ProjectInfo?
-
-    init() {
-        startAutoRefresh()
-        Task {
-            await performRefresh()
-        }
-    }
-
-    deinit {
-        refreshTimer?.invalidate()
-    }
-
-    // MARK: - Public Methods
-
-    func refresh() {
-        refreshTask?.cancel()
-        refreshTask = Task {
-            await performRefresh()
-        }
-    }
-
-    struct RefreshResult {
-        let projects: [ProjectInfo]
+    /// Filter 阶段的计算结果（不含 projects，projects 在 loadData 中独立加载）
+    struct FilterResult {
         let stats: SessionStats
         let recentSessions: [Session]
         let todayTokens: Int
@@ -108,159 +80,197 @@ final class StatsViewModel: ObservableObject {
         let weeklyCost: Double
     }
 
+    private var refreshTimer: Timer?
+    private var refreshTask: Task<Void, Never>?
+
+    // MARK: - Cache
+    // 缓存已解析的全量 sessions，避免 filter 切换时重复磁盘 IO。
+    // 仅当 source 或 project 变更时才清除。
+    private var cachedSessions: [Session] = []
+    private var cachedProjects: [ProjectInfo] = []
+    private var cachedSource: DataSource?
+    private var cachedProject: ProjectInfo?
+
+    init() {
+        startAutoRefresh()
+        Task {
+            await fullRefresh()
+        }
+    }
+
+    deinit {
+        refreshTimer?.invalidate()
+    }
+
+    // MARK: - Public API
+
+    /// 完整刷新：磁盘加载 + 内存筛选
+    func refresh() {
+        refreshTask?.cancel()
+        refreshTask = Task {
+            await fullRefresh()
+        }
+    }
+
     func selectSource(_ source: DataSource) {
         selectedSource = source
         invalidateCache()
         refresh()
     }
 
-    private func invalidateCache() {
-        cachedSessions = []
-        cachedProjects = []
-        cachedSource = nil
-        cachedProject = nil
+    func selectProject(_ project: ProjectInfo?) {
+        selectedProject = project
+        invalidateCache()
+        refresh()
     }
 
-    func performRefresh() async {
+    /// 切换时间筛选器。
+    /// 如果缓存存在，走快速路径（纯内存），否则走完整刷新。
+    func setTimeFilter(_ filter: TimeFilter) {
+        timeFilter = filter
+        if !cachedSessions.isEmpty {
+            refreshTask?.cancel()
+            refreshTask = Task {
+                await applyFilterAndUpdate()
+            }
+        } else {
+            refresh()
+        }
+    }
+
+    func toggleConversationPanel() {
+        showConversationPanel.toggle()
+    }
+
+    // MARK: - Core Refresh Pipeline
+
+    /// 完整刷新 = 磁盘加载（重） + 内存筛选（轻）
+    private func fullRefresh() async {
         isLoading = true
         defer { isLoading = false }
 
-        let currentFilter = timeFilter
-        let currentProject = selectedProject
-        let currentSource = selectedSource
+        await loadData()
+        await applyFilterAndUpdate()
+    }
 
-        // 判断是否需要重新解析（source 或 project 变了才需要磁盘 IO）
+    // MARK: - Phase 1: Load Data (disk I/O)
+
+    /// 从磁盘解析 sessions 并缓存。仅在 source/project 变更时执行。
+    private func loadData() async {
+        let currentSource = selectedSource
+        let currentProject = selectedProject
+
         let needReparse = cachedSessions.isEmpty
             || cachedSource != currentSource
             || cachedProject != currentProject
 
-        let allSessions: [Session]
-        let loadedProjects: [ProjectInfo]
+        guard needReparse else { return }
 
-        if needReparse {
-            let result: ([ProjectInfo], [Session]) = await Task.detached(priority: .userInitiated) {
-                let claudeParser = SessionParser()
-                let codexParser = CodexParser()
-                let geminiParser = GeminiParser()
+        let (loadedProjects, sessions) = await Task.detached(priority: .userInitiated) {
+            let claudeParser = SessionParser()
+            let codexParser = CodexParser()
+            let geminiParser = GeminiParser()
 
-                var projects: [ProjectInfo] = []
-                var sessions: [Session] = []
+            var projects: [ProjectInfo] = []
+            var sessions: [Session] = []
 
-                switch currentSource {
-                case .all:
-                    projects = claudeParser.findAllProjects()
-                        + codexParser.findAllProjects()
-                        + geminiParser.findAllProjects()
-                    if let project = currentProject {
-                        sessions = claudeParser.parseSessions(forProject: project.path)
-                            + codexParser.parseSessions(forProject: project.path)
-                            + geminiParser.parseSessions(forProject: project.path)
-                    } else {
-                        sessions = claudeParser.parseAllSessions()
-                            + codexParser.parseAllSessions()
-                            + geminiParser.parseAllSessions()
-                    }
-                case .claudeCode:
-                    projects = claudeParser.findAllProjects()
-                    if let project = currentProject {
-                        sessions = claudeParser.parseSessions(forProject: project.path)
-                    } else {
-                        sessions = claudeParser.parseAllSessions()
-                    }
-                case .codex:
-                    projects = codexParser.findAllProjects()
-                    if let project = currentProject {
-                        sessions = codexParser.parseSessions(forProject: project.path)
-                    } else {
-                        sessions = codexParser.parseAllSessions()
-                    }
-                case .gemini:
-                    projects = geminiParser.findAllProjects()
-                    if let project = currentProject {
-                        sessions = geminiParser.parseSessions(forProject: project.path)
-                    } else {
-                        sessions = geminiParser.parseAllSessions()
-                    }
-                case .cursor:
-                    projects = claudeParser.findAllProjects()
-                    sessions = []
+            switch currentSource {
+            case .all:
+                projects = claudeParser.findAllProjects()
+                    + codexParser.findAllProjects()
+                    + geminiParser.findAllProjects()
+                if let project = currentProject {
+                    sessions = claudeParser.parseSessions(forProject: project.path)
+                        + codexParser.parseSessions(forProject: project.path)
+                        + geminiParser.parseSessions(forProject: project.path)
+                } else {
+                    sessions = claudeParser.parseAllSessions()
+                        + codexParser.parseAllSessions()
+                        + geminiParser.parseAllSessions()
                 }
-                return (projects, sessions)
-            }.value
+            case .claudeCode:
+                projects = claudeParser.findAllProjects()
+                if let project = currentProject {
+                    sessions = claudeParser.parseSessions(forProject: project.path)
+                } else {
+                    sessions = claudeParser.parseAllSessions()
+                }
+            case .codex:
+                projects = codexParser.findAllProjects()
+                if let project = currentProject {
+                    sessions = codexParser.parseSessions(forProject: project.path)
+                } else {
+                    sessions = codexParser.parseAllSessions()
+                }
+            case .gemini:
+                projects = geminiParser.findAllProjects()
+                if let project = currentProject {
+                    sessions = geminiParser.parseSessions(forProject: project.path)
+                } else {
+                    sessions = geminiParser.parseAllSessions()
+                }
+            case .cursor:
+                projects = claudeParser.findAllProjects()
+                sessions = []
+            }
+            return (projects, sessions)
+        }.value
 
-            loadedProjects = result.0
-            allSessions = result.1
-            // 更新缓存
-            cachedSessions = allSessions
-            cachedProjects = loadedProjects
-            cachedSource = currentSource
-            cachedProject = currentProject
-        } else {
-            // 复用缓存，跳过磁盘 IO
-            allSessions = cachedSessions
-            loadedProjects = cachedProjects
-        }
+        cachedProjects = loadedProjects
+        cachedSessions = sessions
+        cachedSource = currentSource
+        cachedProject = currentProject
+    }
 
-        // 以下为纯内存操作，很快
-        let result: RefreshResult = await Task.detached(priority: .userInitiated) {
-            // 按时间范围过滤（用于面板展示）
-            var filteredSessions = allSessions
+    // MARK: - Phase 2: Apply Filter (in-memory)
+
+    /// 基于缓存 sessions 做时间过滤、统计分析、日统计。无磁盘 I/O。
+    private func applyFilterAndUpdate() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        let sessions = cachedSessions
+        let loadedProjects = cachedProjects
+        let currentFilter = timeFilter
+        let currentSource = selectedSource
+
+        let result: FilterResult = await Task.detached(priority: .userInitiated) {
+            // 按时间范围过滤 sessions
+            var filteredSessions = sessions
             if let startDate = currentFilter.startDate {
-                filteredSessions = allSessions.filter { session in
-                    session.messages.contains { message in
-                        if let ts = message.timestamp {
-                            return ts >= startDate
-                        }
+                filteredSessions = sessions.filter { session in
+                    session.messages.contains { msg in
+                        if let ts = msg.timestamp { return ts >= startDate }
                         return false
                     }
                 }
             }
 
-            let stats = SessionAnalyzer.analyze(sessions: filteredSessions, since: currentFilter.startDate)
-            // 会话列表不受时间筛选影响，按最近活跃时间排序
-            let recent = allSessions
-                .sorted(by: { ($0.endTime ?? .distantPast) > ($1.endTime ?? .distantPast) })
+            let stats = SessionAnalyzer.analyze(
+                sessions: filteredSessions,
+                since: currentFilter.startDate
+            )
+
+            // 会话列表按最近活跃时间排序（不受时间筛选影响）
+            let recent = sessions
+                .sorted { ($0.endTime ?? .distantPast) > ($1.endTime ?? .distantPast) }
                 .prefix(30).map { $0 }
 
-            // 计算当天 token（从同一批数据中过滤，保证同步）
+            // 计算当天 token
             let todayStart = Calendar.current.startOfDay(for: Date())
-            let todaySessions = allSessions.filter { session in
+            let todaySessions = sessions.filter { session in
                 session.messages.contains { $0.timestamp.map { $0 >= todayStart } ?? false }
             }
-            let todayStats = SessionAnalyzer.analyze(sessions: todaySessions, since: todayStart)
+            let todayStats = SessionAnalyzer.analyze(
+                sessions: todaySessions,
+                since: todayStart
+            )
 
-            // 每日聚合（最近 14 天）
-            let calendar = Calendar.current
-            let today = Date()
-            var daily: [DailyStatPoint] = []
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MM/dd"
-            for i in (0..<14).reversed() {
-                guard let dayStart = calendar.date(byAdding: .day, value: -i, to: calendar.startOfDay(for: today)) else { continue }
-                let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
-                let daySessions = allSessions.filter { session in
-                    session.messages.contains { msg in
-                        guard let ts = msg.timestamp else { return false }
-                        return ts >= dayStart && ts < dayEnd
-                    }
-                }
-                let dayStats = SessionAnalyzer.analyze(sessions: daySessions)
-                daily.append(DailyStatPoint(
-                    date: dayStart,
-                    label: formatter.string(from: dayStart),
-                    sessions: daySessions.count,
-                    messages: dayStats.userInstructions,
-                    tokens: dayStats.totalTokens,
-                    cost: dayStats.estimatedCost,
-                    activeMinutes: dayStats.aiProcessingTime / 60 + dayStats.userActiveTime / 60
-                ))
-            }
-
-            // 计算最近 7 天费用
+            // 14 天日统计（单次分桶算法）
+            let daily = Self.computeDailyStats(from: sessions)
             let weeklyCost = daily.suffix(7).reduce(0.0) { $0 + $1.cost }
 
-            return RefreshResult(
-                projects: loadedProjects,
+            return FilterResult(
                 stats: stats,
                 recentSessions: recent,
                 todayTokens: todayStats.totalTokens,
@@ -271,7 +281,8 @@ final class StatsViewModel: ObservableObject {
             )
         }.value
 
-        self.projects = result.projects
+        // 统一赋值，避免 projects 和 stats 分帧更新导致 UI 闪烁
+        self.projects = loadedProjects
         self.stats = result.stats
         self.recentSessions = result.recentSessions
         self.todayTokens = result.todayTokens
@@ -298,6 +309,56 @@ final class StatsViewModel: ObservableObject {
         // 检查用量预警
         checkAlerts(dailyCost: result.todayCost, weeklyCost: result.weeklyCost)
     }
+
+    // MARK: - Daily Stats (Single-Pass Bucketing)
+
+    /// 单次遍历将 sessions 按天分桶，替代 14 次循环遍历。
+    /// 复杂度从 O(14 × N × M) 降到 O(N × M + 14 × bucket_size)。
+    nonisolated static func computeDailyStats(from sessions: [Session]) -> [DailyStatPoint] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let rangeStart = calendar.date(byAdding: .day, value: -13, to: today) else {
+            return []
+        }
+
+        // 一次遍历，按天分桶
+        var buckets: [Set<Int>] = Array(repeating: [], count: 14)
+
+        for (sessionIdx, session) in sessions.enumerated() {
+            var seenDays = Set<Int>()
+            for msg in session.messages {
+                guard let ts = msg.timestamp, ts >= rangeStart else { continue }
+                let dayOffset = calendar.dateComponents([.day], from: rangeStart, to: ts).day ?? 0
+                guard dayOffset >= 0 && dayOffset < 14 else { continue }
+                seenDays.insert(dayOffset)
+            }
+            for day in seenDays {
+                buckets[day].insert(sessionIdx)
+            }
+        }
+
+        // 逐桶分析
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd"
+
+        return (0..<14).map { i in
+            let dayStart = calendar.date(byAdding: .day, value: i, to: rangeStart)!
+            let daySessions = buckets[i].map { sessions[$0] }
+            let dayStats = SessionAnalyzer.analyze(sessions: daySessions, since: dayStart)
+
+            return DailyStatPoint(
+                date: dayStart,
+                label: formatter.string(from: dayStart),
+                sessions: daySessions.count,
+                messages: dayStats.userInstructions,
+                tokens: dayStats.totalTokens,
+                cost: dayStats.estimatedCost,
+                activeMinutes: dayStats.aiProcessingTime / 60 + dayStats.userActiveTime / 60
+            )
+        }
+    }
+
+    // MARK: - Alerts
 
     private func checkAlerts(dailyCost: Double, weeklyCost: Double) {
         let dailyLimit = UserDefaults.standard.double(forKey: "cc_stats_daily_cost_limit")
@@ -349,19 +410,11 @@ final class StatsViewModel: ObservableObject {
         try? process.run()
     }
 
-    func selectProject(_ project: ProjectInfo?) {
-        selectedProject = project
-        invalidateCache()
-        refresh()
-    }
-
-    func setTimeFilter(_ filter: TimeFilter) {
-        timeFilter = filter
-        refresh()
-    }
-
-    func toggleConversationPanel() {
-        showConversationPanel.toggle()
+    private func invalidateCache() {
+        cachedSessions = []
+        cachedProjects = []
+        cachedSource = nil
+        cachedProject = nil
     }
 
     private func fetchRateLimit() {
@@ -372,7 +425,7 @@ final class StatsViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Private Methods
+    // MARK: - Auto Refresh
 
     private func startAutoRefresh() {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
