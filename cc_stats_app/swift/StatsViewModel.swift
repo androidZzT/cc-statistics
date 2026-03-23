@@ -222,50 +222,19 @@ final class StatsViewModel: ObservableObject {
                 .sorted(by: { ($0.endTime ?? .distantPast) > ($1.endTime ?? .distantPast) })
                 .prefix(30).map { $0 }
 
-            // 计算当天 token（从同一批数据中过滤，保证同步）
-            let todayStart = Calendar.current.startOfDay(for: Date())
-            let todaySessions = allSessions.filter { session in
-                session.messages.contains { $0.timestamp.map { $0 >= todayStart } ?? false }
-            }
-            let todayStats = SessionAnalyzer.analyze(sessions: todaySessions, since: todayStart)
-
-            // 每日聚合（最近 14 天）
-            let calendar = Calendar.current
-            let today = Date()
-            var daily: [DailyStatPoint] = []
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MM/dd"
-            for i in (0..<14).reversed() {
-                guard let dayStart = calendar.date(byAdding: .day, value: -i, to: calendar.startOfDay(for: today)) else { continue }
-                let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
-                let daySessions = allSessions.filter { session in
-                    session.messages.contains { msg in
-                        guard let ts = msg.timestamp else { return false }
-                        return ts >= dayStart && ts < dayEnd
-                    }
-                }
-                let dayStats = SessionAnalyzer.analyze(sessions: daySessions)
-                daily.append(DailyStatPoint(
-                    date: dayStart,
-                    label: formatter.string(from: dayStart),
-                    sessions: daySessions.count,
-                    messages: dayStats.userInstructions,
-                    tokens: dayStats.totalTokens,
-                    cost: dayStats.estimatedCost,
-                    activeMinutes: dayStats.aiProcessingTime / 60 + dayStats.userActiveTime / 60
-                ))
-            }
-
-            // 计算最近 7 天费用
+            // 计算当天 token — 复用日统计最后一个桶（即 today），避免重复遍历
+            // 每日聚合（最近 14 天）— 单次遍历分桶算法
+            let daily = Self.computeDailyStats(from: allSessions)
+            let todayPoint = daily.last
             let weeklyCost = daily.suffix(7).reduce(0.0) { $0 + $1.cost }
 
             return RefreshResult(
                 projects: loadedProjects,
                 stats: stats,
                 recentSessions: recent,
-                todayTokens: todayStats.totalTokens,
-                todayCost: todayStats.estimatedCost,
-                todaySessions: todaySessions.count,
+                todayTokens: todayPoint?.tokens ?? 0,
+                todayCost: todayPoint?.cost ?? 0,
+                todaySessions: todayPoint?.sessions ?? 0,
                 dailyStats: daily,
                 weeklyCost: weeklyCost
             )
@@ -369,6 +338,59 @@ final class StatsViewModel: ObservableObject {
             DispatchQueue.main.async {
                 self?.rateLimitData = data
             }
+        }
+    }
+
+    // MARK: - Daily Stats (Single-Pass Bucketing)
+
+    /// 单次遍历将 sessions 按天分桶，替代原来的 14 次循环遍历。
+    /// 复杂度从 O(14 × N × M) 降低到 O(N × M + 14 × bucket_size)。
+    /// 最后一个桶 (index 13) 即为 today 的数据，可直接复用于状态栏。
+    nonisolated static func computeDailyStats(from sessions: [Session]) -> [DailyStatPoint] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let rangeStart = calendar.date(byAdding: .day, value: -13, to: today) else { return [] }
+
+        // 按天分桶，每个桶存裁剪后的 Session（只含当天消息）
+        var buckets: [[Session]] = Array(repeating: [], count: 14)
+
+        for session in sessions {
+            // 按天分组该 session 的消息
+            var dayMessages: [Int: [Message]] = [:]
+            for msg in session.messages {
+                guard let ts = msg.timestamp, ts >= rangeStart else { continue }
+                let dayOffset = calendar.dateComponents([.day], from: rangeStart, to: ts).day ?? 0
+                guard dayOffset >= 0 && dayOffset < 14 else { continue }
+                dayMessages[dayOffset, default: []].append(msg)
+            }
+
+            // 为每一天创建裁剪后的 Session
+            for (dayOffset, msgs) in dayMessages {
+                buckets[dayOffset].append(Session(
+                    filePath: session.filePath,
+                    messages: msgs,
+                    projectPath: session.projectPath
+                ))
+            }
+        }
+
+        // 逐桶分析
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd"
+
+        return (0..<14).map { i in
+            let dayStart = calendar.date(byAdding: .day, value: i, to: rangeStart)!
+            let daySessions = buckets[i]
+            let dayStats = SessionAnalyzer.analyze(sessions: daySessions)
+            return DailyStatPoint(
+                date: dayStart,
+                label: formatter.string(from: dayStart),
+                sessions: daySessions.count,
+                messages: dayStats.userInstructions,
+                tokens: dayStats.totalTokens,
+                cost: dayStats.estimatedCost,
+                activeMinutes: dayStats.aiProcessingTime / 60 + dayStats.userActiveTime / 60
+            )
         }
     }
 
