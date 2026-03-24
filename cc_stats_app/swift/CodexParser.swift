@@ -2,6 +2,7 @@ import Foundation
 
 /// Parses Codex CLI sessions from ~/.codex/ rollout JSONL files.
 /// Codex stores sessions as JSONL with tagged types: session_meta, event_msg, response_item, turn_context.
+/// Respects $CODEX_HOME environment variable for custom session storage paths.
 final class CodexParser {
 
     private let fileManager = FileManager.default
@@ -10,6 +11,8 @@ final class CodexParser {
     init(codexHome: String? = nil) {
         if let custom = codexHome {
             self.codexHome = custom
+        } else if let envHome = ProcessInfo.processInfo.environment["CODEX_HOME"] {
+            self.codexHome = envHome
         } else {
             let home = fileManager.homeDirectoryForCurrentUser.path
             self.codexHome = (home as NSString).appendingPathComponent(".codex")
