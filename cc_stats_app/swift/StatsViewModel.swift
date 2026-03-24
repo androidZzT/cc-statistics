@@ -107,6 +107,7 @@ final class StatsViewModel: ObservableObject {
     /// 完整刷新：磁盘加载 + 内存筛选
     func refresh() {
         refreshTask?.cancel()
+        invalidateCache()
         refreshTask = Task {
             await fullRefresh()
         }
