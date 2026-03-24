@@ -91,16 +91,7 @@ class SessionAnalyzer {
             }
 
             for (model, detail) in s.tokenUsage {
-                if let existing = mergedTokenUsage[model] {
-                    mergedTokenUsage[model] = TokenDetail(
-                        inputTokens: existing.inputTokens + detail.inputTokens,
-                        outputTokens: existing.outputTokens + detail.outputTokens,
-                        cacheCreationInputTokens: existing.cacheCreationInputTokens + detail.cacheCreationInputTokens,
-                        cacheReadInputTokens: existing.cacheReadInputTokens + detail.cacheReadInputTokens
-                    )
-                } else {
-                    mergedTokenUsage[model] = detail
-                }
+                mergedTokenUsage[model, default: TokenDetail()] += detail
             }
 
             mergedCodeChanges.append(contentsOf: s.codeChanges)
@@ -333,16 +324,7 @@ class SessionAnalyzer {
         var usage: [String: TokenDetail] = [:]
         for msg in messages {
             guard let model = msg.model, let detail = msg.tokenUsage else { continue }
-            if let existing = usage[model] {
-                usage[model] = TokenDetail(
-                    inputTokens: existing.inputTokens + detail.inputTokens,
-                    outputTokens: existing.outputTokens + detail.outputTokens,
-                    cacheCreationInputTokens: existing.cacheCreationInputTokens + detail.cacheCreationInputTokens,
-                    cacheReadInputTokens: existing.cacheReadInputTokens + detail.cacheReadInputTokens
-                )
-            } else {
-                usage[model] = detail
-            }
+            usage[model, default: TokenDetail()] += detail
         }
         return usage
     }
