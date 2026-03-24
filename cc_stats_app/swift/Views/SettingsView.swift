@@ -340,7 +340,7 @@ struct SettingsView: View {
 
     // MARK: - Version
 
-    static let appVersion = "0.10.2"
+    static let appVersion = "0.10.3"
     private var currentVersion: String { Self.appVersion }
 
     private func checkForUpdate() {
