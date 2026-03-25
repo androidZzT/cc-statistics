@@ -299,6 +299,23 @@ def _get_daily_stats(project_dir_name=None, days=14):
     return result
 
 
+def _get_version_update():
+    """检查版本更新（供 Web API 使用）"""
+    try:
+        from cc_stats.version_checker import check_for_update
+        result = check_for_update()
+        if result is not None:
+            return {
+                "has_update": True,
+                "current_version": result.current_version,
+                "latest_version": result.latest_version,
+                "upgrade_command": result.upgrade_command,
+            }
+    except Exception:
+        pass
+    return {"has_update": False}
+
+
 class ApiHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=_web_dir, **kwargs)
@@ -324,6 +341,8 @@ class ApiHandler(SimpleHTTPRequestHandler):
                 project_dir_name=project or None,
                 days=int(days),
             ))
+        elif path == "/api/version_check":
+            self._json(_get_version_update())
         else:
             super().do_GET()
 

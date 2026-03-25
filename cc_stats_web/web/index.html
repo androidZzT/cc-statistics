@@ -70,11 +70,20 @@ select:hover{border-color:var(--cyan)}
 .info{font-size:11px;color:var(--text3);text-align:center;padding-top:10px}
 .empty{text-align:center;padding:60px 20px;color:var(--text3)}
 .loading{display:flex;align-items:center;justify-content:center;padding:40px;color:var(--text3);font-size:13px}
+.update-banner{display:none;background:linear-gradient(135deg,rgba(88,166,255,.15),rgba(188,140,255,.15));border:1px solid var(--cyan);border-radius:8px;padding:10px 16px;margin-bottom:12px;font-size:12px;color:var(--text);align-items:center;justify-content:space-between;gap:8px}
+.update-banner.show{display:flex}
+.update-banner code{background:rgba(255,255,255,.1);padding:2px 6px;border-radius:4px;font-size:11px}
+.update-banner .dismiss{background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0 4px;line-height:1}
+.update-banner .dismiss:hover{color:var(--text)}
 @media(max-width:700px){.metrics{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <div class="app">
+  <div class="update-banner" id="update-banner">
+    <span id="update-msg"></span>
+    <button class="dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>
+  </div>
   <div class="header">
     <h1>CC Statistics</h1>
     <div class="controls">
@@ -228,7 +237,18 @@ document.querySelectorAll('.time-btn').forEach(b=>b.addEventListener('click',()=
   b.classList.add('active');currentDays=parseInt(b.dataset.days);loadStats();
 }));
 
-loadProjects();loadStats();
+function dismissUpdate(){document.getElementById('update-banner').classList.remove('show');sessionStorage.setItem('update-dismissed','1')}
+async function checkVersion(){
+  if(sessionStorage.getItem('update-dismissed'))return;
+  try{
+    const r=await api('/api/version_check');
+    if(r.has_update){
+      document.getElementById('update-msg').innerHTML='cc-statistics v'+r.latest_version+' 已发布，运行 <code>'+r.upgrade_command+'</code> 更新';
+      document.getElementById('update-banner').classList.add('show');
+    }
+  }catch(e){}
+}
+loadProjects();loadStats();checkVersion();setInterval(checkVersion,4*3600*1000);
 </script>
 </body>
 </html>

@@ -141,7 +141,23 @@ def _compile_swift():
     print("Done.")
 
 
+def _write_current_version() -> None:
+    """将当前版本写入 ~/.cc-stats/current_version 供 Swift 层读取"""
+    try:
+        from cc_stats import __version__
+        version_dir = os.path.join(os.path.expanduser("~"), ".cc-stats")
+        os.makedirs(version_dir, exist_ok=True)
+        version_file = os.path.join(version_dir, "current_version")
+        with open(version_file, "w") as f:
+            f.write(__version__)
+    except Exception:
+        pass
+
+
 def main():
+    # 写入当前版本供 Swift 层读取
+    _write_current_version()
+
     # 优先下载预编译二进制
     if not _try_download_binary():
         # fallback: 本地编译

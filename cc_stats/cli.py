@@ -219,7 +219,42 @@ def _list_projects() -> None:
     print()
 
 
+def _check_update_hint() -> str | None:
+    """启动时检查缓存中的更新信息（不发起网络请求，不阻塞）"""
+    try:
+        from .version_checker import get_cached_update, format_update_message
+        result = get_cached_update()
+        if result is not None:
+            return format_update_message(result)
+    except Exception:
+        pass
+    return None
+
+
+def _trigger_background_check() -> None:
+    """在后台线程触发版本检查（不阻塞 CLI 主流程）"""
+    import threading
+
+    def _run() -> None:
+        try:
+            from .version_checker import check_for_update
+            check_for_update()
+        except Exception:
+            pass
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+
 def main(argv: list[str] | None = None) -> None:
+    # 启动时检查更新提示（仅读缓存，无网络请求）
+    update_hint = _check_update_hint()
+    if update_hint:
+        print(f"\033[33m💡 {update_hint}\033[0m\n")
+
+    # 后台触发版本检查（更新缓存，供下次启动时使用）
+    _trigger_background_check()
+
     parser = argparse.ArgumentParser(
         prog="cc-stats",
         description="AI Coding 会话统计工具 — 支持 Claude Code / Gemini CLI",

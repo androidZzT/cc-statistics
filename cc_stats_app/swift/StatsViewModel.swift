@@ -91,11 +91,15 @@ final class StatsViewModel: ObservableObject {
     private var cachedSource: DataSource?
     private var cachedProject: ProjectInfo?
 
+    // MARK: - Version Update
+    @Published var updateAvailable: String?  // 新版本号（nil = 无更新）
+
     init() {
         startAutoRefresh()
         Task {
             await fullRefresh()
         }
+        startVersionCheck()
     }
 
     deinit {
@@ -432,5 +436,126 @@ final class StatsViewModel: ObservableObject {
                 self.refresh()
             }
         }
+    }
+
+    // MARK: - Version Check
+
+    private var versionCheckTimer: Timer?
+    private var hasNotifiedVersion: String?  // 已通知过的版本，避免重复通知
+
+    private func startVersionCheck() {
+        // 首次延迟 30 秒检查（让 app 先完成启动）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+            self?.performVersionCheck()
+        }
+        // 之后每 4 小时检查
+        versionCheckTimer = Timer.scheduledTimer(withTimeInterval: 4 * 3600, repeats: true) { [weak self] _ in
+            self?.performVersionCheck()
+        }
+    }
+
+    private func performVersionCheck() {
+        Task.detached(priority: .utility) {
+            guard let latestVersion = Self.fetchLatestVersionFromPyPI() else { return }
+            let currentVersion = Self.readCurrentVersion()
+            guard Self.isNewer(remote: latestVersion, local: currentVersion) else { return }
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.updateAvailable = latestVersion
+
+                // 仅在首次发现新版本时发送系统通知
+                if self.hasNotifiedVersion != latestVersion {
+                    self.hasNotifiedVersion = latestVersion
+                    self.sendSystemNotification(
+                        title: "cc-statistics 更新可用",
+                        body: "cc-statistics v\(latestVersion) 已发布，运行 pip install --upgrade cc-statistics 更新"
+                    )
+                }
+            }
+        }
+    }
+
+    /// 从 PyPI 获取最新版本号
+    nonisolated private static func fetchLatestVersionFromPyPI() -> String? {
+        guard let url = URL(string: "https://pypi.org/pypi/cc-statistics/json") else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: String?
+
+        let task = URLSession.shared.dataTask(with: request) { data, _, error in
+            defer { semaphore.signal() }
+            guard error == nil, let data = data else { return }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let info = json["info"] as? [String: Any],
+                  let version = info["version"] as? String else { return }
+            result = version
+        }
+        task.resume()
+        semaphore.wait()
+        return result
+    }
+
+    /// 从 SettingsView 或 fallback 读取当前版本
+    nonisolated private static func readCurrentVersion() -> String {
+        // 尝试从 version_cache 或已知路径读取
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let versionFile = home.appendingPathComponent(".cc-stats/current_version")
+        if let version = try? String(contentsOf: versionFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+           !version.isEmpty {
+            return version
+        }
+        // Fallback: 从 __init__.py 读取 __version__
+        let possiblePaths = [
+            "/usr/local/lib/python3.12/site-packages/cc_stats/__init__.py",
+            "/usr/local/lib/python3.11/site-packages/cc_stats/__init__.py",
+            "/opt/homebrew/lib/python3.12/site-packages/cc_stats/__init__.py",
+            "/opt/homebrew/lib/python3.11/site-packages/cc_stats/__init__.py",
+        ]
+        for path in possiblePaths {
+            if let content = try? String(contentsOfFile: path, encoding: .utf8) {
+                for line in content.components(separatedBy: "\n") {
+                    if line.contains("__version__") && line.contains("=") {
+                        let parts = line.components(separatedBy: "\"")
+                        if parts.count >= 2 { return parts[1] }
+                        let squoteParts = line.components(separatedBy: "'")
+                        if squoteParts.count >= 2 { return squoteParts[1] }
+                    }
+                }
+            }
+        }
+        // 最终 fallback: 用 python3 -c 获取
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", "-c", "from cc_stats import __version__; print(__version__)"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        if let _ = try? process.run() {
+            process.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let version = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !version.isEmpty {
+                return version
+            }
+        }
+        return "0.0.0"
+    }
+
+    /// 比较版本号：remote > local ?
+    nonisolated private static func isNewer(remote: String, local: String) -> Bool {
+        let remoteParts = remote.split(separator: ".").compactMap { Int($0) }
+        let localParts = local.split(separator: ".").compactMap { Int($0) }
+        let maxLen = max(remoteParts.count, localParts.count)
+        for i in 0..<maxLen {
+            let r = i < remoteParts.count ? remoteParts[i] : 0
+            let l = i < localParts.count ? localParts[i] : 0
+            if r > l { return true }
+            if r < l { return false }
+        }
+        return false
     }
 }
