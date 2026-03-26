@@ -15,6 +15,14 @@ struct SettingsView: View {
     @State private var apiToken: String = ""
     @State private var latestVersion: String?
     @State private var checkingUpdate: Bool = false
+    // Notification settings
+    @State private var notifySessionComplete: Bool = true
+    @State private var notifyCostAlert: Bool = true
+    @State private var notifyPermission: Bool = true
+    @State private var notifySmartSuppress: Bool = true
+    @State private var notifyWebhookURL: String = ""
+    @State private var hooksInstalled: Bool = false
+    @State private var notifyTestSent: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -101,6 +109,146 @@ struct SettingsView: View {
                             text: $weeklyCostLimit,
                             key: "cc_stats_weekly_cost_limit"
                         )
+                    }
+
+                    // Notifications section
+                    settingsSection(title: L10n.notifications, icon: "bell.fill") {
+                        settingsToggle(
+                            icon: "checkmark.circle",
+                            title: L10n.notifySessionComplete,
+                            subtitle: L10n.notifySessionCompleteDesc,
+                            isOn: $notifySessionComplete
+                        )
+                        Divider().background(Theme.border)
+                        settingsToggle(
+                            icon: "dollarsign.circle",
+                            title: L10n.notifyCostAlert,
+                            subtitle: L10n.notifyCostAlertDesc,
+                            isOn: $notifyCostAlert
+                        )
+                        Divider().background(Theme.border)
+                        settingsToggle(
+                            icon: "lock.shield",
+                            title: L10n.notifyPermission,
+                            subtitle: L10n.notifyPermissionDesc,
+                            isOn: $notifyPermission
+                        )
+                        Divider().background(Theme.border)
+                        settingsToggle(
+                            icon: "eye.slash",
+                            title: L10n.notifySmartSuppress,
+                            subtitle: L10n.notifySmartSuppressDesc,
+                            isOn: $notifySmartSuppress
+                        )
+                        Divider().background(Theme.border)
+
+                        // Webhook URL
+                        HStack {
+                            Image(systemName: "link")
+                                .font(.system(size: 12))
+                                .foregroundColor(Theme.cyan)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(L10n.notifyWebhook)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Theme.textPrimary)
+                                Text(L10n.notifyWebhookDesc)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Theme.textTertiary)
+                            }
+                            Spacer()
+                        }
+                        HStack(spacing: 6) {
+                            TextField(L10n.notifyWebhookPlaceholder, text: $notifyWebhookURL)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(Theme.textPrimary)
+                            if !notifyWebhookURL.isEmpty {
+                                Button {
+                                    notifyWebhookURL = ""
+                                    saveNotifyConfig()
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(Theme.textTertiary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(Theme.cardBackground)
+                        )
+                        .onChange(of: notifyWebhookURL) { _ in
+                            saveNotifyConfig()
+                        }
+
+                        Divider().background(Theme.border)
+
+                        // Hook install status + actions
+                        HStack {
+                            Image(systemName: "terminal")
+                                .font(.system(size: 12))
+                                .foregroundColor(hooksInstalled ? Theme.green : Theme.amber)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(L10n.installHooks)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Theme.textPrimary)
+                                Text(L10n.installHooksDesc)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Theme.textTertiary)
+                            }
+                            Spacer()
+                            Text(hooksInstalled ? L10n.hooksInstalled : L10n.hooksNotInstalled)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(hooksInstalled ? Theme.green : Theme.textTertiary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                        .fill(hooksInstalled ? Theme.green.opacity(0.15) : Theme.cardBackground)
+                                )
+                            Button {
+                                installOrUninstallHooks()
+                            } label: {
+                                Text(hooksInstalled ? "Uninstall" : "Install")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                            .fill(hooksInstalled ? Color.red.opacity(0.8) : Theme.cyan)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        // Test notification button
+                        HStack {
+                            Spacer()
+                            Button {
+                                sendTestNotification()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: notifyTestSent ? "checkmark.circle.fill" : "bell.badge")
+                                        .font(.system(size: 9))
+                                    Text(notifyTestSent ? L10n.notifySent : L10n.testNotification)
+                                        .font(.system(size: 9, weight: .semibold))
+                                }
+                                .foregroundColor(notifyTestSent ? Theme.green : .white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                        .fill(notifyTestSent ? Theme.green.opacity(0.15) : Theme.purple)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
 
                     // Rate Limit section
@@ -228,6 +376,8 @@ struct SettingsView: View {
         .background(Theme.background)
         .onAppear {
             loadSettings()
+            loadNotifyConfig()
+            checkHooksInstalled()
             checkForUpdate()
         }
         .onChange(of: launchAtLogin) { newValue in
@@ -239,6 +389,10 @@ struct SettingsView: View {
         .onChange(of: theme) { newValue in
             saveThemeSetting(newValue)
         }
+        .onChange(of: notifySessionComplete) { _ in saveNotifyConfig() }
+        .onChange(of: notifyCostAlert) { _ in saveNotifyConfig() }
+        .onChange(of: notifyPermission) { _ in saveNotifyConfig() }
+        .onChange(of: notifySmartSuppress) { _ in saveNotifyConfig() }
     }
 
     // MARK: - Section Builder
@@ -340,7 +494,20 @@ struct SettingsView: View {
 
     // MARK: - Version
 
-    static let appVersion = "0.10.3"
+    static let fallbackVersion = "0.11.0"
+
+    /// 动态读取 Python 层写入的版本号，fallback 到编译时默认值
+    static var appVersion: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let versionFile = home.appendingPathComponent(".cc-stats/current_version")
+        if let version = try? String(contentsOf: versionFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !version.isEmpty {
+            return version
+        }
+        return fallbackVersion
+    }
+
     private var currentVersion: String { Self.appVersion }
 
     private func checkForUpdate() {
@@ -399,6 +566,164 @@ struct SettingsView: View {
     private func saveThemeSetting(_ theme: String) {
         UserDefaults.standard.set(theme, forKey: "cc_stats_theme")
         onThemeChanged?(theme)
+    }
+
+    // MARK: - Notification Config
+
+    private static let notifyConfigPath: URL = {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cc-stats/notify_config.json")
+    }()
+
+    private func loadNotifyConfig() {
+        guard let data = try? Data(contentsOf: Self.notifyConfigPath),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+        notifySessionComplete = json["session_complete"] as? Bool ?? true
+        notifyCostAlert = json["cost_alert"] as? Bool ?? true
+        notifyPermission = json["permission_request"] as? Bool ?? true
+        notifySmartSuppress = json["smart_suppress"] as? Bool ?? true
+        notifyWebhookURL = json["webhook_url"] as? String ?? ""
+    }
+
+    private func saveNotifyConfig() {
+        let config: [String: Any] = [
+            "enabled": true,
+            "session_complete": notifySessionComplete,
+            "cost_alert": notifyCostAlert,
+            "permission_request": notifyPermission,
+            "smart_suppress": notifySmartSuppress,
+            "webhook_url": notifyWebhookURL,
+            "webhook_platform": "auto",
+            "sound": "Glass",
+        ]
+        let dir = Self.notifyConfigPath.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: Self.notifyConfigPath)
+        }
+    }
+
+    private func checkHooksInstalled() {
+        let settingsPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/settings.json")
+        guard let data = try? Data(contentsOf: settingsPath),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hooks = json["hooks"] as? [String: Any] else {
+            hooksInstalled = false
+            return
+        }
+        // 检查 Stop hooks 中是否包含 cc_stats.hooks
+        if let stopHooks = hooks["Stop"] as? [[String: Any]] {
+            hooksInstalled = stopHooks.contains { hook in
+                (hook["command"] as? String ?? "").contains("cc_stats.hooks")
+            }
+        } else {
+            hooksInstalled = false
+        }
+    }
+
+    private func installOrUninstallHooks() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = hooksInstalled
+            ? ["python3", "-m", "cc_stats.hooks_cli", "--uninstall"]
+            : ["python3", "-c", """
+              from cc_stats.hooks import install_hooks; install_hooks('user')
+              """]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
+        process.waitUntilExit()
+
+        // 直接操作 JSON 作为 fallback
+        if !hooksInstalled {
+            installHooksDirect()
+        } else {
+            uninstallHooksDirect()
+        }
+        checkHooksInstalled()
+    }
+
+    private func installHooksDirect() {
+        let settingsPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/settings.json")
+        var settings: [String: Any] = [:]
+        if let data = try? Data(contentsOf: settingsPath),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            settings = json
+        }
+
+        var hooks = settings["hooks"] as? [String: Any] ?? [:]
+        let hookCmd = "python3 -m cc_stats.hooks"
+
+        for event in ["Stop", "PreToolUse"] {
+            var eventHooks = hooks[event] as? [[String: Any]] ?? []
+            let alreadyExists = eventHooks.contains { ($0["command"] as? String ?? "").contains("cc_stats.hooks") }
+            if !alreadyExists {
+                eventHooks.append(["type": "command", "command": hookCmd])
+            }
+            hooks[event] = eventHooks
+        }
+
+        settings["hooks"] = hooks
+
+        let dir = settingsPath.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: settingsPath)
+        }
+    }
+
+    private func uninstallHooksDirect() {
+        let settingsPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/settings.json")
+        guard let data = try? Data(contentsOf: settingsPath),
+              var settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+
+        guard var hooks = settings["hooks"] as? [String: Any] else { return }
+
+        for event in ["Stop", "PreToolUse"] {
+            if var eventHooks = hooks[event] as? [[String: Any]] {
+                eventHooks.removeAll { ($0["command"] as? String ?? "").contains("cc_stats.hooks") }
+                if eventHooks.isEmpty {
+                    hooks.removeValue(forKey: event)
+                } else {
+                    hooks[event] = eventHooks
+                }
+            }
+        }
+
+        if hooks.isEmpty {
+            settings.removeValue(forKey: "hooks")
+        } else {
+            settings["hooks"] = hooks
+        }
+
+        if let newData = try? JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys]) {
+            try? newData.write(to: settingsPath)
+        }
+    }
+
+    private func sendTestNotification() {
+        let safeTitle = "CC Stats 通知测试"
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let safeBody = (L10n.isChinese ? "通知功能正常工作 ✓" : "Notification is working ✓")
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "display notification \"\(safeBody)\" with title \"\(safeTitle)\" sound name \"Glass\""
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        try? process.run()
+        notifyTestSent = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            notifyTestSent = false
+        }
     }
 
     private func autoFetchToken() {

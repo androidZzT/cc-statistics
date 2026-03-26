@@ -6,6 +6,8 @@ build/
 *.pyc
 .claude/
 cc_stats_app/swift/CCStats
+cc_stats_app/swift/CCStats.tmp
+cc_stats_app/swift/CCStats.app/
 cc_stats_app/swift/.binary_version
 .DS_Store
 marketing/

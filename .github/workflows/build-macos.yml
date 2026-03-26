@@ -1,4 +1,4 @@
-name: Build macOS Binary
+name: Build macOS App
 
 on:
   release:
@@ -16,28 +16,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Collect Swift files
-        id: swift-files
+      - name: Extract version from tag
+        id: version
         run: |
-          FILES=$(find cc_stats_app/swift -name "*.swift" | sort | tr '\n' ' ')
-          echo "files=$FILES" >> $GITHUB_OUTPUT
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Prepare Info.plist
+        run: |
+          sed "s/__VERSION__/${{ steps.version.outputs.version }}/g" \
+            cc_stats_app/swift/Info.plist > Info.plist.tmp
 
       - name: Build for ${{ matrix.arch }}
         run: |
-          swiftc \
-            ${{ steps.swift-files.outputs.files }} \
-            -o CCStats-${{ matrix.arch }} \
-            -framework Cocoa \
-            -framework SwiftUI \
-            -framework Carbon \
-            -lsqlite3 \
-            -O \
-            -target ${{ matrix.arch }}-apple-macosx13.0
+          find cc_stats_app/swift -name "*.swift" -print0 | sort -z | \
+            xargs -0 swiftc \
+              -o CCStats \
+              -framework Cocoa \
+              -framework SwiftUI \
+              -framework Carbon \
+              -lsqlite3 \
+              -O \
+              -target ${{ matrix.arch }}-apple-macosx13.0
+
+      - name: Create .app bundle
+        run: |
+          APP="CCStats.app"
+          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/Resources"
+          cp Info.plist.tmp "$APP/Contents/Info.plist"
+          mv CCStats "$APP/Contents/MacOS/CCStats"
+          chmod +x "$APP/Contents/MacOS/CCStats"
+
+      - name: Package as zip (preserves permissions)
+        run: |
+          ditto -c -k --keepParent CCStats.app CCStats-${{ matrix.arch }}.zip
 
       - name: Upload to Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload ${{ github.event.release.tag_name }} \
-            CCStats-${{ matrix.arch }} \
+            CCStats-${{ matrix.arch }}.zip \
             --clobber

@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import UserNotifications
 
 // MARK: - TimeFilter
 
@@ -396,6 +397,33 @@ final class StatsViewModel: ObservableObject {
     }
 
     private func sendSystemNotification(title: String, body: String) {
+        // 优先使用 UserNotifications framework
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else {
+                // Fallback 到 osascript
+                self.sendOsascriptNotification(title: title, body: body)
+                return
+            }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = .default
+
+            let request = UNNotificationRequest(
+                identifier: "cc-stats-\(UUID().uuidString)",
+                content: content,
+                trigger: nil  // 立即发送
+            )
+            center.add(request) { error in
+                if error != nil {
+                    self.sendOsascriptNotification(title: title, body: body)
+                }
+            }
+        }
+    }
+
+    private nonisolated func sendOsascriptNotification(title: String, body: String) {
         // Escape backslashes and double quotes to prevent AppleScript injection
         let safeTitle = title
             .replacingOccurrences(of: "\\", with: "\\\\")

@@ -196,4 +196,24 @@ enum L10n {
     static var idle: String { isChinese ? "空闲" : "Idle" }
     static var cleanIdle: String { isChinese ? "清理空闲" : "Clean Idle" }
     static var killed: String { isChinese ? "已清理" : "Cleaned" }
+
+    // MARK: - Notifications
+    static var notifications: String { isChinese ? "通知" : "Notifications" }
+    static var notifySessionComplete: String { isChinese ? "会话完成通知" : "Session Complete" }
+    static var notifySessionCompleteDesc: String { isChinese ? "Claude Code 任务结束时提醒" : "Notify when Claude Code task finishes" }
+    static var notifyCostAlert: String { isChinese ? "费用预警通知" : "Cost Alert" }
+    static var notifyCostAlertDesc: String { isChinese ? "费用超过上限时告警" : "Alert when cost exceeds limit" }
+    static var notifyPermission: String { isChinese ? "权限请求通知" : "Permission Request" }
+    static var notifyPermissionDesc: String { isChinese ? "需要确认权限时提醒" : "Notify when permission is needed" }
+    static var notifySmartSuppress: String { isChinese ? "智能抑制" : "Smart Suppress" }
+    static var notifySmartSuppressDesc: String { isChinese ? "终端有焦点时不弹通知" : "Don't notify when terminal is focused" }
+    static var notifyWebhook: String { isChinese ? "Webhook 转发" : "Webhook Forward" }
+    static var notifyWebhookDesc: String { isChinese ? "同时发送到飞书/Slack/钉钉" : "Also send to Feishu/Slack/DingTalk" }
+    static var notifyWebhookPlaceholder: String { isChinese ? "粘贴 Webhook URL..." : "Paste webhook URL..." }
+    static var installHooks: String { isChinese ? "安装 Hooks" : "Install Hooks" }
+    static var installHooksDesc: String { isChinese ? "安装 Claude Code hooks 启用通知" : "Install Claude Code hooks to enable notifications" }
+    static var hooksInstalled: String { isChinese ? "已安装" : "Installed" }
+    static var hooksNotInstalled: String { isChinese ? "未安装" : "Not Installed" }
+    static var testNotification: String { isChinese ? "测试通知" : "Test" }
+    static var notifySent: String { isChinese ? "已发送" : "Sent" }
 }

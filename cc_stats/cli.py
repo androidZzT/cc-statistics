@@ -325,6 +325,21 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="导出时包含工具调用（配合 --export-chat 使用）",
     )
+    parser.add_argument(
+        "--install-hooks",
+        action="store_true",
+        help="安装 Claude Code hooks（会话完成/权限请求通知）",
+    )
+    parser.add_argument(
+        "--uninstall-hooks",
+        action="store_true",
+        help="卸载已安装的 Claude Code hooks",
+    )
+    parser.add_argument(
+        "--notify-test",
+        action="store_true",
+        help="发送测试通知以验证通知功能",
+    )
 
     args = parser.parse_args(argv)
 
@@ -352,6 +367,41 @@ def main(argv: list[str] | None = None) -> None:
     if args.notify:
         from .webhook import send_notification
         send_notification(args.notify, args.platform or "auto")
+        return
+
+    if args.install_hooks:
+        from .hooks import install_hooks, get_hook_command
+        if install_hooks("user"):
+            print("✅ Claude Code hooks 已安装到 ~/.claude/settings.json")
+            print(f"   Hook 命令: {get_hook_command()}")
+            print("   支持事件: Stop (会话完成), PreToolUse (权限请求)")
+            print("\n   配置通知偏好: 编辑 ~/.cc-stats/notify_config.json")
+        else:
+            print("❌ 安装失败", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    if args.uninstall_hooks:
+        from .hooks import uninstall_hooks
+        if uninstall_hooks("user"):
+            print("✅ Claude Code hooks 已卸载")
+        else:
+            print("❌ 卸载失败", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    if args.notify_test:
+        from .notifier import send_notification
+        ok = send_notification(
+            "CC Stats 通知测试",
+            "如果你看到这条通知，说明通知功能正常工作 ✓",
+            force=True,
+        )
+        if ok:
+            print("✅ 测试通知已发送")
+        else:
+            print("❌ 通知发送失败", file=sys.stderr)
+            sys.exit(1)
         return
 
     if args.compare:
