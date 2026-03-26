@@ -438,6 +438,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func hideMainWindowAnimated() {
         guard let window = mainWindow else { return }
+        viewModel.isPanelVisible = false
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.15
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -452,6 +453,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.alphaValue = 0
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        viewModel.isPanelVisible = true
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)

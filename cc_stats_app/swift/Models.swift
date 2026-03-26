@@ -134,11 +134,15 @@ struct Message: Identifiable, Equatable {
 
 // MARK: - Session
 
-struct Session: Identifiable {
+struct Session: Identifiable, Equatable {
     let id = UUID()
     let filePath: String
     let messages: [Message]
     let projectPath: String?
+
+    static func == (lhs: Session, rhs: Session) -> Bool {
+        lhs.filePath == rhs.filePath && lhs.messages.count == rhs.messages.count
+    }
 
     var sessionName: String {
         ((filePath as NSString).lastPathComponent as NSString).deletingPathExtension
@@ -206,7 +210,7 @@ struct CodeChange: Identifiable, Equatable {
 
 // MARK: - Session Stats
 
-struct SessionStats {
+struct SessionStats: Equatable {
     var userInstructions: Int
     var toolCalls: [String: Int]
     var totalDuration: TimeInterval
@@ -387,7 +391,7 @@ struct ProcessInfo2: Identifiable {
 
 // MARK: - Daily Stat Point
 
-struct DailyStatPoint: Identifiable {
+struct DailyStatPoint: Identifiable, Equatable {
     let id = UUID()
     let date: Date
     let label: String  // "03/18"
@@ -396,6 +400,11 @@ struct DailyStatPoint: Identifiable {
     let tokens: Int
     let cost: Double
     let activeMinutes: Double
+
+    static func == (lhs: DailyStatPoint, rhs: DailyStatPoint) -> Bool {
+        lhs.label == rhs.label && lhs.tokens == rhs.tokens
+            && lhs.cost == rhs.cost && lhs.sessions == rhs.sessions
+    }
 }
 
 // MARK: - Cost Estimation

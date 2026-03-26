@@ -490,6 +490,7 @@ struct TimeBreakdownRow: View {
 
 struct ShimmerView: View {
     @State private var phase: CGFloat = 0
+    @State private var isVisible = false
 
     var body: some View {
         RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -509,9 +510,14 @@ struct ShimmerView: View {
                     )
             )
             .onAppear {
+                isVisible = true
                 withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
                     phase = 1.5
                 }
+            }
+            .onDisappear {
+                isVisible = false
+                withAnimation(nil) { phase = 0 }
             }
     }
 }

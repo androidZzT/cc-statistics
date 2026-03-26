@@ -84,6 +84,19 @@ final class StatsViewModel: ObservableObject {
     private var refreshTimer: Timer?
     private var refreshTask: Task<Void, Never>?
 
+    /// 面板是否可见。不可见时暂停定时刷新，降低 CPU 占用。
+    var isPanelVisible: Bool = false {
+        didSet {
+            guard isPanelVisible != oldValue else { return }
+            if isPanelVisible {
+                startAutoRefresh()
+                refresh()
+            } else {
+                pauseAutoRefresh()
+            }
+        }
+    }
+
     // MARK: - Cache
     // 缓存已解析的全量 sessions，避免 filter 切换时重复磁盘 IO。
     // 仅当 source 或 project 变更时才清除。
@@ -96,7 +109,8 @@ final class StatsViewModel: ObservableObject {
     @Published var updateAvailable: String?  // 新版本号（nil = 无更新）
 
     init() {
-        startAutoRefresh()
+        // 初始加载数据（状态栏需要），但不启动定时刷新。
+        // 定时刷新仅在面板可见时运行（通过 isPanelVisible didSet 控制）。
         Task {
             await fullRefresh()
         }
@@ -105,6 +119,7 @@ final class StatsViewModel: ObservableObject {
 
     deinit {
         refreshTimer?.invalidate()
+        versionCheckTimer?.invalidate()
     }
 
     // MARK: - Public API
@@ -276,14 +291,14 @@ final class StatsViewModel: ObservableObject {
             )
         }.value
 
-        // 统一赋值，避免 projects 和 stats 分帧更新导致 UI 闪烁
-        self.projects = loadedProjects
-        self.stats = result.stats
-        self.recentSessions = result.recentSessions
-        self.todayTokens = result.todayTokens
-        self.todayCost = result.todayCost
-        self.todaySessions = result.todaySessions
-        self.dailyStats = result.dailyStats
+        // 仅在值变化时赋值，避免无效的 SwiftUI 重渲染
+        if self.projects != loadedProjects { self.projects = loadedProjects }
+        if self.stats != result.stats { self.stats = result.stats }
+        if self.recentSessions != result.recentSessions { self.recentSessions = result.recentSessions }
+        if self.todayTokens != result.todayTokens { self.todayTokens = result.todayTokens }
+        if self.todayCost != result.todayCost { self.todayCost = result.todayCost }
+        if self.todaySessions != result.todaySessions { self.todaySessions = result.todaySessions }
+        if self.dailyStats != result.dailyStats { self.dailyStats = result.dailyStats }
 
         // Parse Cursor stats only when relevant
         if currentSource == .cursor || currentSource == .all {
@@ -418,12 +433,18 @@ final class StatsViewModel: ObservableObject {
     // MARK: - Auto Refresh
 
     private func startAutoRefresh() {
+        guard refreshTimer == nil else { return }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 self.refresh()
             }
         }
+    }
+
+    private func pauseAutoRefresh() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
     }
 
     // MARK: - Version Check
