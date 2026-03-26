@@ -334,21 +334,30 @@ class StatusBarController {
 
         let textColor: NSColor = isOverLimit ? .systemRed : .headerTextColor
         let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: textColor,
-        ]
 
         if line2.isEmpty {
+            let paraStyle = NSMutableParagraphStyle()
+            paraStyle.alignment = .center
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: textColor,
+                .paragraphStyle: paraStyle,
+                .baselineOffset: 0.5,
+            ]
             button.attributedTitle = NSAttributedString(string: line1, attributes: attrs)
         } else {
             let paraStyle = NSMutableParagraphStyle()
+            paraStyle.alignment = .center
             paraStyle.lineSpacing = 0
             paraStyle.maximumLineHeight = 11
             paraStyle.minimumLineHeight = 11
-            var twoLineAttrs = attrs
-            twoLineAttrs[.paragraphStyle] = paraStyle
-            button.attributedTitle = NSAttributedString(string: "\(line1)\n\(line2)", attributes: twoLineAttrs)
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: textColor,
+                .paragraphStyle: paraStyle,
+                .baselineOffset: 0.5,
+            ]
+            button.attributedTitle = NSAttributedString(string: "\(line1)\n\(line2)", attributes: attrs)
         }
 
         statusItem.length = NSStatusItem.variableLength
