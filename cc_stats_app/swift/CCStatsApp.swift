@@ -183,63 +183,26 @@ class StatusBarController {
     private var lastCost: Double = 0
     private var lastSessions: Int = 0
 
-    private var iconView: NSImageView!
-    private var label1: NSTextField!
-    private var label2: NSTextField!
-    private var container: NSStackView!
+    // Dedup: only re-render when display text actually changes
+    private var renderedLine1: String = ""
+    private var renderedLine2: String = ""
+    private var renderedOverLimit: Bool = false
+
+    private let logoImage: NSImage
 
     init(onToggle: @escaping () -> Void, onToggleChat: @escaping () -> Void) {
         self.onToggle = onToggle
         self.onToggleChat = onToggleChat
+        self.logoImage = drawClaudeLogo(size: NSSize(width: 18, height: 18))
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem.button {
             button.action = #selector(handleClick(_:))
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-
-            // Custom layout: icon + stacked labels
-            let icon = NSImageView()
-            icon.image = drawClaudeLogo(size: NSSize(width: 22, height: 22))
-            icon.translatesAutoresizingMaskIntoConstraints = false
-
-            let l1 = NSTextField(labelWithString: "")
-            l1.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
-            l1.textColor = .headerTextColor
-            l1.alignment = .left
-            l1.translatesAutoresizingMaskIntoConstraints = false
-
-            let l2 = NSTextField(labelWithString: "")
-            l2.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
-            l2.textColor = .headerTextColor
-            l2.alignment = .left
-            l2.translatesAutoresizingMaskIntoConstraints = false
-
-            let stack = NSStackView(views: [l1, l2])
-            stack.orientation = .vertical
-            stack.spacing = -1
-            stack.alignment = .leading
-            stack.translatesAutoresizingMaskIntoConstraints = false
-
-            let container = NSStackView(views: [icon, stack])
-            container.orientation = .horizontal
-            container.spacing = 3
-            container.alignment = .centerY
-            container.translatesAutoresizingMaskIntoConstraints = false
-
-            button.addSubview(container)
-            // 不约束 trailing — 让 container 自然撑开，由 refreshLabel 手动设置 statusItem.length
-            NSLayoutConstraint.activate([
-                container.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-                container.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 4),
-                icon.widthAnchor.constraint(equalToConstant: 22),
-                icon.heightAnchor.constraint(equalToConstant: 22),
-            ])
-
-            self.iconView = icon
-            self.label1 = l1
-            self.label2 = l2
-            self.container = container
+            button.imagePosition = .imageLeading
+            button.image = logoImage
+            button.image?.isTemplate = true
         }
     }
 
@@ -349,17 +312,46 @@ class StatusBarController {
             if lastSessions > 0 { line1 = "\(lastSessions)" }
         }
 
-        let labelColor: NSColor = isOverLimit ? .systemRed : .headerTextColor
-        label1.textColor = labelColor
-        label2.textColor = labelColor
-        label1.stringValue = line1
-        label2.stringValue = line2
-        label2.isHidden = line2.isEmpty
+        // 跳过未变化的渲染 — 避免触发 NSStatusItem replicant 更新
+        guard line1 != renderedLine1 || line2 != renderedLine2 || isOverLimit != renderedOverLimit else { return }
+        renderedLine1 = line1
+        renderedLine2 = line2
+        renderedOverLimit = isOverLimit
 
-        // macOS 12 不会自动根据子视图调整 statusItem 宽度，需手动计算
-        container.layoutSubtreeIfNeeded()
-        let fittingWidth = container.fittingSize.width + 8  // 4px padding each side
-        statusItem.length = max(30, fittingWidth)  // 至少 30pt（仅图标时）
+        // 无数据时仅显示图标
+        if line1.isEmpty && line2.isEmpty {
+            button.image = logoImage
+            button.image?.isTemplate = true
+            button.attributedTitle = NSAttributedString()
+            statusItem.length = NSStatusItem.variableLength
+            return
+        }
+
+        // 用 attributedTitle 展示文字（避免子视图 + Auto Layout 导致 replicant 死循环）
+        button.image = logoImage
+        button.image?.isTemplate = true
+        button.imagePosition = .imageLeading
+
+        let textColor: NSColor = isOverLimit ? .systemRed : .headerTextColor
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: textColor,
+        ]
+
+        if line2.isEmpty {
+            button.attributedTitle = NSAttributedString(string: line1, attributes: attrs)
+        } else {
+            let paraStyle = NSMutableParagraphStyle()
+            paraStyle.lineSpacing = 0
+            paraStyle.maximumLineHeight = 11
+            paraStyle.minimumLineHeight = 11
+            var twoLineAttrs = attrs
+            twoLineAttrs[.paragraphStyle] = paraStyle
+            button.attributedTitle = NSAttributedString(string: "\(line1)\n\(line2)", attributes: twoLineAttrs)
+        }
+
+        statusItem.length = NSStatusItem.variableLength
     }
 
     private static func formatTokens(_ n: Int) -> String {
