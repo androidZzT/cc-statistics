@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .analyzer import analyze_session, merge_stats
-from .formatter import format_stats
+from .formatter import format_skill_stats, format_stats
 from .parser import (
     find_gemini_sessions,
     find_gemini_sessions_by_keyword,
@@ -276,6 +276,11 @@ def main(argv: list[str] | None = None) -> None:
         help="列出所有已知项目",
     )
     parser.add_argument(
+        "--skills",
+        action="store_true",
+        help="展示 Skill 使用统计（调用次数、成功率、时间分布）",
+    )
+    parser.add_argument(
         "--last",
         type=int,
         metavar="N",
@@ -469,7 +474,10 @@ def main(argv: list[str] | None = None) -> None:
     else:
         result = merge_stats(all_stats)
 
-    print(format_stats(result, session_count=len(all_stats)))
+    if args.skills:
+        print(format_skill_stats(result, session_count=len(all_stats)))
+    else:
+        print(format_stats(result, session_count=len(all_stats)))
 
 
 if __name__ == "__main__":

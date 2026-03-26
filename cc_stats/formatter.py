@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 
-from .analyzer import TOOL_DESCRIPTIONS, SessionStats
+from .analyzer import TOOL_DESCRIPTIONS, SessionStats, SkillUsage
 
 
 # ── ANSI 色彩 ──────────────────────────────────────────────
@@ -266,6 +266,124 @@ def format_stats(stats: SessionStats, session_count: int = 1) -> str:
         lines.append(f"  代码产出: {_fmt_tokens(total_code)} 行 / {_fmt_tokens(total_tokens)} Token = {_cyan(f'{code_per_1k} 行/K')}")
         lines.append(f"  指令精准: {_fmt_tokens(avg_tokens_per_msg)} Token/条")
         lines.append(f"  AI 利用率: {ai_ratio}%")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def format_skill_stats(stats: SessionStats, session_count: int = 1) -> str:
+    """将 Skill 使用统计格式化为终端输出"""
+    lines: list[str] = []
+    sep = _dim("─" * 60)
+
+    # Header
+    lines.append("")
+    lines.append(_cyan("  ╔══════════════════════════════════════════════════════════╗"))
+    lines.append(_cyan("  ║") + _white_bold("          Skill 使用统计报告") + "                     " + _cyan("║"))
+    lines.append(_cyan("  ╚══════════════════════════════════════════════════════════╝"))
+    lines.append("")
+
+    if stats.project_path and stats.project_path != "all":
+        lines.append(f"  {_dim('项目:')} {_bold(stats.project_path)}")
+    if session_count > 1:
+        lines.append(f"  {_dim('会话数:')} {_bold(str(session_count))}")
+    if stats.start_time:
+        start_local = stats.start_time.astimezone()
+        end_local = stats.end_time.astimezone() if stats.end_time else None
+        end_str = end_local.strftime('%Y-%m-%d %H:%M') if end_local else '?'
+        lines.append(f"  {_dim('时间范围:')} {start_local.strftime('%Y-%m-%d %H:%M')} ~ {end_str}")
+    lines.append("")
+
+    if not stats.skill_stats:
+        lines.append(f"  {_dim('未发现 Skill 调用记录')}")
+        lines.append("")
+        return "\n".join(lines)
+
+    # ── ① 调用次数排行 ──
+    sorted_skills = sorted(
+        stats.skill_stats.values(), key=lambda s: s.call_count, reverse=True
+    )
+    total_calls = sum(s.call_count for s in sorted_skills)
+
+    lines.append(f"  {_cyan_bold('①')} {_bold('Skill 调用排行')}")
+    lines.append(sep)
+    lines.append(f"  Skill 总数: {_yellow(str(len(sorted_skills)))}  总调用: {_yellow(str(total_calls))}")
+    lines.append("")
+
+    max_count = sorted_skills[0].call_count if sorted_skills else 1
+    max_name_len = max(len(s.name) for s in sorted_skills)
+
+    for su in sorted_skills:
+        bar = _bar(su.call_count, max_count, 15)
+        lines.append(
+            f"  {_bold(f'{su.name:<{max_name_len}}')}  {bar} {_yellow(f'{su.call_count:>5}')}"
+        )
+    lines.append("")
+
+    # ── ② 成功率 ──
+    lines.append(f"  {_cyan_bold('②')} {_bold('成功/失败率')}")
+    lines.append(sep)
+
+    for su in sorted_skills:
+        resolved = su.success_count + su.error_count
+        if resolved > 0:
+            success_rate = su.success_count / resolved * 100
+            rate_color = _green if success_rate >= 90 else _yellow if success_rate >= 70 else _red
+            rate_str = rate_color(f"{success_rate:.0f}%")
+        else:
+            rate_str = _dim("N/A")
+
+        parts = []
+        if su.success_count:
+            parts.append(_green(f"✓{su.success_count}"))
+        if su.error_count:
+            parts.append(_red(f"✗{su.error_count}"))
+        if su.unknown_count:
+            parts.append(_dim(f"?{su.unknown_count}"))
+        detail = " ".join(parts)
+
+        lines.append(
+            f"  {su.name:<{max_name_len}}  成功率: {rate_str}  ({detail})"
+        )
+    lines.append("")
+
+    # ── ③ 时间分布（按小时） ──
+    lines.append(f"  {_cyan_bold('③')} {_bold('时间分布（按小时）')}")
+    lines.append(sep)
+
+    # 合并所有 skill 的小时分布
+    hourly_total: dict[int, int] = {}
+    for su in sorted_skills:
+        for h, c in su.hourly_dist.items():
+            hourly_total[h] = hourly_total.get(h, 0) + c
+
+    if hourly_total:
+        max_hourly = max(hourly_total.values())
+        for hour in range(24):
+            count = hourly_total.get(hour, 0)
+            if count == 0:
+                continue
+            bar = _bar(count, max_hourly, 20)
+            lines.append(f"  {hour:02d}:00  {bar} {_yellow(f'{count:>3}')}")
+    else:
+        lines.append(f"  {_dim('无时间分布数据')}")
+    lines.append("")
+
+    # ── ④ 时间分布（按天） ──
+    daily_total: dict[str, int] = {}
+    for su in sorted_skills:
+        for d, c in su.daily_dist.items():
+            daily_total[d] = daily_total.get(d, 0) + c
+
+    if daily_total:
+        lines.append(f"  {_cyan_bold('④')} {_bold('时间分布（按天）')}")
+        lines.append(sep)
+
+        sorted_days = sorted(daily_total.items())
+        max_daily = max(daily_total.values())
+        for day, count in sorted_days:
+            bar = _bar(count, max_daily, 20)
+            lines.append(f"  {day}  {bar} {_yellow(f'{count:>3}')}")
         lines.append("")
 
     return "\n".join(lines)

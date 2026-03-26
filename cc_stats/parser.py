@@ -13,6 +13,7 @@ class ToolCall:
     name: str
     input: dict[str, Any]
     timestamp: str
+    tool_use_id: str = ""
 
 
 @dataclass
@@ -27,6 +28,8 @@ class Message:
     is_meta: bool = False
     session_id: str = ""
     message_id: str = ""  # API message ID，用于流式去重
+    tool_results: dict[str, bool] = field(default_factory=dict)
+    # tool_use_id -> is_error, 从 tool_result 块中提取
 
 
 @dataclass
@@ -82,7 +85,17 @@ def parse_jsonl(path: Path) -> Session:
                             name=block.get("name", ""),
                             input=block.get("input", {}),
                             timestamp=timestamp,
+                            tool_use_id=block.get("id", ""),
                         ))
+
+            # 提取 tool_result 的 is_error 信息
+            tool_results: dict[str, bool] = {}
+            if is_tool_result and isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        tid = block.get("tool_use_id", "")
+                        if tid:
+                            tool_results[tid] = bool(block.get("is_error", False))
 
             messages.append(Message(
                 role=msg_type,
@@ -95,6 +108,7 @@ def parse_jsonl(path: Path) -> Session:
                 is_meta=obj.get("isMeta", False),
                 session_id=obj.get("sessionId", session_id),
                 message_id=raw_msg.get("id", ""),
+                tool_results=tool_results,
             ))
 
     # 流式去重：Claude Code 对同一条 API 消息会写多条 JSONL 记录

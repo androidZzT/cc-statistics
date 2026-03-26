@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .parser import Message, Session
+from .parser import Message, Session, ToolCall
 
 # 文件扩展名 → 语言映射
 EXT_TO_LANG: dict[str, str] = {
@@ -136,6 +136,18 @@ class TokenUsage:
 
 
 @dataclass
+class SkillUsage:
+    """单个 Skill 的使用统计"""
+    name: str
+    call_count: int = 0
+    success_count: int = 0
+    error_count: int = 0
+    unknown_count: int = 0  # 无法确定结果的调用
+    hourly_dist: dict[int, int] = field(default_factory=dict)  # hour(0-23) -> count
+    daily_dist: dict[str, int] = field(default_factory=dict)   # "YYYY-MM-DD" -> count
+
+
+@dataclass
 class SessionStats:
     """单个会话的统计结果"""
     session_id: str
@@ -176,6 +188,9 @@ class SessionStats:
     # 5. Token 消耗
     token_usage: TokenUsage = field(default_factory=TokenUsage)
     token_by_model: dict[str, TokenUsage] = field(default_factory=dict)
+
+    # 6. Skill 使用统计
+    skill_stats: dict[str, SkillUsage] = field(default_factory=dict)
 
 
 @dataclass
@@ -316,6 +331,12 @@ def analyze_session(session: Session) -> SessionStats:
         project_path=session.project_path,
     )
 
+    # 构建 tool_use_id → is_error 映射（用于 Skill 成功率统计）
+    tool_result_errors: dict[str, bool] = {}
+    for msg in session.messages:
+        if msg.role == "user" and msg.tool_results:
+            tool_result_errors.update(msg.tool_results)
+
     # 构建带时间戳的消息序列，用于时长分析
     # timed_msgs: list of (datetime, role)
     # role: "user_real" = 真实用户消息, "user_tool" = 工具返回, "assistant"
@@ -358,6 +379,32 @@ def analyze_session(session: Session) -> SessionStats:
                 stats.tool_call_counts[display_name] = (
                     stats.tool_call_counts.get(display_name, 0) + 1
                 )
+
+                # -------- 6. Skill 使用统计 --------
+                if tc.name == "Skill":
+                    skill_name = tc.input.get("skill", "") or "unknown"
+                    if skill_name not in stats.skill_stats:
+                        stats.skill_stats[skill_name] = SkillUsage(name=skill_name)
+                    su = stats.skill_stats[skill_name]
+                    su.call_count += 1
+
+                    # 成功/失败判定
+                    if tc.tool_use_id and tc.tool_use_id in tool_result_errors:
+                        if tool_result_errors[tc.tool_use_id]:
+                            su.error_count += 1
+                        else:
+                            su.success_count += 1
+                    else:
+                        su.unknown_count += 1
+
+                    # 时间分布
+                    call_ts = _parse_ts(tc.timestamp)
+                    if call_ts:
+                        local_ts = call_ts.astimezone()
+                        hour = local_ts.hour
+                        day = local_ts.strftime("%Y-%m-%d")
+                        su.hourly_dist[hour] = su.hourly_dist.get(hour, 0) + 1
+                        su.daily_dist[day] = su.daily_dist.get(day, 0) + 1
 
                 # -------- 4. 代码行数（从 Edit/Write 工具提取） --------
                 if tc.name == "Write":
@@ -550,6 +597,20 @@ def merge_stats(all_stats: list[SessionStats]) -> SessionStats:
                     merged.git_lines_by_lang[lang] = {"added": 0, "removed": 0}
                 merged.git_lines_by_lang[lang]["added"] += counts["added"]
                 merged.git_lines_by_lang[lang]["removed"] += counts["removed"]
+
+        # Skill 使用统计
+        for name, su in s.skill_stats.items():
+            if name not in merged.skill_stats:
+                merged.skill_stats[name] = SkillUsage(name=name)
+            m_su = merged.skill_stats[name]
+            m_su.call_count += su.call_count
+            m_su.success_count += su.success_count
+            m_su.error_count += su.error_count
+            m_su.unknown_count += su.unknown_count
+            for h, c in su.hourly_dist.items():
+                m_su.hourly_dist[h] = m_su.hourly_dist.get(h, 0) + c
+            for d, c in su.daily_dist.items():
+                m_su.daily_dist[d] = m_su.daily_dist.get(d, 0) + c
 
         merged.token_usage.input_tokens += s.token_usage.input_tokens
         merged.token_usage.output_tokens += s.token_usage.output_tokens
