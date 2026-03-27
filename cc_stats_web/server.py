@@ -300,24 +300,22 @@ def _get_daily_stats(project_dir_name=None, days=14):
 
 
 def _get_skill_stats(project_dir_name=None, since_days=None):
-    """Return skill usage statistics as a list sorted by call_count."""
+    """Return skill usage statistics as a list sorted by call_count.
+
+    Skill stats always cover ALL sessions (ignoring since_days) because
+    skill usage patterns are more meaningful at the all-time level.
+    """
     files = _collect_session_files(project_dir_name)
     if not files:
         return []
 
     files.sort(key=lambda f: f.stat().st_mtime)
 
-    since_dt = None
-    if since_days:
-        since_dt = datetime.now(tz=timezone.utc) - timedelta(days=since_days)
-
     all_stats = []
     for f in files:
         try:
             session = _parse_session_file(f)
             stats = analyze_session(session)
-            if since_dt and stats.end_time and stats.end_time < since_dt:
-                continue
             all_stats.append(stats)
         except Exception:
             continue

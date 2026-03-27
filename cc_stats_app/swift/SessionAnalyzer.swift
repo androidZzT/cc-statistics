@@ -195,6 +195,25 @@ class SessionAnalyzer {
 
     // MARK: - Skill Stats
 
+    /// Collect skill stats from ALL sessions ignoring time filters.
+    /// Skill usage is a cumulative metric more meaningful at all-time level.
+    static func collectAllSkillStats(_ sessions: [Session]) -> [String: SkillUsage] {
+        var merged: [String: SkillUsage] = [:]
+        for session in sessions {
+            let sessionSkills = collectSkillStats(session.messages)
+            for (name, su) in sessionSkills {
+                if merged[name] == nil {
+                    merged[name] = SkillUsage(name: name)
+                }
+                merged[name]!.callCount += su.callCount
+                merged[name]!.successCount += su.successCount
+                merged[name]!.errorCount += su.errorCount
+                merged[name]!.unknownCount += su.unknownCount
+            }
+        }
+        return merged
+    }
+
     private static func collectSkillStats(_ messages: [Message]) -> [String: SkillUsage] {
         // Build tool_use_id → is_error mapping from tool results
         var toolResultErrors: [String: Bool] = [:]

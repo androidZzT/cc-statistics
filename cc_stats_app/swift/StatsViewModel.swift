@@ -265,10 +265,14 @@ final class StatsViewModel: ObservableObject {
                 }
             }
 
-            let stats = SessionAnalyzer.analyze(
+            var stats = SessionAnalyzer.analyze(
                 sessions: filteredSessions,
                 since: currentFilter.startDate
             )
+
+            // Skill 统计始终基于全量 sessions（不受时间筛选），
+            // 因为 Skill 使用模式在全时间维度更有意义。
+            stats.skillStats = SessionAnalyzer.collectAllSkillStats(sessions)
 
             // 会话列表按最近活跃时间排序（不受时间筛选影响）
             let recent = sessions
