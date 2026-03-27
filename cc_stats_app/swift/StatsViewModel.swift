@@ -358,8 +358,9 @@ final class StatsViewModel: ObservableObject {
 
         return (0..<14).map { i in
             let dayStart = calendar.date(byAdding: .day, value: i, to: rangeStart)!
-            let daySessions = buckets[i]
-            let dayStats = SessionAnalyzer.analyze(sessions: daySessions, since: dayStart)
+            let dayEnd = calendar.date(byAdding: .day, value: i + 1, to: rangeStart)!
+            // 传入 until 使跨日 session 的 token 只计入当天部分
+            let dayStats = SessionAnalyzer.analyze(sessions: buckets[i], since: dayStart, until: dayEnd)
 
             return DailyStatPoint(
                 date: dayStart,

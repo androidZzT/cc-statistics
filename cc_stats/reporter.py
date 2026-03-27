@@ -120,7 +120,11 @@ def generate_report(period: str = "week") -> str:
             if stats.end_time and stats.end_time < since:
                 continue
             all_stats.append(stats)
-            if stats.start_time:
+            # 按 token_by_date 归日：跨日 session 的数据分配到各自然日
+            for day_key in stats.token_by_date:
+                daily[day_key].append(stats)
+            # 没有 token 数据时，回退到 start_time 归日
+            if not stats.token_by_date and stats.start_time:
                 day_key = stats.start_time.astimezone().strftime("%Y-%m-%d")
                 daily[day_key].append(stats)
         except Exception:

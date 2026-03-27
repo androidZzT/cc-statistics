@@ -13,10 +13,12 @@ from .parser import find_gemini_sessions, find_sessions, parse_gemini_json, pars
 
 
 def _collect_today_stats() -> SessionStats | None:
-    """收集今天的统计数据（Claude + Gemini）"""
-    today_start = datetime.now(tz=timezone.utc).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    """收集今天的统计数据（Claude + Gemini）
+
+    使用 token_by_date 按消息时间戳归日：只要 session 中有消息
+    落在今天，该 session 就会被纳入统计。
+    """
+    today_key = datetime.now().strftime("%Y-%m-%d")
     all_files: list = list(find_sessions())
     all_files.extend(find_gemini_sessions())
     today_stats = []
@@ -25,7 +27,17 @@ def _collect_today_stats() -> SessionStats | None:
         try:
             session = parse_gemini_json(f) if f.suffix == ".json" else parse_jsonl(f)
             stats = analyze_session(session)
-            if stats.end_time and stats.end_time >= today_start:
+            # 按消息时间戳归日：token_by_date 包含今天的 key
+            has_today_tokens = today_key in stats.token_by_date
+            # 回退：无 token_by_date 时，按 end_time 判断
+            if not has_today_tokens and not stats.token_by_date:
+                today_start = datetime.now(tz=timezone.utc).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                has_today_tokens = (
+                    stats.end_time is not None and stats.end_time >= today_start
+                )
+            if has_today_tokens:
                 today_stats.append(stats)
         except Exception:
             continue

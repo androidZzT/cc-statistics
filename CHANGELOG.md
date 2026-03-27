@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.12.3 (2026-03-27)
+
+### Bug Fixes
+- Fix PyPI package Swift binary version not synced with pyproject.toml (#14)
+
+### New Features
+- Cross-midnight session statistics — tokens are attributed by message timestamp date instead of session start date (#15)
+
 ## v0.12.2 (2026-03-26)
 
 ### Bug Fixes

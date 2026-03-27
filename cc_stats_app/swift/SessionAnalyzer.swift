@@ -42,8 +42,8 @@ class SessionAnalyzer {
 
     // MARK: - Public API
 
-    static func analyze(sessions: [Session], since: Date? = nil) -> SessionStats {
-        let perSession = sessions.map { analyzeSession($0, since: since) }
+    static func analyze(sessions: [Session], since: Date? = nil, until: Date? = nil) -> SessionStats {
+        let perSession = sessions.map { analyzeSession($0, since: since, until: until) }
         return merge(stats: perSession)
     }
 
@@ -126,13 +126,15 @@ class SessionAnalyzer {
 
     // MARK: - Single Session Analysis
 
-    private static func analyzeSession(_ session: Session, since: Date? = nil) -> SessionStats {
-        // 按时间窗口过滤消息：只统计 since 之后的消息
+    private static func analyzeSession(_ session: Session, since: Date? = nil, until: Date? = nil) -> SessionStats {
+        // 按时间窗口过滤消息：只统计 [since, until) 范围内的消息
         let messages: [Message]
-        if let since = since {
+        if since != nil || until != nil {
             messages = session.messages.filter { msg in
                 guard let ts = msg.timestamp else { return false }
-                return ts >= since
+                if let since = since, ts < since { return false }
+                if let until = until, ts >= until { return false }
+                return true
             }
         } else {
             messages = session.messages

@@ -31,12 +31,19 @@ _ALLOWED_DOWNLOAD_PREFIXES = (
 
 
 def _get_current_version() -> str:
-    """从 pyproject.toml 或 SettingsView 读取当前版本"""
-    settings = os.path.join(_swift_dir, "Views", "SettingsView.swift")
-    if os.path.exists(settings):
-        with open(settings) as f:
+    """从 cc_stats.__version__ 读取当前版本，fallback 到 pyproject.toml"""
+    try:
+        from cc_stats import __version__
+        return __version__
+    except ImportError:
+        pass
+    pyproject = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "pyproject.toml"
+    )
+    if os.path.exists(pyproject):
+        with open(pyproject) as f:
             for line in f:
-                if "appVersion" in line and "=" in line:
+                if line.strip().startswith("version"):
                     return line.split('"')[1]
     return "unknown"
 

@@ -97,6 +97,14 @@ def _parse_ts(ts: str) -> datetime | None:
         return None
 
 
+def _get_local_date(ts: str) -> str | None:
+    """从消息时间戳提取本地日期字符串 (YYYY-MM-DD)"""
+    dt = _parse_ts(ts)
+    if dt is None:
+        return None
+    return dt.astimezone().strftime("%Y-%m-%d")
+
+
 def _detect_lang(file_path: str) -> str:
     """根据文件扩展名检测编程语言"""
     _, ext = os.path.splitext(file_path)
@@ -191,6 +199,10 @@ class SessionStats:
 
     # 6. Skill 使用统计
     skill_stats: dict[str, SkillUsage] = field(default_factory=dict)
+
+    # 7. 按日期分配的 Token（跨日 session 按消息时间戳归日）
+    # key: "YYYY-MM-DD" 本地日期, value: 该日的 TokenUsage
+    token_by_date: dict[str, TokenUsage] = field(default_factory=dict)
 
 
 @dataclass
@@ -466,6 +478,17 @@ def analyze_session(session: Session) -> SessionStats:
                 m.cache_read_input_tokens += cache_read
                 m.cache_creation_input_tokens += cache_create
 
+                # -------- 7. 按消息时间戳归日 --------
+                local_date = _get_local_date(msg.timestamp)
+                if local_date:
+                    if local_date not in stats.token_by_date:
+                        stats.token_by_date[local_date] = TokenUsage()
+                    d = stats.token_by_date[local_date]
+                    d.input_tokens += inp
+                    d.output_tokens += out
+                    d.cache_read_input_tokens += cache_read
+                    d.cache_creation_input_tokens += cache_create
+
     # -------- 3. 时长计算（基于对话轮次） --------
     # 一轮 = 用户发消息 → AI 处理（可能多次工具调用）→ AI 最终回复
     # AI 时长 = 每轮中从用户消息到 AI 最后一条响应
@@ -616,6 +639,16 @@ def merge_stats(all_stats: list[SessionStats]) -> SessionStats:
         merged.token_usage.output_tokens += s.token_usage.output_tokens
         merged.token_usage.cache_read_input_tokens += s.token_usage.cache_read_input_tokens
         merged.token_usage.cache_creation_input_tokens += s.token_usage.cache_creation_input_tokens
+
+        # token_by_date 合并
+        for date_key, tu in s.token_by_date.items():
+            if date_key not in merged.token_by_date:
+                merged.token_by_date[date_key] = TokenUsage()
+            d = merged.token_by_date[date_key]
+            d.input_tokens += tu.input_tokens
+            d.output_tokens += tu.output_tokens
+            d.cache_read_input_tokens += tu.cache_read_input_tokens
+            d.cache_creation_input_tokens += tu.cache_creation_input_tokens
 
         for model, usage in s.token_by_model.items():
             if model not in merged.token_by_model:
