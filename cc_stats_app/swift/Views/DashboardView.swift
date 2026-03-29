@@ -140,23 +140,30 @@ struct DashboardView: View {
             }
 
             // Loading overlay
-            if viewModel.isLoading && viewModel.stats != nil {
-                Color.black.opacity(0.3)
-                    .ignoresSafeArea()
-                VStack(spacing: 10) {
-                    ProgressView()
-                        .scaleEffect(1.2)
-                        .tint(.white)
-                    Text(L10n.loading)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white)
+            ZStack {
+                if viewModel.isLoading && viewModel.stats != nil {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+
+                    VStack(spacing: 16) {
+                        TimelineView(.animation) { timeline in
+                            Circle()
+                                .trim(from: 0, to: 0.7)
+                                .stroke(Theme.cyan, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                                .frame(width: 40, height: 40)
+                                .rotationEffect(.degrees(timeline.date.timeIntervalSince1970.truncatingRemainder(dividingBy: 3.6) * 100))
+                        }
+
+                        Text(L10n.loading)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Theme.textPrimary)
+                    }
+                    .padding(28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Theme.cardBackground.opacity(0.95))
+                    )
                 }
-                .padding(20)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                )
-                .transition(.opacity)
             }
         }
         .frame(width: 480)
@@ -239,7 +246,7 @@ struct DashboardView: View {
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    viewModel.activeTab = tab
+                    viewModel.selectSource(tab == .claudeCode ? .claudeCode : .cursor)
                 }
             }
         }
