@@ -85,6 +85,32 @@ final class GeminiParser {
         return parseAllSessions().filter { $0.projectPath == projectPath }
     }
 
+    /// Returns all JSON session file paths under Gemini directories.
+    func allSessionFilePaths() -> [String] {
+        let tmpDir = (geminiHome as NSString).appendingPathComponent("tmp")
+        guard fileManager.fileExists(atPath: tmpDir) else { return [] }
+
+        var allFiles: [String] = []
+        if let projectDirs = try? fileManager.contentsOfDirectory(atPath: tmpDir) {
+            for projDir in projectDirs {
+                let chatsDir = (tmpDir as NSString)
+                    .appendingPathComponent(projDir)
+                    .appending("/chats")
+                if let files = try? fileManager.contentsOfDirectory(atPath: chatsDir) {
+                    for file in files where file.hasSuffix(".json") {
+                        allFiles.append((chatsDir as NSString).appendingPathComponent(file))
+                    }
+                }
+            }
+        }
+        return allFiles
+    }
+
+    /// Parse a single session file at the given path (public entry point for incremental parsing).
+    func parseSessionFile(atPath filePath: String) -> Session? {
+        return parseSessionFile(filePath)
+    }
+
     // MARK: - JSON Parsing
 
     private func parseSessionFile(_ filePath: String) -> Session? {

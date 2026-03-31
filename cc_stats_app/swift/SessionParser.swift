@@ -76,6 +76,28 @@ final class SessionParser {
         return projects.flatMap { parseSessions(forProject: $0.path) }
     }
 
+    /// Returns all JSONL file paths across all projects.
+    func allSessionFilePaths() -> [String] {
+        guard let projectDirs = try? listDirectories(at: claudeProjectsPath) else { return [] }
+        return projectDirs.flatMap { dir -> [String] in
+            let projectPath = (claudeProjectsPath as NSString).appendingPathComponent(dir)
+            return findJSONLFiles(in: projectPath)
+        }
+    }
+
+    /// Returns all JSONL file paths for a specific project.
+    func allSessionFilePaths(forProject projectPath: String) -> [String] {
+        return findJSONLFiles(in: projectPath)
+    }
+
+    /// Parse a single session file at the given absolute path (public entry point for incremental parsing).
+    func parseSessionFile(atPath filePath: String) -> Session? {
+        // Derive projectPath from file's parent directory structure
+        // filePath is like: ~/.claude/projects/<encoded-project>/<uuid>.jsonl
+        let dir = (filePath as NSString).deletingLastPathComponent
+        return parseSessionFile(filePath, projectPath: dir)
+    }
+
     // MARK: - File Discovery
 
     /// Find all .jsonl files recursively within a directory.

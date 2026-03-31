@@ -199,18 +199,16 @@ class StatusBarController {
 
     /// Clawd mascot image names for each animation frame per state.
     static let animationFrames: [SessionActivityState: [String]] = [
-        .idle: ["clawd-idle-f0", "clawd-idle-f1", "clawd-sleeping-f0", "clawd-sleeping-f1", "clawd-sleeping-f2"],
         .active: ["clawd-typing-f0", "clawd-typing-f1", "clawd-typing-f2"],
-        .thinking: ["clawd-thinking-f0", "clawd-thinking-f1"],
-        .error: ["clawd-error-f0"],
+        .idle: ["clawd-idle-f0", "clawd-idle-f1"],
+        .sleeping: ["clawd-sleeping-f0", "clawd-sleeping-f1", "clawd-sleeping-f2"],
     ]
 
     /// Frame interval per state (seconds).
     static let frameIntervals: [SessionActivityState: TimeInterval] = [
-        .idle: 0.6,
         .active: 0.15,
-        .thinking: 0.5,
-        .error: 0,        // static
+        .idle: 0.6,
+        .sleeping: 0.8,
     ]
 
     init(onToggle: @escaping () -> Void, onToggleChat: @escaping () -> Void) {
@@ -578,10 +576,9 @@ class StatusBarController {
         // Final fallback: SF Symbol
         if image == nil {
             let fallbackSymbols: [SessionActivityState: String] = [
-                .idle: "sparkles",
                 .active: "sparkle",
-                .thinking: "arrow.trianglehead.2.clockwise",
-                .error: "exclamationmark.triangle.fill",
+                .idle: "sparkles",
+                .sleeping: "moon.zzz.fill",
             ]
             let symbolName = fallbackSymbols[activityState] ?? "sparkles"
             let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
@@ -595,11 +592,7 @@ class StatusBarController {
         // Clawd is colorful pixel art — never use template mode
         image?.isTemplate = false
 
-        if activityState == .error {
-            button.contentTintColor = .systemRed
-        } else {
-            button.contentTintColor = nil
-        }
+        button.contentTintColor = nil
 
         // Store icon for refreshLabel to use later
         currentIcon = image

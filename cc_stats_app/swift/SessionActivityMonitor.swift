@@ -1,46 +1,32 @@
 import Foundation
-import CoreServices
 
 // MARK: - Session Activity State
 
 enum SessionActivityState: String, Equatable {
-    case idle
     case active
-    case thinking
-    case error
-
-    /// Priority for state resolution (higher wins).
-    var priority: Int {
-        switch self {
-        case .idle: return 0
-        case .active: return 1
-        case .thinking: return 2
-        case .error: return 3
-        }
-    }
+    case idle
+    case sleeping
 }
 
 // MARK: - Session Activity Monitor
 
-/// Monitors `~/.claude/projects/` for JSONL file changes and derives
-/// the current `SessionActivityState` based on file modification times.
+/// Monitors Claude Code activity by reading a state file written by hook scripts.
 ///
-/// State logic:
-/// - error: set externally via `reportError()`, clears after timeout
-/// - thinking: most recent JSONL mtime within 30 seconds
-/// - active: most recent JSONL mtime within 30s–5min
-/// - idle: no recent updates (>5 min)
+/// Hook script (`hooks/ccstats-hook.js`) writes `~/.cc-stats/activity-state.json`
+/// on every Claude Code event with `{ state, event, timestamp }`.
 ///
-/// Priority: error > thinking > active > idle
+/// This monitor polls that file and derives:
+/// - active:   hook wrote "active" within the last 30 seconds
+/// - idle:     hook wrote "idle", or "active" older than 30s but within 10 min
+/// - sleeping: no state update for > 10 minutes
 final class SessionActivityMonitor {
 
     // MARK: - Configuration
 
     struct Thresholds {
-        var thinkingInterval: TimeInterval = 30
-        var activeInterval: TimeInterval = 300
-        var errorTimeout: TimeInterval = 30
-        var scanInterval: TimeInterval = 5
+        var activeTimeout: TimeInterval = 30
+        var sleepingTimeout: TimeInterval = 600
+        var pollInterval: TimeInterval = 3
     }
 
     // MARK: - Public
@@ -49,218 +35,92 @@ final class SessionActivityMonitor {
     private(set) var currentState: SessionActivityState = .idle
     var onStateChange: ((SessionActivityState) -> Void)?
 
-    // MARK: - Internal State
+    // MARK: - Internal
 
-    private let monitoredPath: String
-    private var fsEventStream: FSEventStreamRef?
-    private var scanTimer: Timer?
-    private var errorExpiry: Date?
-
-    /// Last known mtime of any JSONL file under the monitored path.
-    /// Updated by FSEvents callback + periodic scan.
-    private var latestJSONLMtime: Date = .distantPast
+    private let stateFilePath: String
+    private var pollTimer: Timer?
 
     // MARK: - Init
 
-    init(
-        monitoredPath: String? = nil,
-        thresholds: Thresholds = Thresholds()
-    ) {
-        if let custom = monitoredPath {
-            self.monitoredPath = custom
-        } else {
-            let home = FileManager.default.homeDirectoryForCurrentUser.path
-            self.monitoredPath = (home as NSString).appendingPathComponent(".claude/projects")
-        }
+    init(thresholds: Thresholds = Thresholds()) {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        self.stateFilePath = (home as NSString).appendingPathComponent(".cc-stats/activity-state.json")
         self.thresholds = thresholds
     }
 
-    deinit {
-        stop()
-    }
+    deinit { stop() }
 
     // MARK: - Lifecycle
 
     func start() {
-        startFSEventStream()
-        startScanTimer()
-        // Initial scan
-        scanForLatestMtime()
-        reevaluateState()
+        pollStateFile()
+        startPollTimer()
     }
 
     func stop() {
-        stopFSEventStream()
-        stopScanTimer()
+        pollTimer?.invalidate()
+        pollTimer = nil
     }
 
-    // MARK: - External Error Reporting
+    // MARK: - State Evaluation
 
-    /// Report an error state. The error will auto-clear after `thresholds.errorTimeout`.
-    func reportError(duration: TimeInterval? = nil) {
-        let timeout = duration ?? thresholds.errorTimeout
-        errorExpiry = Date().addingTimeInterval(timeout)
-        reevaluateState()
-    }
-
-    /// Clear error state immediately.
-    func clearError() {
-        errorExpiry = nil
-        reevaluateState()
-    }
-
-    // MARK: - State Evaluation (pure logic, testable)
-
-    /// Determine state from inputs. This is a pure function for testability.
     static func evaluateState(
-        latestMtime: Date,
-        now: Date,
-        errorExpiry: Date?,
+        hookState: String?,
+        hookTimestamp: TimeInterval?,
+        now: TimeInterval,
         thresholds: Thresholds
     ) -> SessionActivityState {
-        // Error takes highest priority
-        if let expiry = errorExpiry, now < expiry {
-            return .error
-        }
+        guard let ts = hookTimestamp else { return .sleeping }
 
-        let elapsed = now.timeIntervalSince(latestMtime)
+        let elapsed = now - ts / 1000.0  // timestamp is in ms
 
-        if elapsed <= thresholds.thinkingInterval {
-            return .thinking
-        } else if elapsed <= thresholds.activeInterval {
+        if hookState == "active" && elapsed <= thresholds.activeTimeout {
             return .active
-        } else {
+        } else if elapsed <= thresholds.sleepingTimeout {
             return .idle
+        } else {
+            return .sleeping
         }
     }
 
-    /// Re-evaluate and publish state if changed.
-    func reevaluateState() {
+    // MARK: - File Polling
+
+    private func startPollTimer() {
+        guard pollTimer == nil else { return }
+        pollTimer = Timer.scheduledTimer(
+            withTimeInterval: thresholds.pollInterval,
+            repeats: true
+        ) { [weak self] _ in
+            self?.pollStateFile()
+        }
+    }
+
+    private func pollStateFile() {
+        var hookState: String?
+        var hookTimestamp: TimeInterval?
+
+        if let data = FileManager.default.contents(atPath: stateFilePath),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            hookState = json["state"] as? String
+            hookTimestamp = json["timestamp"] as? TimeInterval
+        }
+
         let newState = Self.evaluateState(
-            latestMtime: latestJSONLMtime,
-            now: Date(),
-            errorExpiry: errorExpiry,
+            hookState: hookState,
+            hookTimestamp: hookTimestamp,
+            now: Date().timeIntervalSince1970,
             thresholds: thresholds
         )
+
         if newState != currentState {
             currentState = newState
             onStateChange?(newState)
         }
     }
 
-    // MARK: - FSEvents
+    // MARK: - Testing
 
-    private func startFSEventStream() {
-        guard fsEventStream == nil else { return }
-
-        let pathsToWatch = [monitoredPath] as CFArray
-
-        var context = FSEventStreamContext(
-            version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil,
-            release: nil,
-            copyDescription: nil
-        )
-
-        let callback: FSEventStreamCallback = { _, info, numEvents, eventPaths, eventFlags, _ in
-            guard let info = info else { return }
-            let monitor = Unmanaged<SessionActivityMonitor>.fromOpaque(info).takeUnretainedValue()
-
-            // Check if any event involves a .jsonl file
-            guard let paths = unsafeBitCast(eventPaths, to: NSArray.self) as? [String] else { return }
-            let flags = UnsafeBufferPointer(start: eventFlags, count: numEvents)
-
-            var hasJSONLChange = false
-            for i in 0..<numEvents {
-                let path = paths[i]
-                // Skip item-removed events
-                let itemRemoved = UInt32(kFSEventStreamEventFlagItemRemoved)
-                if flags[i] & itemRemoved != 0 { continue }
-                if path.hasSuffix(".jsonl") {
-                    hasJSONLChange = true
-                    break
-                }
-            }
-
-            if hasJSONLChange {
-                monitor.latestJSONLMtime = Date()
-                DispatchQueue.main.async {
-                    monitor.reevaluateState()
-                }
-            }
-        }
-
-        let stream = FSEventStreamCreate(
-            nil,
-            callback,
-            &context,
-            pathsToWatch,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            1.0,  // latency: 1 second batch
-            FSEventStreamCreateFlags(
-                kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes
-            )
-        )
-
-        if let stream = stream {
-            FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
-            FSEventStreamStart(stream)
-            self.fsEventStream = stream
-        }
-    }
-
-    private func stopFSEventStream() {
-        if let stream = fsEventStream {
-            FSEventStreamStop(stream)
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
-            fsEventStream = nil
-        }
-    }
-
-    // MARK: - Periodic Scan Timer
-
-    private func startScanTimer() {
-        guard scanTimer == nil else { return }
-        scanTimer = Timer.scheduledTimer(
-            withTimeInterval: thresholds.scanInterval,
-            repeats: true
-        ) { [weak self] _ in
-            self?.reevaluateState()
-        }
-    }
-
-    private func stopScanTimer() {
-        scanTimer?.invalidate()
-        scanTimer = nil
-    }
-
-    // MARK: - File System Scan
-
-    /// Scan for the most recent .jsonl mtime under monitored path.
-    /// Called once at startup to seed the initial state.
-    private func scanForLatestMtime() {
-        let fm = FileManager.default
-        guard let enumerator = fm.enumerator(atPath: monitoredPath) else { return }
-
-        var latest: Date = .distantPast
-        while let element = enumerator.nextObject() as? String {
-            guard element.hasSuffix(".jsonl") else { continue }
-            let fullPath = (monitoredPath as NSString).appendingPathComponent(element)
-            if let attrs = try? fm.attributesOfItem(atPath: fullPath),
-               let mtime = attrs[.modificationDate] as? Date,
-               mtime > latest {
-                latest = mtime
-            }
-        }
-        latestJSONLMtime = latest
-    }
-
-    // MARK: - Testing Support
-
-    /// Inject a custom mtime for testing without file system.
-    func _testSetLatestMtime(_ date: Date) {
-        latestJSONLMtime = date
+    func _testForceEvaluate() {
+        pollStateFile()
     }
 }

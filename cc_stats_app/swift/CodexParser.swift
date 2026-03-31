@@ -75,6 +75,31 @@ final class CodexParser {
         return parseAllSessions().filter { $0.projectPath == projectPath }
     }
 
+    /// Returns all JSONL file paths under Codex session directories.
+    func allSessionFilePaths() -> [String] {
+        let searchDirs = [
+            (codexHome as NSString).appendingPathComponent("sessions"),
+            codexHome,
+        ]
+
+        var allFiles: [String] = []
+        for dir in searchDirs {
+            if let enumerator = fileManager.enumerator(atPath: dir) {
+                while let element = enumerator.nextObject() as? String {
+                    if element.hasSuffix(".jsonl") {
+                        allFiles.append((dir as NSString).appendingPathComponent(element))
+                    }
+                }
+            }
+        }
+        return Array(Set(allFiles))
+    }
+
+    /// Parse a single session file at the given path (public entry point for incremental parsing).
+    func parseSessionFile(atPath filePath: String) -> Session? {
+        return parseSessionFile(filePath)
+    }
+
     // MARK: - JSONL Parsing
 
     private func parseSessionFile(_ filePath: String) -> Session? {

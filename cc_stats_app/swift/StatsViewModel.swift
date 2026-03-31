@@ -84,6 +84,9 @@ final class StatsViewModel: ObservableObject {
 
     private var refreshTimer: Timer?
     private var refreshTask: Task<Void, Never>?
+    /// 刷新代次：每次 refresh/setTimeFilter 递增，
+    /// 只有最新代次的 Task 能重置 isLoading，避免旧 Task 竞态覆盖。
+    private var refreshGeneration: UInt = 0
 
     /// 面板是否可见。不可见时暂停定时刷新，降低 CPU 占用。
     var isPanelVisible: Bool = false {
@@ -107,6 +110,8 @@ final class StatsViewModel: ObservableObject {
     private var cachedProject: ProjectInfo?
     /// Sessions currently contributing to `stats` (after time filter).
     private var currentFilteredSessions: [Session] = []
+    /// 上次完整解析时各 JSONL 文件的修改时间快照。key = 文件绝对路径。
+    private var cachedFileModTimes: [String: Date] = [:]
 
     // MARK: - Version Update
     @Published var updateAvailable: String?  // 新版本号（nil = 无更新）
@@ -114,8 +119,11 @@ final class StatsViewModel: ObservableObject {
     init() {
         // 初始加载数据（状态栏需要），但不启动定时刷新。
         // 定时刷新仅在面板可见时运行（通过 isPanelVisible didSet 控制）。
+        isLoading = true
+        let gen = refreshGeneration
         Task {
             await fullRefresh()
+            if gen == refreshGeneration { isLoading = false }
         }
         startVersionCheck()
     }
@@ -130,9 +138,12 @@ final class StatsViewModel: ObservableObject {
     /// 完整刷新：磁盘加载 + 内存筛选
     func refresh() {
         refreshTask?.cancel()
-        invalidateCache()
+        isLoading = true
+        refreshGeneration &+= 1
+        let gen = refreshGeneration
         refreshTask = Task {
             await fullRefresh()
+            if gen == refreshGeneration { isLoading = false }
         }
     }
 
@@ -155,8 +166,12 @@ final class StatsViewModel: ObservableObject {
         timeFilter = filter
         if !cachedSessions.isEmpty {
             refreshTask?.cancel()
+            isLoading = true
+            refreshGeneration &+= 1
+            let gen = refreshGeneration
             refreshTask = Task {
                 await applyFilterAndUpdate()
+                if gen == refreshGeneration { isLoading = false }
             }
         } else {
             refresh()
@@ -170,7 +185,7 @@ final class StatsViewModel: ObservableObject {
     // MARK: - Core Refresh Pipeline
 
     /// 完整刷新 = 磁盘加载（重） + 内存筛选（轻）
-    /// isLoading 由 applyFilterAndUpdate 统一管理。
+    /// isLoading 由调用方设置为 true，applyFilterAndUpdate 通过 generation 检查清除。
     private func fullRefresh() async {
         await loadData()
         await applyFilterAndUpdate()
@@ -178,79 +193,223 @@ final class StatsViewModel: ObservableObject {
 
     // MARK: - Phase 1: Load Data (disk I/O)
 
-    /// 从磁盘解析 sessions 并缓存。仅在 source/project 变更时执行。
+    /// 从磁盘解析 sessions 并缓存。
+    /// - 缓存为空或 source/project 变更时：全量解析
+    /// - 缓存存在且 source/project 未变：增量检查文件修改时间，只解析变化文件
     private func loadData() async {
         let currentSource = selectedSource
         let currentProject = selectedProject
 
-        let needReparse = cachedSessions.isEmpty
+        let needFullReparse = cachedSessions.isEmpty
             || cachedSource != currentSource
             || cachedProject != currentProject
 
-        guard needReparse else { return }
+        if needFullReparse {
+            // 全量解析路径
+            let (loadedProjects, sessions, fileModTimes) = await Task.detached(priority: .userInitiated) {
+                Self.fullParseForSource(currentSource, project: currentProject)
+            }.value
 
-        let (loadedProjects, sessions) = await Task.detached(priority: .userInitiated) {
-            let claudeParser = SessionParser()
-            let codexParser = CodexParser()
-            let geminiParser = GeminiParser()
+            cachedProjects = loadedProjects
+            cachedSessions = sessions
+            cachedSource = currentSource
+            cachedProject = currentProject
+            cachedFileModTimes = fileModTimes
+        } else {
+            // 增量检查路径：source/project 未变，只检查文件是否有变化
+            let oldModTimes = cachedFileModTimes
 
-            var projects: [ProjectInfo] = []
-            var sessions: [Session] = []
+            let (loadedProjects, currentModTimes, changedFiles) = await Task.detached(priority: .userInitiated) {
+                Self.incrementalCheckForSource(currentSource, project: currentProject, oldModTimes: oldModTimes)
+            }.value
 
-            switch currentSource {
-            case .all:
-                projects = claudeParser.findAllProjects()
-                    + codexParser.findAllProjects()
-                    + geminiParser.findAllProjects()
-                if let project = currentProject {
-                    sessions = claudeParser.parseSessions(forProject: project.path)
-                        + codexParser.parseSessions(forProject: project.path)
-                        + geminiParser.parseSessions(forProject: project.path)
-                } else {
-                    sessions = claudeParser.parseAllSessions()
-                        + codexParser.parseAllSessions()
-                        + geminiParser.parseAllSessions()
-                }
-            case .claudeCode:
-                projects = claudeParser.findAllProjects()
-                if let project = currentProject {
-                    sessions = claudeParser.parseSessions(forProject: project.path)
-                } else {
-                    sessions = claudeParser.parseAllSessions()
-                }
-            case .codex:
-                projects = codexParser.findAllProjects()
-                if let project = currentProject {
-                    sessions = codexParser.parseSessions(forProject: project.path)
-                } else {
-                    sessions = codexParser.parseAllSessions()
-                }
-            case .gemini:
-                projects = geminiParser.findAllProjects()
-                if let project = currentProject {
-                    sessions = geminiParser.parseSessions(forProject: project.path)
-                } else {
-                    sessions = geminiParser.parseAllSessions()
-                }
-            case .cursor:
-                projects = claudeParser.findAllProjects()
-                sessions = []
-            }
-            return (projects, sessions)
-        }.value
+            // 更新 projects 列表（轻量操作，始终刷新）
+            cachedProjects = loadedProjects
 
-        cachedProjects = loadedProjects
-        cachedSessions = sessions
-        cachedSource = currentSource
-        cachedProject = currentProject
+            // 如果没有任何文件变化，纯缓存命中，直接 return
+            guard !changedFiles.isEmpty else { return }
+
+            // 只解析变化的文件
+            let newSessions = await Task.detached(priority: .userInitiated) {
+                Self.parseSessions(forFiles: changedFiles, source: currentSource)
+            }.value
+
+            // 将变化文件的路径收集为 Set，用于替换/追加
+            let changedPaths = Set(changedFiles)
+
+            // 移除旧的同路径 session，追加新解析的 session
+            var updated = cachedSessions.filter { !changedPaths.contains($0.filePath) }
+            updated.append(contentsOf: newSessions)
+            cachedSessions = updated
+            cachedFileModTimes = currentModTimes
+        }
     }
+
+    // MARK: - Static Parse Helpers (called from Task.detached)
+
+    /// 全量解析：返回 (projects, sessions, fileModTimes)
+    nonisolated private static func fullParseForSource(
+        _ source: DataSource,
+        project: ProjectInfo?
+    ) -> ([ProjectInfo], [Session], [String: Date]) {
+        let claudeParser = SessionParser()
+        let codexParser = CodexParser()
+        let geminiParser = GeminiParser()
+        let fm = FileManager.default
+
+        var projects: [ProjectInfo] = []
+        var sessions: [Session] = []
+
+        switch source {
+        case .all:
+            projects = claudeParser.findAllProjects()
+                + codexParser.findAllProjects()
+                + geminiParser.findAllProjects()
+            if let project = project {
+                sessions = claudeParser.parseSessions(forProject: project.path)
+                    + codexParser.parseSessions(forProject: project.path)
+                    + geminiParser.parseSessions(forProject: project.path)
+            } else {
+                sessions = claudeParser.parseAllSessions()
+                    + codexParser.parseAllSessions()
+                    + geminiParser.parseAllSessions()
+            }
+        case .claudeCode:
+            projects = claudeParser.findAllProjects()
+            if let project = project {
+                sessions = claudeParser.parseSessions(forProject: project.path)
+            } else {
+                sessions = claudeParser.parseAllSessions()
+            }
+        case .codex:
+            projects = codexParser.findAllProjects()
+            if let project = project {
+                sessions = codexParser.parseSessions(forProject: project.path)
+            } else {
+                sessions = codexParser.parseAllSessions()
+            }
+        case .gemini:
+            projects = geminiParser.findAllProjects()
+            if let project = project {
+                sessions = geminiParser.parseSessions(forProject: project.path)
+            } else {
+                sessions = geminiParser.parseAllSessions()
+            }
+        case .cursor:
+            projects = claudeParser.findAllProjects()
+            sessions = []
+        }
+
+        // 构建文件修改时间快照
+        var modTimes: [String: Date] = [:]
+        for session in sessions {
+            let path = session.filePath
+            if modTimes[path] == nil,
+               let attrs = try? fm.attributesOfItem(atPath: path),
+               let mtime = attrs[.modificationDate] as? Date {
+                modTimes[path] = mtime
+            }
+        }
+
+        return (projects, sessions, modTimes)
+    }
+
+    /// 增量检查：收集当前文件修改时间，与旧快照对比，返回变化文件列表。
+    nonisolated private static func incrementalCheckForSource(
+        _ source: DataSource,
+        project: ProjectInfo?,
+        oldModTimes: [String: Date]
+    ) -> ([ProjectInfo], [String: Date], [String]) {
+        let claudeParser = SessionParser()
+        let codexParser = CodexParser()
+        let geminiParser = GeminiParser()
+
+        var projects: [ProjectInfo] = []
+        var allFilePaths: [String] = []
+
+        switch source {
+        case .all:
+            projects = claudeParser.findAllProjects()
+                + codexParser.findAllProjects()
+                + geminiParser.findAllProjects()
+            if let project = project {
+                // Claude 按 project 目录筛选；Codex/Gemini 按 project 后过滤，需收集全量文件
+                allFilePaths = claudeParser.allSessionFilePaths(forProject: project.path)
+                    + codexParser.allSessionFilePaths()
+                    + geminiParser.allSessionFilePaths()
+            } else {
+                allFilePaths = claudeParser.allSessionFilePaths()
+                    + codexParser.allSessionFilePaths()
+                    + geminiParser.allSessionFilePaths()
+            }
+        case .claudeCode:
+            projects = claudeParser.findAllProjects()
+            if let project = project {
+                allFilePaths = claudeParser.allSessionFilePaths(forProject: project.path)
+            } else {
+                allFilePaths = claudeParser.allSessionFilePaths()
+            }
+        case .codex:
+            projects = codexParser.findAllProjects()
+            allFilePaths = codexParser.allSessionFilePaths()
+        case .gemini:
+            projects = geminiParser.findAllProjects()
+            allFilePaths = geminiParser.allSessionFilePaths()
+        case .cursor:
+            projects = claudeParser.findAllProjects()
+            allFilePaths = []
+        }
+
+        // 收集当前文件修改时间
+        let fm = FileManager.default
+        var currentModTimes: [String: Date] = [:]
+        for path in allFilePaths {
+            if let attrs = try? fm.attributesOfItem(atPath: path),
+               let mtime = attrs[.modificationDate] as? Date {
+                currentModTimes[path] = mtime
+            }
+        }
+
+        // 与旧快照对比，找出变化文件（新增 + 已修改）
+        var changedFiles: [String] = []
+        for (path, mtime) in currentModTimes {
+            if let oldMtime = oldModTimes[path] {
+                if mtime > oldMtime {
+                    changedFiles.append(path)
+                }
+            } else {
+                // 新文件
+                changedFiles.append(path)
+            }
+        }
+
+        return (projects, currentModTimes, changedFiles)
+    }
+
+    /// 仅解析指定文件路径列表中的 session。
+    nonisolated private static func parseSessions(forFiles files: [String], source: DataSource) -> [Session] {
+        let claudeParser = SessionParser()
+        let codexParser = CodexParser()
+        let geminiParser = GeminiParser()
+
+        return files.compactMap { filePath -> Session? in
+            // 根据文件路径判断属于哪个 parser
+            if filePath.contains("/.claude/") {
+                return claudeParser.parseSessionFile(atPath: filePath)
+            } else if filePath.contains("/.codex/") {
+                return codexParser.parseSessionFile(atPath: filePath)
+            } else if filePath.contains("/.gemini/") {
+                return geminiParser.parseSessionFile(atPath: filePath)
+            }
+            return nil
+        }
+    }
+
 
     // MARK: - Phase 2: Apply Filter (in-memory)
 
     /// 基于缓存 sessions 做时间过滤、统计分析、日统计。无磁盘 I/O。
     private func applyFilterAndUpdate() async {
-        isLoading = true
-        defer { isLoading = false }
 
         let sessions = cachedSessions
         let loadedProjects = cachedProjects
@@ -434,6 +593,7 @@ final class StatsViewModel: ObservableObject {
         cachedProjects = []
         cachedSource = nil
         cachedProject = nil
+        cachedFileModTimes = [:]
         GitStatsCollector.shared.clearCache()
     }
 
