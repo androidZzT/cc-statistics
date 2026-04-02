@@ -105,6 +105,25 @@ cc-stats-app
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | Git 变更 | 项目目录的 `git log --numstat` |
 
+### 各平台数据能力对比
+
+| 数据维度 | Claude Code | Codex (OpenAI) | Gemini CLI | Cursor |
+|----------|:-----------:|:--------------:|:----------:|:------:|
+| 会话列表 | ✅ | ✅ | ✅ | ✅ |
+| 消息内容 | ✅ | ✅ | ✅ | ❌ |
+| Input Tokens | ✅ | ✅ | ✅ | ❌ |
+| Output Tokens | ✅ | ✅ | ✅ | ❌ |
+| Cache Read Tokens | ✅ | ✅ | ✅ | ❌ |
+| Cache Creation Tokens | ✅ | ❌ | ❌ | ❌ |
+| 模型名称 | ✅ | ✅ | ✅ | ✅ |
+| 费用估算 | ✅ 4维 | ⚠️ 3维 | ⚠️ 3维 | ❌ |
+| 代码行数 | ✅ | ❌ | ❌ | ✅ |
+| AI 代码采纳率 | ❌ | ❌ | ❌ | ✅ |
+| 工具调用统计 | ✅ | ❌ | ❌ | ❌ |
+| 项目路径 | ✅ | ✅ | ✅ | ❌ |
+| 用量百分比 | ✅ | ❌ | ❌ | ❌ |
+| 消耗速率告警 | ✅ | ❌ | ❌ | ❌ |
+
 ## 致谢
 
 - 状态栏 Clawd 动画素材来自 [clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk) — 一个 Electron 桌面宠物应用，通过 hook 系统实时感知 AI coding agent 的工作状态并播放像素风动画。

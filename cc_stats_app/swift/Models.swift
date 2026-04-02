@@ -449,9 +449,13 @@ struct ModelPricing {
 
 enum CostEstimator {
     private static let pricing: [String: ModelPricing] = [
-        // Claude
+        // Claude — Opus 4.5/4.6 standard ($5/$25), Opus 4/4.1 legacy ($15/$75), fast mode ($30/$150)
+        "opus-4.5": ModelPricing(inputPerMillion: 5, outputPerMillion: 25, cacheReadPerMillion: 0.5, cacheCreatePerMillion: 6.25),
+        "opus-4.6": ModelPricing(inputPerMillion: 5, outputPerMillion: 25, cacheReadPerMillion: 0.5, cacheCreatePerMillion: 6.25),
+        "opus-fast": ModelPricing(inputPerMillion: 30, outputPerMillion: 150, cacheReadPerMillion: 3, cacheCreatePerMillion: 37.5),
         "opus": ModelPricing(inputPerMillion: 15, outputPerMillion: 75, cacheReadPerMillion: 1.5, cacheCreatePerMillion: 18.75),
         "sonnet": ModelPricing(inputPerMillion: 3, outputPerMillion: 15, cacheReadPerMillion: 0.3, cacheCreatePerMillion: 3.75),
+        "haiku-4.5": ModelPricing(inputPerMillion: 1, outputPerMillion: 5, cacheReadPerMillion: 0.1, cacheCreatePerMillion: 1.25),
         "haiku": ModelPricing(inputPerMillion: 0.8, outputPerMillion: 4, cacheReadPerMillion: 0.08, cacheCreatePerMillion: 1.0),
         // OpenAI
         "gpt-4o": ModelPricing(inputPerMillion: 2.5, outputPerMillion: 10, cacheReadPerMillion: 1.25, cacheCreatePerMillion: 2.5),
@@ -495,9 +499,20 @@ enum CostEstimator {
         if lower.contains("gemini-2.5-flash") { return pricing["gemini-2.5-flash"]! }
         if lower.contains("gemini-2.0-flash") { return pricing["gemini-2.0-flash"]! }
         if lower.contains("gemini") { return pricing["gemini-2.5-flash"]! }
-        // Claude models
-        if lower.contains("opus") { return pricing["opus"]! }
-        if lower.contains("haiku") { return pricing["haiku"]! }
+        // Claude models (specific versions first, then fallback)
+        if lower.contains("opus") {
+            if lower.contains("4.5") || lower.contains("4.6") || lower.contains("4-6") || lower.contains("4-5") {
+                // Opus 4.5/4.6 standard mode is $5/$25
+                return pricing["opus-4.6"]!
+            }
+            return pricing["opus"]!  // Legacy Opus 4/4.1: $15/$75
+        }
+        if lower.contains("haiku") {
+            if lower.contains("4.5") || lower.contains("4-5") {
+                return pricing["haiku-4.5"]!
+            }
+            return pricing["haiku"]!
+        }
         if lower.contains("sonnet") { return pricing["sonnet"]! }
         // OpenAI models
         if lower.contains("o4-mini") { return pricing["o4-mini"]! }

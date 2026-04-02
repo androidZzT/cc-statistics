@@ -1093,12 +1093,14 @@ struct DashboardView: View {
                         rateLimitGauge(
                             label: L10n.fiveHourUsage,
                             percent: data.fiveHourPercent,
-                            resetTime: UsageAPI.formatResetTime(data.fiveHourResetsAt)
+                            resetTime: UsageAPI.formatResetTime(data.fiveHourResetsAt),
+                            alertLevel: viewModel.burnAlertLevel5h
                         )
                         rateLimitGauge(
                             label: L10n.sevenDayUsage,
                             percent: data.sevenDayPercent,
-                            resetTime: UsageAPI.formatResetTime(data.sevenDayResetsAt)
+                            resetTime: UsageAPI.formatResetTime(data.sevenDayResetsAt),
+                            alertLevel: viewModel.burnAlertLevel7d
                         )
                     }
                 }
@@ -1106,11 +1108,20 @@ struct DashboardView: View {
         }
     }
 
-    private func rateLimitGauge(label: String, percent: Int, resetTime: String) -> some View {
-        VStack(spacing: 6) {
+    private func rateLimitGauge(label: String, percent: Int, resetTime: String, alertLevel: BurnAlertLevel = .none) -> some View {
+        let labelColor: Color = {
+            switch alertLevel {
+            case .critical: return Theme.red
+            case .warning: return Color.orange
+            case .info: return Theme.amber
+            case .none: return Theme.textTertiary
+            }
+        }()
+
+        return VStack(spacing: 6) {
             Text(label)
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(Theme.textTertiary)
+                .foregroundColor(labelColor)
 
             ZStack {
                 // Background track

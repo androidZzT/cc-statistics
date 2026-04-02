@@ -64,6 +64,8 @@ final class StatsViewModel: ObservableObject {
     @Published var isOverDailyLimit: Bool = false
     @Published var isOverWeeklyLimit: Bool = false
     @Published var rateLimitData: UsageAPI.UsageData?
+    @Published var burnAlertLevel5h: BurnAlertLevel = .none
+    @Published var burnAlertLevel7d: BurnAlertLevel = .none
 
     enum StatsTab: String, CaseIterable {
         case claudeCode = "Claude Code"
@@ -82,6 +84,7 @@ final class StatsViewModel: ObservableObject {
         let weeklyCost: Double
     }
 
+    private let burnMonitor = UsageBurnMonitor()
     private var refreshTimer: Timer?
     private var refreshTask: Task<Void, Never>?
     /// 刷新代次：每次 refresh/setTimeFilter 递增，
@@ -651,7 +654,15 @@ final class StatsViewModel: ObservableObject {
     private func fetchRateLimit() {
         UsageAPI.fetch { [weak self] data in
             DispatchQueue.main.async {
-                self?.rateLimitData = data
+                guard let self else { return }
+                self.rateLimitData = data
+                if let data = data {
+                    self.burnMonitor.process(data: data)
+                    let new5h = self.burnMonitor.alertLevel5h
+                    let new7d = self.burnMonitor.alertLevel7d
+                    if self.burnAlertLevel5h != new5h { self.burnAlertLevel5h = new5h }
+                    if self.burnAlertLevel7d != new7d { self.burnAlertLevel7d = new7d }
+                }
             }
         }
     }
