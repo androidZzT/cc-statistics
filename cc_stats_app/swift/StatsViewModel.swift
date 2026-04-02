@@ -125,8 +125,8 @@ final class StatsViewModel: ObservableObject {
         isLoading = true
         let gen = refreshGeneration
         Task {
+            defer { if gen == refreshGeneration { isLoading = false } }
             await fullRefresh()
-            if gen == refreshGeneration { isLoading = false }
         }
         startVersionCheck()
     }
@@ -145,8 +145,8 @@ final class StatsViewModel: ObservableObject {
         refreshGeneration &+= 1
         let gen = refreshGeneration
         refreshTask = Task {
+            defer { if gen == refreshGeneration { isLoading = false } }
             await fullRefresh()
-            if gen == refreshGeneration { isLoading = false }
         }
     }
 
@@ -173,8 +173,8 @@ final class StatsViewModel: ObservableObject {
             refreshGeneration &+= 1
             let gen = refreshGeneration
             refreshTask = Task {
+                defer { if gen == refreshGeneration { isLoading = false } }
                 await applyFilterAndUpdate()
-                if gen == refreshGeneration { isLoading = false }
             }
         } else {
             refresh()
