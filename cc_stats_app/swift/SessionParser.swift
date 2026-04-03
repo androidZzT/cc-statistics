@@ -100,22 +100,15 @@ final class SessionParser {
 
     // MARK: - File Discovery
 
-    /// Find all .jsonl files recursively within a directory.
+    /// Find top-level .jsonl files in a directory (non-recursive).
+    /// Subagent .jsonl files in subdirectories are merged during parent session parsing.
     private func findJSONLFiles(in directory: String) -> [String] {
-        guard let enumerator = fileManager.enumerator(atPath: directory) else {
+        guard let contents = try? fileManager.contentsOfDirectory(atPath: directory) else {
             return []
         }
-
-        var files: [String] = []
-        while let element = enumerator.nextObject() as? String {
-            if element.hasSuffix(".jsonl") {
-                // 跳过子代理会话（agent- 开头的文件名）
-                let fileName = (element as NSString).lastPathComponent
-                if fileName.hasPrefix("agent-") { continue }
-                files.append((directory as NSString).appendingPathComponent(element))
-            }
-        }
-        return files
+        return contents
+            .filter { $0.hasSuffix(".jsonl") }
+            .map { (directory as NSString).appendingPathComponent($0) }
     }
 
     /// List immediate subdirectories of a path.
@@ -148,7 +141,30 @@ final class SessionParser {
 
         guard !messages.isEmpty else { return nil }
 
-        // 流式去重：同一条 API 消息可能写多条 JSONL 记录
+        // Merge subagent messages into the parent session
+        let sessionId = ((filePath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let sessionDir = (projectPath as NSString).appendingPathComponent(sessionId)
+        let subagentsDir = (sessionDir as NSString).appendingPathComponent("subagents")
+        var isDir: ObjCBool = false
+        if fileManager.fileExists(atPath: subagentsDir, isDirectory: &isDir), isDir.boolValue {
+            if let agentFiles = try? fileManager.contentsOfDirectory(atPath: subagentsDir) {
+                for agentFile in agentFiles where agentFile.hasSuffix(".jsonl") {
+                    let agentFilePath = (subagentsDir as NSString).appendingPathComponent(agentFile)
+                    guard let agentData = fileManager.contents(atPath: agentFilePath),
+                          let agentContent = String(data: agentData, encoding: .utf8) else {
+                        continue
+                    }
+                    let agentLines = agentContent.components(separatedBy: CharacterSet.newlines).filter { !$0.isEmpty }
+                    for agentLine in agentLines {
+                        if let message = parseLine(agentLine) {
+                            messages.append(message)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 流式去重：同一条 API 消息可能写多条 JSONL 记录（含 subagent 消息）
         messages = deduplicateMessages(messages)
 
         let decodedProjectPath = decodeProjectPath(from: projectPath)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cc-statistics"
-version = "0.12.10"
+version = "0.12.11"
 description = "Claude Code 会话统计工具 — 分析 AI Coding 工程指标"
 requires-python = ">=3.10"
 dependencies = []
