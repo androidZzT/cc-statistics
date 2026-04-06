@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .analyzer import analyze_session, merge_stats
+from .analyzer import SessionStats, TokenUsage, analyze_session, merge_stats
 from .formatter import format_skill_stats, format_stats
 from .parser import (
     find_gemini_sessions,
@@ -26,7 +26,7 @@ def _parse_session(path: Path):
     return parse_jsonl(path)
 
 
-def _parse_time_arg(value: str) -> datetime:
+def _parse_time_arg(value: str, *, as_end_of_day: bool = False) -> datetime:
     """解析时间参数，支持多种格式：
 
     绝对时间:
@@ -38,6 +38,9 @@ def _parse_time_arg(value: str) -> datetime:
       1h    → 1 小时前
       3d    → 3 天前
       2w    → 2 周前
+
+    as_end_of_day: 当为 True 且输入为纯日期格式时，补全为当天 23:59:59
+                   用于 --until 参数，使 --until 2026-04-03 包含 04-03 全天
     """
     value = value.strip()
 
@@ -52,6 +55,9 @@ def _parse_time_arg(value: str) -> datetime:
     for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S"):
         try:
             dt = datetime.strptime(value, fmt)
+            # 纯日期格式作为 until 参数时，补全为当天结束 23:59:59
+            if fmt == "%Y-%m-%d" and as_end_of_day:
+                dt = dt.replace(hour=23, minute=59, second=59)
             return dt.astimezone(timezone.utc)
         except ValueError:
             continue
@@ -59,6 +65,41 @@ def _parse_time_arg(value: str) -> datetime:
     raise argparse.ArgumentTypeError(
         f"无法解析时间: {value}（支持 2026-03-13, 2026-03-13T10:00, 3d, 2w, 1h）"
     )
+
+
+def _trim_stats_by_date_range(
+    stats: SessionStats,
+    since_date: str | None,
+    until_date: str | None,
+) -> None:
+    """按本地日期范围裁剪 token_by_date，并重算 token_usage
+
+    当 --since/--until 指定时，跨越日期范围的 session 只计入范围内日期的 token。
+    since_date / until_date 格式为 "YYYY-MM-DD" 本地日期字符串。
+    """
+    if not stats.token_by_date:
+        return
+    if not since_date and not until_date:
+        return
+
+    trimmed: dict[str, TokenUsage] = {}
+    for date_key, tu in stats.token_by_date.items():
+        if since_date and date_key < since_date:
+            continue
+        if until_date and date_key > until_date:
+            continue
+        trimmed[date_key] = tu
+
+    stats.token_by_date = trimmed
+
+    # 从裁剪后的 token_by_date 重算 token_usage 总量
+    new_usage = TokenUsage()
+    for tu in trimmed.values():
+        new_usage.input_tokens += tu.input_tokens
+        new_usage.output_tokens += tu.output_tokens
+        new_usage.cache_read_input_tokens += tu.cache_read_input_tokens
+        new_usage.cache_creation_input_tokens += tu.cache_creation_input_tokens
+    stats.token_usage = new_usage
 
 
 def _resolve_project_name(proj_dir: Path, jsonl_files: list[Path]) -> str:
@@ -117,6 +158,13 @@ def _compare_projects(args) -> None:
 
         if not all_stats:
             continue
+
+        # 按日期裁剪 token
+        if args.since or args.until:
+            sd = args.since.astimezone().strftime("%Y-%m-%d") if args.since else None
+            ud = args.until.astimezone().strftime("%Y-%m-%d") if args.until else None
+            for s in all_stats:
+                _trim_stats_by_date_range(s, sd, ud)
 
         merged = merge_stats(all_stats) if len(all_stats) > 1 else all_stats[0]
 
@@ -288,13 +336,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--since",
-        type=_parse_time_arg,
+        type=str,
         metavar="TIME",
         help="只包含此时间之后的会话（如 2026-03-13, 3d, 2w, 1h）",
     )
     parser.add_argument(
         "--until",
-        type=_parse_time_arg,
+        type=str,
         metavar="TIME",
         help="只包含此时间之前的会话（如 2026-03-14, 1d）",
     )
@@ -347,6 +395,12 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     args = parser.parse_args(argv)
+
+    # 手动解析时间参数：since 纯日期补全为 00:00:00，until 纯日期补全为 23:59:59
+    if args.since:
+        args.since = _parse_time_arg(args.since)
+    if args.until:
+        args.until = _parse_time_arg(args.until, as_end_of_day=True)
 
     if args.export_chat:
         from .exporter import find_and_export
@@ -469,10 +523,23 @@ def main(argv: list[str] | None = None) -> None:
         print("指定时间范围内无会话。", file=sys.stderr)
         sys.exit(1)
 
+    # 按日期裁剪 token：跨越过滤范围的 session 只计入范围内日期的 token
+    if args.since or args.until:
+        since_date = args.since.astimezone().strftime("%Y-%m-%d") if args.since else None
+        until_date = args.until.astimezone().strftime("%Y-%m-%d") if args.until else None
+        for s in all_stats:
+            _trim_stats_by_date_range(s, since_date, until_date)
+
     if len(all_stats) == 1:
         result = all_stats[0]
     else:
         result = merge_stats(all_stats)
+
+    # 限定显示的时间范围为过滤范围，而非 session 的原始首尾时间
+    if args.since and result.start_time and result.start_time < args.since:
+        result.start_time = args.since
+    if args.until and result.end_time and result.end_time > args.until:
+        result.end_time = args.until
 
     if args.skills:
         print(format_skill_stats(result, session_count=len(all_stats)))

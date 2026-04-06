@@ -178,6 +178,10 @@ def find_sessions(project_dir: Path | None = None) -> list[Path]:
             # 跳过子代理会话
             if jsonl.name.startswith("agent-"):
                 continue
+            # 防御性过滤：跳过 subagents/ 子目录下的文件，避免双重计数
+            # 父 session JSONL 已包含 subagents 的所有消息和 token
+            if "subagents" in jsonl.parts:
+                continue
             results.append(jsonl)
 
     return results
@@ -197,7 +201,12 @@ def find_sessions_by_keyword(keyword: str) -> list[Path]:
     for proj in sorted(claude_projects.iterdir()):
         if not proj.is_dir():
             continue
-        jsonl_files = sorted(proj.glob("*.jsonl"))
+        # 防御性过滤：排除 subagents/ 子目录下的文件，避免双重计数
+        # 父 session JSONL 已包含 subagents 的所有消息和 token
+        jsonl_files = [
+            f for f in sorted(proj.glob("*.jsonl"))
+            if "subagents" not in f.parts
+        ]
         if not jsonl_files:
             continue
 
