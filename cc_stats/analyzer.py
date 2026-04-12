@@ -27,6 +27,8 @@ EXT_TO_LANG: dict[str, str] = {
     ".c": "C",
     ".cpp": "C++",
     ".h": "C/C++ Header",
+    ".m": "Objective-C",
+    ".mm": "Objective-C++",
     ".cs": "C#",
     ".rb": "Ruby",
     ".php": "PHP",
@@ -103,6 +105,14 @@ def _get_local_date(ts: str) -> str | None:
     if dt is None:
         return None
     return dt.astimezone().strftime("%Y-%m-%d")
+
+
+def _get_local_minute(ts: str) -> str | None:
+    """从消息时间戳提取本地分钟字符串 (YYYY-MM-DD HH:MM)"""
+    dt = _parse_ts(ts)
+    if dt is None:
+        return None
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
 def _detect_lang(file_path: str) -> str:
@@ -203,6 +213,85 @@ class SessionStats:
     # 7. 按日期分配的 Token（跨日 session 按消息时间戳归日）
     # key: "YYYY-MM-DD" 本地日期, value: 该日的 TokenUsage
     token_by_date: dict[str, TokenUsage] = field(default_factory=dict)
+
+    # 8. 按分钟分配的 Token（用于 usage quota 预测）
+    # key: "YYYY-MM-DD HH:MM" 本地时间, value: 该分钟的 TokenUsage
+    # 仅保留最近 30 分钟数据以控制内存
+    token_by_minute: dict[str, TokenUsage] = field(default_factory=dict)
+
+
+# Claude 模型定价 (USD per 1M tokens)
+# https://docs.anthropic.com/en/docs/about-claude/models
+CLAUDE_INPUT_PRICE = 3.0       # $3/1M input tokens (Sonnet baseline)
+CLAUDE_CACHE_READ_PRICE = 0.30  # $0.30/1M cache read tokens (90% cheaper)
+
+# Gemini 定价差异较大且缓存机制不同，标注 N/A
+GEMINI_MODEL_PREFIXES = ("gemini",)
+
+
+@dataclass
+class CacheStats:
+    """缓存命中率分析结果"""
+    hit_rate: float = 0.0           # 0.0 - 1.0
+    grade: str = "na"               # "excellent" | "good" | "fair" | "poor" | "na"
+    grade_label: str = "N/A"        # 显示标签
+    cache_read_tokens: int = 0
+    total_input_tokens: int = 0     # input + cache_read（分母）
+    savings_usd: float = 0.0        # 估算节省费用
+    by_model: dict[str, float] = field(default_factory=dict)  # model -> hit_rate
+
+
+def _cache_grade(hit_rate: float) -> tuple[str, str]:
+    """根据命中率返回 (grade, grade_label)"""
+    if hit_rate >= 0.80:
+        return "excellent", "Excellent"
+    if hit_rate >= 0.60:
+        return "good", "Good"
+    if hit_rate >= 0.40:
+        return "fair", "Fair"
+    return "poor", "Poor"
+
+
+def compute_cache_stats(
+    token_usage: TokenUsage,
+    token_by_model: dict[str, TokenUsage],
+) -> CacheStats:
+    """从 TokenUsage 计算缓存命中率统计"""
+    cache_read = token_usage.cache_read_input_tokens
+    inp = token_usage.input_tokens
+    total_input = inp + cache_read
+
+    # 无缓存数据 → N/A
+    if cache_read == 0:
+        return CacheStats()
+
+    hit_rate = cache_read / total_input if total_input > 0 else 0.0
+    grade, grade_label = _cache_grade(hit_rate)
+
+    # 节省费用估算：仅对 Claude 模型计算
+    # savings = cache_read_tokens * (input_price - cache_read_price) / 1M
+    claude_cache_read = 0
+    for model, usage in token_by_model.items():
+        if not model.lower().startswith(GEMINI_MODEL_PREFIXES):
+            claude_cache_read += usage.cache_read_input_tokens
+    savings_usd = claude_cache_read * (CLAUDE_INPUT_PRICE - CLAUDE_CACHE_READ_PRICE) / 1_000_000
+
+    # 按模型拆分命中率
+    by_model: dict[str, float] = {}
+    for model, usage in token_by_model.items():
+        m_total = usage.input_tokens + usage.cache_read_input_tokens
+        if m_total > 0 and usage.cache_read_input_tokens > 0:
+            by_model[model] = usage.cache_read_input_tokens / m_total
+
+    return CacheStats(
+        hit_rate=hit_rate,
+        grade=grade,
+        grade_label=grade_label,
+        cache_read_tokens=cache_read,
+        total_input_tokens=total_input,
+        savings_usd=savings_usd,
+        by_model=by_model,
+    )
 
 
 @dataclass
@@ -489,10 +578,30 @@ def analyze_session(session: Session) -> SessionStats:
                     d.cache_read_input_tokens += cache_read
                     d.cache_creation_input_tokens += cache_create
 
+                # -------- 8. 按分钟归集 Token（usage quota 用） --------
+                local_minute = _get_local_minute(msg.timestamp)
+                if local_minute:
+                    if local_minute not in stats.token_by_minute:
+                        stats.token_by_minute[local_minute] = TokenUsage()
+                    m = stats.token_by_minute[local_minute]
+                    m.input_tokens += inp
+                    m.output_tokens += out
+                    m.cache_read_input_tokens += cache_read
+                    m.cache_creation_input_tokens += cache_create
+
+    # 裁剪 token_by_minute 只保留最近 30 分钟
+    if stats.token_by_minute:
+        sorted_keys = sorted(stats.token_by_minute.keys())
+        if len(sorted_keys) > 30:
+            for k in sorted_keys[:-30]:
+                del stats.token_by_minute[k]
+
     # -------- 3. 时长计算（基于对话轮次） --------
     # 一轮 = 用户发消息 → AI 处理（可能多次工具调用）→ AI 最终回复
     # AI 时长 = 每轮中从用户消息到 AI 最后一条响应
     # 用户时长 = 上一轮 AI 最后响应到本轮用户消息（超过阈值视为离开）
+    # 按时间戳排序，避免 resumed 会话或 subagent 消息导致乱序产生负值
+    timed_msgs.sort(key=lambda x: x[0])
     if timed_msgs:
         stats.start_time = timed_msgs[0][0]
         stats.end_time = timed_msgs[-1][0]
@@ -512,13 +621,15 @@ def analyze_session(session: Session) -> SessionStats:
             if role == "user_real":
                 # 结算上一轮的 AI 时长
                 if turn_start is not None and turn_last_ai is not None:
-                    ai_total += turn_last_ai - turn_start
+                    delta = turn_last_ai - turn_start
+                    if delta.total_seconds() > 0:
+                        ai_total += delta
                     turn_count += 1
 
                 # 计算用户时长（上一轮 AI 结束 → 本轮用户消息）
                 if last_ai_end is not None:
                     gap = ts - last_ai_end
-                    if gap <= IDLE_THRESHOLD:
+                    if timedelta() < gap <= IDLE_THRESHOLD:
                         user_total += gap
 
                 # 上一轮终点
@@ -533,7 +644,9 @@ def analyze_session(session: Session) -> SessionStats:
 
         # 结算最后一轮
         if turn_start is not None and turn_last_ai is not None:
-            ai_total += turn_last_ai - turn_start
+            delta = turn_last_ai - turn_start
+            if delta.total_seconds() > 0:
+                ai_total += delta
             turn_count += 1
 
         stats.ai_duration = ai_total
@@ -658,6 +771,23 @@ def merge_stats(all_stats: list[SessionStats]) -> SessionStats:
             m.output_tokens += usage.output_tokens
             m.cache_read_input_tokens += usage.cache_read_input_tokens
             m.cache_creation_input_tokens += usage.cache_creation_input_tokens
+
+        # token_by_minute 合并
+        for minute_key, tu in s.token_by_minute.items():
+            if minute_key not in merged.token_by_minute:
+                merged.token_by_minute[minute_key] = TokenUsage()
+            m = merged.token_by_minute[minute_key]
+            m.input_tokens += tu.input_tokens
+            m.output_tokens += tu.output_tokens
+            m.cache_read_input_tokens += tu.cache_read_input_tokens
+            m.cache_creation_input_tokens += tu.cache_creation_input_tokens
+
+    # 合并后裁剪 token_by_minute 只保留最近 30 分钟
+    if merged.token_by_minute:
+        sorted_keys = sorted(merged.token_by_minute.keys())
+        if len(sorted_keys) > 30:
+            for k in sorted_keys[:-30]:
+                del merged.token_by_minute[k]
 
     if all_starts:
         merged.start_time = min(all_starts)

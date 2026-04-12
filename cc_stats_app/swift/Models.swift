@@ -585,7 +585,7 @@ enum DashboardModule: String, CaseIterable, Identifiable {
 
     var labelChinese: String {
         switch self {
-        case .rateLimit: return "速率限制"
+        case .rateLimit: return "用量额度"
         case .developmentTime: return "开发时间分析"
         case .codeChanges: return "代码变更"
         case .toolCalls: return "工具调用排行"
@@ -598,7 +598,7 @@ enum DashboardModule: String, CaseIterable, Identifiable {
 
     var labelEnglish: String {
         switch self {
-        case .rateLimit: return "Rate Limit"
+        case .rateLimit: return "Usage Quota"
         case .developmentTime: return "Development Time"
         case .codeChanges: return "Code Changes"
         case .toolCalls: return "Tool Calls"

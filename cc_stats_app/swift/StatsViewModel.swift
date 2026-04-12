@@ -64,6 +64,7 @@ final class StatsViewModel: ObservableObject {
     @Published var isOverDailyLimit: Bool = false
     @Published var isOverWeeklyLimit: Bool = false
     @Published var rateLimitData: UsageAPI.UsageData?
+    @Published var isTokenExpired: Bool = false
     @Published var burnAlertLevel5h: BurnAlertLevel = .none
     @Published var burnAlertLevel7d: BurnAlertLevel = .none
 
@@ -488,7 +489,7 @@ final class StatsViewModel: ObservableObject {
         // 懒加载 git stats（后台异步，不阻塞 UI）
         triggerGitStatsCollection(for: result.filteredSessions)
 
-        // 获取速率限制（如果配置了 token）
+        // 获取用量额度（如果配置了 token）
         fetchRateLimit()
 
         // 检查用量预警
@@ -652,16 +653,26 @@ final class StatsViewModel: ObservableObject {
     }
 
     private func fetchRateLimit() {
-        UsageAPI.fetch { [weak self] data in
+        UsageAPI.fetch { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.rateLimitData = data
-                if let data = data {
+                switch result {
+                case .success(let data):
+                    self.rateLimitData = data
+                    self.isTokenExpired = false
                     self.burnMonitor.process(data: data)
                     let new5h = self.burnMonitor.alertLevel5h
                     let new7d = self.burnMonitor.alertLevel7d
                     if self.burnAlertLevel5h != new5h { self.burnAlertLevel5h = new5h }
                     if self.burnAlertLevel7d != new7d { self.burnAlertLevel7d = new7d }
+                case .tokenExpired:
+                    self.rateLimitData = nil
+                    self.isTokenExpired = true
+                case .networkError:
+                    break  // keep stale data, don't change expired state
+                case .noToken:
+                    self.rateLimitData = nil
+                    self.isTokenExpired = false
                 }
             }
         }

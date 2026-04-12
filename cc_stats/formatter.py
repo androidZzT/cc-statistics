@@ -5,7 +5,14 @@ from __future__ import annotations
 import os
 from datetime import timedelta
 
-from .analyzer import TOOL_DESCRIPTIONS, SessionStats, SkillUsage
+from .analyzer import (
+    TOOL_DESCRIPTIONS,
+    CacheStats,
+    SessionStats,
+    SkillUsage,
+    compute_cache_stats,
+)
+from .rate_limiter import RateLimitStatus
 
 
 # ── ANSI 色彩 ──────────────────────────────────────────────
@@ -87,6 +94,70 @@ def _net_str(net: int) -> str:
     elif net < 0:
         return _red(str(net))
     return _dim("0")
+
+
+# ── 缓存命中率 ─────────────────────────────────────────────
+
+_CACHE_GRADE_COLORS = {
+    "excellent": _green,
+    "good": _blue,
+    "fair": _yellow,
+    "poor": _red,
+    "na": _dim,
+}
+
+_CACHE_GRADE_TIPS = {
+    "excellent": "Great! Prompts are well-cached",
+    "good": "Good cache utilization",
+    "fair": "Room to improve caching",
+    "poor": "Low cache hit rate",
+    "na": "No cache data available",
+}
+
+
+def format_cache_stats(cache: CacheStats) -> str:
+    """格式化缓存命中率分析子区块"""
+    lines: list[str] = []
+
+    color_fn = _CACHE_GRADE_COLORS.get(cache.grade, _dim)
+    tip = _CACHE_GRADE_TIPS.get(cache.grade, "")
+
+    lines.append(f"  {_dim('缓存命中率:')}")
+
+    if cache.grade == "na":
+        lines.append(f"    {_dim('N/A')} — {_dim(tip)}")
+        lines.append("")
+        return "\n".join(lines)
+
+    pct = f"{cache.hit_rate * 100:.1f}%"
+    lines.append(f"    {color_fn(f'{cache.grade_label} ({pct})')} — {_dim(tip)}")
+    lines.append(
+        f"    cache_read: {_fmt_tokens(cache.cache_read_tokens)} / "
+        f"total_input: {_fmt_tokens(cache.total_input_tokens)}"
+    )
+
+    if cache.savings_usd > 0:
+        lines.append(f"    节省费用: {_green(f'~${cache.savings_usd:.2f}')}")
+
+    if len(cache.by_model) > 1:
+        lines.append(f"    {_dim('按模型:')}")
+        for model, rate in sorted(cache.by_model.items(), key=lambda x: x[1], reverse=True):
+            m_color = _CACHE_GRADE_COLORS.get(_cache_grade_key(rate), _dim)
+            lines.append(f"      {_cyan(model)}: {m_color(f'{rate * 100:.1f}%')}")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _cache_grade_key(hit_rate: float) -> str:
+    """返回命中率对应的 grade key（用于颜色查找）"""
+    if hit_rate >= 0.80:
+        return "excellent"
+    if hit_rate >= 0.60:
+        return "good"
+    if hit_rate >= 0.40:
+        return "fair"
+    return "poor"
 
 
 # ── 主格式化 ───────────────────────────────────────────────
@@ -243,6 +314,10 @@ def format_stats(stats: SessionStats, session_count: int = 1) -> str:
             )
     lines.append("")
 
+    # ── 缓存命中率分析（⑤ 子区块） ──
+    cache = compute_cache_stats(stats.token_usage, stats.token_by_model)
+    lines.append(format_cache_stats(cache))
+
     # ⑥ 效率评分
     total_tokens = stats.token_usage.total
     total_code = stats.total_added + stats.total_removed
@@ -268,6 +343,80 @@ def format_stats(stats: SessionStats, session_count: int = 1) -> str:
         lines.append(f"  AI 利用率: {ai_ratio}%")
         lines.append("")
 
+    # ── ⑦ Usage Quota 预测 ──
+    from .rate_limiter import analyze_rate_limit
+    rl_status = analyze_rate_limit(stats)
+    rl_block = format_rate_limit(rl_status)
+    if rl_block:
+        lines.append(rl_block)
+
+    return "\n".join(lines)
+
+
+def format_rate_limit(status: RateLimitStatus) -> str:
+    """格式化 Usage Quota 预测结果
+
+    idle 时返回空字符串（不显示区块）。
+    """
+    if status.status == "idle":
+        return ""
+
+    lines: list[str] = []
+    sep = _dim("─" * 60)
+
+    lines.append(f"  {_cyan_bold('⑦')} {_bold('Usage Quota Forecast')}")
+    lines.append(sep)
+
+    # 状态标签
+    if status.status == "safe":
+        status_label = f"\u2705 {_green('SAFE')}"
+    elif status.status == "warning":
+        status_label = f"\u26a0\ufe0f  {_yellow('WARNING')}"
+    else:
+        status_label = f"\U0001f534 {_red('CRITICAL')}"
+
+    lines.append(f"  Status:      {status_label}")
+
+    # 速率
+    rate_str = f"{status.rate_per_min:,.0f} tokens/min (5-min window)"
+    lines.append(f"  Rate:        {_yellow(rate_str)}")
+
+    # 窗口使用量
+    pct_display = status.pct * 100
+    pct_str = f"{pct_display:.0f}%"
+    if status.pct >= 0.85:
+        pct_colored = _red(pct_str)
+    elif status.pct >= 0.60:
+        pct_colored = _yellow(pct_str)
+    else:
+        pct_colored = _green(pct_str)
+    lines.append(
+        f"  Window:      {status.window_used:,} / "
+        f"{status.window_limit:,} ({pct_colored})"
+    )
+
+    # Remaining / ETA
+    if status.status == "critical":
+        if status.minutes_until_limit is not None and status.minutes_until_limit <= 0:
+            eta_str = _red("~0 min until quota limit \u2014 Consider pausing")
+        elif status.minutes_until_limit is not None:
+            eta_str = _red(f"~{status.minutes_until_limit:.0f} min until quota limit \u2014 Consider pausing")
+        else:
+            eta_str = _red("Consider pausing")
+        lines.append(f"  ETA:         {eta_str}")
+    else:
+        if status.minutes_until_limit is not None:
+            if status.minutes_until_limit <= 0:
+                lines.append(f"  Remaining:   {_red('limit reached')}")
+            else:
+                rem_str = f"~{status.minutes_until_limit:.0f} min of headroom"
+                if status.status == "warning":
+                    rem_str = _yellow(rem_str)
+                lines.append(f"  Remaining:   {rem_str}")
+        else:
+            lines.append(f"  Remaining:   {_dim('N/A')}")
+
+    lines.append("")
     return "\n".join(lines)
 
 

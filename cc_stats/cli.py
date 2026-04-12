@@ -294,6 +294,49 @@ def _trigger_background_check() -> None:
     thread.start()
 
 
+def _show_rate_limit(args) -> None:
+    """显示 Usage Quota 预测（分析最近 1 小时内的所有会话）"""
+    from .formatter import format_rate_limit
+    from .rate_limiter import analyze_rate_limit
+
+    # 收集所有会话文件（Claude + Gemini）
+    session_files: list[Path] = find_sessions()
+    session_files.extend(find_gemini_sessions())
+
+    if not session_files:
+        print("未找到会话文件。", file=sys.stderr)
+        sys.exit(1)
+
+    # 只保留最近 1 小时内修改过的文件
+    one_hour_ago = datetime.now().timestamp() - 3600
+    session_files = [f for f in session_files if f.stat().st_mtime >= one_hour_ago]
+
+    if not session_files:
+        print("最近 1 小时内无活跃会话。")
+        return
+
+    all_stats = []
+    for f in session_files:
+        try:
+            session = _parse_session(f)
+            stats = analyze_session(session)
+            all_stats.append(stats)
+        except Exception:
+            continue
+
+    if not all_stats:
+        print("无法分析会话数据。", file=sys.stderr)
+        sys.exit(1)
+
+    result = merge_stats(all_stats) if len(all_stats) > 1 else all_stats[0]
+    rl_status = analyze_rate_limit(result, window_limit=args.window_limit)
+    output = format_rate_limit(rl_status)
+    if output:
+        print(output)
+    else:
+        print("当前无活跃 token 消耗数据（idle）。")
+
+
 def main(argv: list[str] | None = None) -> None:
     # 启动时检查更新提示（仅读缓存，无网络请求）
     update_hint = _check_update_hint()
@@ -393,6 +436,18 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="发送测试通知以验证通知功能",
     )
+    parser.add_argument(
+        "--rate-limit",
+        action="store_true",
+        help="显示用量额度预测（分析最近会话的 output token 速率）",
+    )
+    parser.add_argument(
+        "--window-limit",
+        type=int,
+        default=40000,
+        metavar="TOKENS",
+        help="Usage Quota 窗口上限（默认 40000，Max 订阅可设为 80000）",
+    )
 
     args = parser.parse_args(argv)
 
@@ -461,6 +516,10 @@ def main(argv: list[str] | None = None) -> None:
         else:
             print("❌ 通知发送失败", file=sys.stderr)
             sys.exit(1)
+        return
+
+    if args.rate_limit:
+        _show_rate_limit(args)
         return
 
     if args.compare:

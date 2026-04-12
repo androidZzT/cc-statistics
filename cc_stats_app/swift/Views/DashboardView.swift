@@ -194,7 +194,7 @@ struct DashboardView: View {
     private func guideTitle(for id: String) -> String {
         switch id {
         case "settings_gear":
-            return L10n.isChinese ? "查看 Claude 速率配额" : "View Claude Rate Limit"
+            return L10n.isChinese ? "查看 Claude 用量额度" : "View Claude Usage Quota"
         default:
             return ""
         }
@@ -1102,6 +1102,20 @@ struct DashboardView: View {
                             resetTime: UsageAPI.formatResetTime(data.sevenDayResetsAt),
                             alertLevel: viewModel.burnAlertLevel7d
                         )
+                    }
+                }
+            }
+        } else if viewModel.isTokenExpired {
+            GlassCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionHeader(icon: "gauge.with.dots.needle.50percent", title: L10n.rateLimit, accentColor: Theme.cyan, helpText: L10n.helpRateLimit)
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.red)
+                        Text(L10n.isChinese ? "Token 已过期，请在设置中重新获取" : "Token expired, please get a new one in Settings")
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.red)
                     }
                 }
             }

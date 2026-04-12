@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var dailyCostLimit: String = ""
     @State private var weeklyCostLimit: String = ""
     @State private var apiToken: String = ""
+    @State private var tokenExpired: Bool = false
     @State private var latestVersion: String?
     @State private var checkingUpdate: Bool = false
     // Notification settings
@@ -315,6 +316,10 @@ struct SettingsView: View {
                                 Text(L10n.apiTokenDesc)
                                     .font(.system(size: 10))
                                     .foregroundColor(Theme.textTertiary)
+                                Text(L10n.apiTokenHowTo)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer()
                             Button {
@@ -361,6 +366,13 @@ struct SettingsView: View {
                         )
                         .onChange(of: apiToken) { newValue in
                             UserDefaults.standard.set(newValue, forKey: UsageAPI.tokenKey)
+                            tokenExpired = false
+                            UserDefaults.standard.set(false, forKey: UsageAPI.tokenExpiredKey)
+                        }
+                        if tokenExpired {
+                            Text(L10n.isChinese ? "Token 已过期，请重新获取" : "Token expired, please get a new one")
+                                .font(.caption)
+                                .foregroundColor(.red)
                         }
                     }
 
@@ -619,6 +631,7 @@ struct SettingsView: View {
         let weekly = UserDefaults.standard.double(forKey: "cc_stats_weekly_cost_limit")
         weeklyCostLimit = weekly > 0 ? String(format: "%.0f", weekly) : ""
         apiToken = UserDefaults.standard.string(forKey: UsageAPI.tokenKey) ?? ""
+        tokenExpired = UserDefaults.standard.bool(forKey: UsageAPI.tokenExpiredKey)
     }
 
     private func toggleLaunchAtLogin(_ enable: Bool) {

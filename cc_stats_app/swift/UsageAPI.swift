@@ -1,10 +1,11 @@
 import Foundation
 
-/// Fetches Claude rate limit usage from Anthropic OAuth API.
+/// Fetches Claude usage quota from Anthropic OAuth API.
 /// Token is user-provided via Settings, stored in UserDefaults.
 enum UsageAPI {
 
     static let tokenKey = "cc_stats_api_token"
+    static let tokenExpiredKey = "cc_stats_token_expired"
 
     struct UsageData {
         let fiveHourPercent: Int       // 0-100
@@ -13,16 +14,23 @@ enum UsageAPI {
         let sevenDayResetsAt: Date?
     }
 
-    /// Fetch current rate limit usage. Returns nil if no token or request fails.
-    static func fetch(completion: @escaping (UsageData?) -> Void) {
+    enum FetchResult {
+        case success(UsageData)
+        case tokenExpired   // HTTP 401 or 403
+        case networkError   // other errors
+        case noToken        // token not configured
+    }
+
+    /// Fetch current usage quota with detailed result.
+    static func fetch(completion: @escaping (FetchResult) -> Void) {
         guard let token = UserDefaults.standard.string(forKey: tokenKey),
               !token.isEmpty else {
-            completion(nil)
+            completion(.noToken)
             return
         }
 
         guard let url = URL(string: "https://api.anthropic.com/api/oauth/usage") else {
-            completion(nil)
+            completion(.networkError)
             return
         }
 
@@ -33,11 +41,21 @@ enum UsageAPI {
         request.timeoutInterval = 10
 
         URLSession.shared.dataTask(with: request) { data, response, error in
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                    UserDefaults.standard.set(true, forKey: tokenExpiredKey)
+                    completion(.tokenExpired)
+                    return
+                }
+            }
+
             guard let data = data, error == nil,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                completion(nil)
+                completion(.networkError)
                 return
             }
+
+            UserDefaults.standard.set(false, forKey: tokenExpiredKey)
 
             let fiveHour = json["five_hour"] as? [String: Any]
             let sevenDay = json["seven_day"] as? [String: Any]
@@ -48,7 +66,7 @@ enum UsageAPI {
                 sevenDayPercent: sevenDay?["utilization"] as? Int ?? 0,
                 sevenDayResetsAt: parseISO8601(sevenDay?["resets_at"] as? String)
             )
-            completion(result)
+            completion(.success(result))
         }.resume()
     }
 

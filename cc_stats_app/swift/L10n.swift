@@ -129,11 +129,12 @@ enum L10n {
     static var alertDaily: String { isChinese ? "单日" : "Daily" }
     static var alertWeekly: String { isChinese ? "每周" : "Weekly" }
 
-    // MARK: - Rate Limit
-    static var rateLimit: String { isChinese ? "速率限制" : "Rate Limit" }
-    static var apiToken: String { "API Token" }
-    static var apiTokenDesc: String { isChinese ? "填入后显示 Claude 速率用量（仅用于查询，不会上传）" : "Enter to show Claude rate limit usage (query only, never uploaded)" }
+    // MARK: - Usage Quota
+    static var rateLimit: String { isChinese ? "用量额度" : "Usage Quota" }
+    static var apiToken: String { isChinese ? "Session Token" : "Session Token" }
+    static var apiTokenDesc: String { isChinese ? "从浏览器获取 claude.ai 的登录凭证，用于查询订阅额度。这不是 API Key。" : "Enter your claude.ai session token to view subscription quota usage (not an API key, never uploaded)" }
     static var apiTokenPlaceholder: String { isChinese ? "粘贴 OAuth Token..." : "Paste OAuth token..." }
+    static var apiTokenHowTo: String { isChinese ? "获取方式：登录 claude.ai → 浏览器开发者工具 → Network → 复制任意请求的 Authorization 头部值" : "How to get: Log in to claude.ai → Open DevTools → Network tab → Copy the Authorization header value" }
     static var fiveHourUsage: String { isChinese ? "5小时" : "5-Hour" }
     static var sevenDayUsage: String { isChinese ? "7天" : "7-Day" }
     static var resetsAt: String { isChinese ? "重置于" : "Resets" }
