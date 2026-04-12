@@ -300,7 +300,7 @@ class SessionAnalyzer {
             if msg.kind == "user_real" {
                 // 结算上一轮的 AI 时长
                 if let start = turnStart, let lastAI = turnLastAI {
-                    aiTotal += lastAI.timeIntervalSince(start)
+                    aiTotal += max(0, lastAI.timeIntervalSince(start))
                 }
 
                 // 计算用户时长（上一轮 AI 结束 → 本轮 user_real）
@@ -326,7 +326,7 @@ class SessionAnalyzer {
 
         // 结算最后一轮
         if let start = turnStart, let lastAI = turnLastAI {
-            aiTotal += lastAI.timeIntervalSince(start)
+            aiTotal += max(0, lastAI.timeIntervalSince(start))
         }
 
         // total = 活跃时长（AI + 用户），而非首尾差

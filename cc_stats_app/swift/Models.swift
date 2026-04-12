@@ -199,7 +199,7 @@ struct Session: Identifiable, Equatable {
 
     var duration: TimeInterval {
         guard let start = startTime, let end = endTime else { return 0 }
-        return end.timeIntervalSince(start)
+        return max(0, end.timeIntervalSince(start))
     }
 }
 

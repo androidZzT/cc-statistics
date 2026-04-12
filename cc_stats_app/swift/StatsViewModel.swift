@@ -116,6 +116,8 @@ final class StatsViewModel: ObservableObject {
     private var currentFilteredSessions: [Session] = []
     /// 上次完整解析时各 JSONL 文件的修改时间快照。key = 文件绝对路径。
     private var cachedFileModTimes: [String: Date] = [:]
+    private var cachedSkillStats: [String: SkillUsage] = [:]
+    private var lastRateLimitFetch: Date?
 
     // MARK: - Version Update
     @Published var updateAvailable: String?  // 新版本号（nil = 无更新）
@@ -219,6 +221,7 @@ final class StatsViewModel: ObservableObject {
             cachedSource = currentSource
             cachedProject = currentProject
             cachedFileModTimes = fileModTimes
+            cachedSkillStats = SessionAnalyzer.collectAllSkillStats(sessions)
         } else {
             // 增量检查路径：source/project 未变，只检查文件是否有变化
             let oldModTimes = cachedFileModTimes
@@ -246,6 +249,7 @@ final class StatsViewModel: ObservableObject {
             updated.append(contentsOf: newSessions)
             cachedSessions = updated
             cachedFileModTimes = currentModTimes
+            cachedSkillStats = SessionAnalyzer.collectAllSkillStats(updated)
         }
     }
 
@@ -419,6 +423,7 @@ final class StatsViewModel: ObservableObject {
         let loadedProjects = cachedProjects
         let currentFilter = timeFilter
         let currentSource = selectedSource
+        let skillStats = cachedSkillStats
 
         let result: FilterResult = await Task.detached(priority: .userInitiated) {
             // 按时间范围过滤 sessions
@@ -438,8 +443,8 @@ final class StatsViewModel: ObservableObject {
             )
 
             // Skill 统计始终基于全量 sessions（不受时间筛选），
-            // 因为 Skill 使用模式在全时间维度更有意义。
-            stats.skillStats = SessionAnalyzer.collectAllSkillStats(sessions)
+            // 因为 Skill 使用模式在全时间维度更有意义。复用 loadData 阶段的缓存。
+            stats.skillStats = skillStats
 
             // 会话列表按最近活跃时间排序（不受时间筛选影响）
             let recent = sessions
@@ -489,8 +494,8 @@ final class StatsViewModel: ObservableObject {
         // 懒加载 git stats（后台异步，不阻塞 UI）
         triggerGitStatsCollection(for: result.filteredSessions)
 
-        // 获取用量额度（如果配置了 token）
-        fetchRateLimit()
+        // 获取用量额度（如果配置了 token），60 秒节流
+        fetchRateLimitIfNeeded()
 
         // 检查用量预警
         checkAlerts(dailyCost: result.todayCost, weeklyCost: result.weeklyCost)
@@ -598,6 +603,7 @@ final class StatsViewModel: ObservableObject {
         cachedSource = nil
         cachedProject = nil
         cachedFileModTimes = [:]
+        cachedSkillStats = [:]
         GitStatsCollector.shared.clearCache()
     }
 
@@ -650,6 +656,13 @@ final class StatsViewModel: ObservableObject {
         if self.stats != updated {
             self.stats = updated
         }
+    }
+
+    private func fetchRateLimitIfNeeded() {
+        let now = Date()
+        if let last = lastRateLimitFetch, now.timeIntervalSince(last) < 60 { return }
+        lastRateLimitFetch = now
+        fetchRateLimit()
     }
 
     private func fetchRateLimit() {
