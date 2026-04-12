@@ -337,6 +337,55 @@ def _show_rate_limit(args) -> None:
         print("当前无活跃 token 消耗数据（idle）。")
 
 
+
+
+def _show_git_integration(args) -> None:
+    """显示 Git 集成分析：将会话按时间归属到 commit，计算每 commit 的 AI 成本"""
+    from .formatter import format_git_integration
+    from .git_integration import analyze_git_integration
+
+    repo_path = Path(args.git).resolve()
+    if not repo_path.exists():
+        import sys
+        print(f"仓库路径不存在: {repo_path}", file=sys.stderr)
+        sys.exit(1)
+
+    # 收集所有会话文件
+    session_files: list[Path] = find_sessions()
+    session_files.extend(find_gemini_sessions())
+
+    if not session_files:
+        import sys
+        print("未找到会话文件。", file=sys.stderr)
+        sys.exit(1)
+
+    # 解析 & 分析
+    all_stats = []
+    for f in session_files:
+        try:
+            session = _parse_session(f)
+            stats = analyze_session(session)
+            if args.since and stats.end_time and stats.end_time < args.since:
+                continue
+            if args.until and stats.start_time and stats.start_time > args.until:
+                continue
+            all_stats.append(stats)
+        except Exception:
+            continue
+
+    if not all_stats:
+        import sys
+        print("指定时间范围内无会话。", file=sys.stderr)
+        sys.exit(1)
+
+    result = analyze_git_integration(
+        repo_path=str(repo_path),
+        all_stats=all_stats,
+        since=args.since if args.since else None,
+        until=args.until if args.until else None,
+    )
+    print(format_git_integration(result))
+
 def main(argv: list[str] | None = None) -> None:
     # 启动时检查更新提示（仅读缓存，无网络请求）
     update_hint = _check_update_hint()
@@ -448,6 +497,13 @@ def main(argv: list[str] | None = None) -> None:
         metavar="TOKENS",
         help="Usage Quota 窗口上限（默认 40000，Max 订阅可设为 80000）",
     )
+    parser.add_argument(
+        "--git",
+        nargs="?",
+        const=".",
+        metavar="REPO_PATH",
+        help="显示 Git 集成分析：将会话按时间归属到 commit，计算每 commit 的 Token/成本（默认当前目录）",
+    )
 
     args = parser.parse_args(argv)
 
@@ -520,6 +576,10 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.rate_limit:
         _show_rate_limit(args)
+        return
+
+    if args.git is not None:
+        _show_git_integration(args)
         return
 
     if args.compare:

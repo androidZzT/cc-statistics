@@ -536,3 +536,79 @@ def format_skill_stats(stats: SessionStats, session_count: int = 1) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def format_git_integration(result) -> str:
+    """格式化 Git 集成分析结果（Top Commits by AI Cost）
+
+    Args:
+        result: GitIntegrationResult 实例
+
+    Returns:
+        格式化的终端输出字符串
+    """
+    from .git_integration import GitIntegrationResult
+
+    lines: list[str] = []
+    sep = _dim("─" * 60)
+
+    lines.append("")
+    lines.append(_cyan("  ╔══════════════════════════════════════════════════════════╗"))
+    lines.append(_cyan("  ║") + _white_bold("        Git Integration — AI Cost per Commit") + "     " + _cyan("║"))
+    lines.append(_cyan("  ╚══════════════════════════════════════════════════════════╝"))
+    lines.append("")
+
+    lines.append(f"  {_dim('仓库:')} {_bold(result.repo_path)}")
+    lines.append(f"  {_dim('Commits:')} {_bold(str(result.total_commits))}")
+    lines.append(f"  {_dim('Sessions matched:')} {_bold(str(result.sessions_matched))}")
+    lines.append(
+        f"  {_dim('Total AI cost:')} {_green(f'~${result.total_cost_usd:.3f}')}"
+        f"  {_dim('(')} {_fmt_tokens(result.total_tokens)} tokens {_dim(')')}"
+    )
+    lines.append("")
+
+    if not result.commit_costs:
+        lines.append(f"  {_dim('No commits found in the specified range.')}")
+        lines.append("")
+        return "\n".join(lines)
+
+    # Top 10 commits by cost
+    sorted_costs = sorted(result.commit_costs, key=lambda c: c.estimated_cost_usd, reverse=True)
+    top = sorted_costs[:10]
+
+    lines.append(f"  {_cyan_bold('Top Commits by AI Cost')}")
+    lines.append(sep)
+
+    max_cost = max((c.estimated_cost_usd for c in top), default=0)
+
+    for cc in top:
+        if cc.total_tokens == 0:
+            continue
+
+        commit = cc.commit
+        # Short hash
+        short_hash = commit.hash[:7]
+        # Truncate message
+        msg = commit.message[:40] + ("…" if len(commit.message) > 40 else "")
+        # Date
+        local_ts = commit.timestamp.astimezone()
+        date_str = local_ts.strftime("%m-%d %H:%M")
+        # Cost
+        cost_str = f"${cc.estimated_cost_usd:.3f}"
+        # Bar
+        bar = _bar(int(cc.estimated_cost_usd * 10000), int(max_cost * 10000), 12)
+
+        lines.append(
+            f"  {_dim(date_str)}  {_cyan(short_hash)}  {bar}  "
+            f"{_yellow(cost_str):>10}  {_fmt_tokens(cc.total_tokens):>7}  "
+            f"{_dim(f'{cc.session_count}s')}  {msg}"
+        )
+
+    lines.append("")
+
+    # All commits summary table (if more than top 10)
+    if len(result.commit_costs) > 10:
+        lines.append(f"  {_dim(f'(showing top 10 of {len(result.commit_costs)} commits with AI activity)')}")
+        lines.append("")
+
+    return "\n".join(lines)
