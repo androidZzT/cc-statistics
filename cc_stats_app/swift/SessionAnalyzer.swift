@@ -166,7 +166,7 @@ class SessionAnalyzer {
 
     private static func countUserInstructions(_ messages: [Message]) -> Int {
         return messages.filter { msg in
-            msg.role == "user" && !msg.content.contains("tool_result")
+            msg.role == "user" && !msg.isToolResult && !msg.isMeta
         }.count
     }
 
@@ -270,8 +270,7 @@ class SessionAnalyzer {
         for msg in messages {
             guard let ts = msg.timestamp else { continue }
             if msg.role == "user" {
-                // tool_result 内容包含 tool_result 关键字
-                let isTool = msg.content.contains("tool_result")
+                let isTool = msg.isToolResult
                 timedMsgs.append(TimedMsg(ts: ts, kind: isTool ? "user_tool" : "user_real"))
             } else if msg.role == "assistant" {
                 timedMsgs.append(TimedMsg(ts: ts, kind: "assistant"))
@@ -346,8 +345,8 @@ class SessionAnalyzer {
                 if call.name == "Write" {
                     let filePath = call.input["file_path"] as? String ?? ""
                     guard !filePath.isEmpty else { continue }
-                    let content = call.input["content"] as? String ?? ""
-                    let added = countLines(content)
+                    let added = (call.input["__content_lines"] as? Int)
+                        ?? countLines(call.input["content"] as? String ?? "")
                     let language = detectLanguage(from: filePath)
                     changes.append(CodeChange(
                         filePath: filePath, language: language,
@@ -359,14 +358,22 @@ class SessionAnalyzer {
                     let filePath = (call.input["file_path"] as? String)
                         ?? (call.input["target_file"] as? String) ?? ""
                     guard !filePath.isEmpty else { continue }
-                    var oldStr = call.input["old_string"] as? String ?? ""
-                    var newStr = call.input["new_string"] as? String ?? ""
-                    if oldStr.isEmpty && newStr.isEmpty {
-                        // Gemini edit_file: only code_edit available
-                        newStr = call.input["code_edit"] as? String ?? ""
+                    let added: Int
+                    let removed: Int
+                    if let newLines = call.input["__new_lines"] as? Int,
+                       let oldLines = call.input["__old_lines"] as? Int {
+                        added = newLines
+                        removed = oldLines
+                    } else {
+                        let oldStr = call.input["old_string"] as? String ?? ""
+                        var newStr = call.input["new_string"] as? String ?? ""
+                        if oldStr.isEmpty && newStr.isEmpty {
+                            // Gemini edit_file: only code_edit available
+                            newStr = call.input["code_edit"] as? String ?? ""
+                        }
+                        added = countLines(newStr)
+                        removed = countLines(oldStr)
                     }
-                    let added = countLines(newStr)
-                    let removed = countLines(oldStr)
                     let language = detectLanguage(from: filePath)
                     changes.append(CodeChange(
                         filePath: filePath, language: language,
@@ -379,9 +386,13 @@ class SessionAnalyzer {
     }
 
     private static func countLines(_ text: String) -> Int {
-        guard !text.isEmpty else { return 0 }
-        return text.trimmingCharacters(in: .newlines)
-            .components(separatedBy: .newlines).count
+        let trimmed = text.trimmingCharacters(in: .newlines)
+        guard !trimmed.isEmpty else { return 0 }
+        var count = 1
+        for b in trimmed.utf8 where b == 10 { // '\n'
+            count += 1
+        }
+        return count
     }
 
     private static func detectLanguage(from filePath: String) -> String {

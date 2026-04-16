@@ -51,6 +51,8 @@ final class StatsViewModel: ObservableObject {
     @Published var lastRefreshed: Date?
     @Published var recentSessions: [Session] = []
     @Published var showConversationPanel: Bool = false
+    @Published var conversationSessions: [Session] = []
+    @Published var isConversationLoading: Bool = false
     @Published var cursorStats: CursorStats?
     @Published var activeTab: StatsTab = .claudeCode
     @Published var todayTokens: Int = 0
@@ -86,6 +88,8 @@ final class StatsViewModel: ObservableObject {
     }
 
     private let burnMonitor = UsageBurnMonitor()
+    private static let hugeDatasetFileThreshold = 3000
+    private static let hugeDatasetRecentDays = 30
     private var refreshTimer: Timer?
     private var refreshTask: Task<Void, Never>?
     /// 刷新代次：每次 refresh/setTimeFilter 递增，
@@ -117,7 +121,10 @@ final class StatsViewModel: ObservableObject {
     /// 上次完整解析时各 JSONL 文件的修改时间快照。key = 文件绝对路径。
     private var cachedFileModTimes: [String: Date] = [:]
     private var cachedSkillStats: [String: SkillUsage] = [:]
+    private var deferredHistoricalFilePaths: [String] = []
     private var lastRateLimitFetch: Date?
+    private var conversationLoadTask: Task<Void, Never>?
+    private var historicalLoadTask: Task<Void, Never>?
 
     // MARK: - Version Update
     @Published var updateAvailable: String?  // 新版本号（nil = 无更新）
@@ -170,6 +177,9 @@ final class StatsViewModel: ObservableObject {
     /// 如果缓存存在，走快速路径（纯内存），否则走完整刷新。
     func setTimeFilter(_ filter: TimeFilter) {
         timeFilter = filter
+        if filter == .all {
+            triggerDeferredHistoricalLoadIfNeeded()
+        }
         if !cachedSessions.isEmpty {
             refreshTask?.cancel()
             isLoading = true
@@ -185,7 +195,17 @@ final class StatsViewModel: ObservableObject {
     }
 
     func toggleConversationPanel() {
-        showConversationPanel.toggle()
+        let willShow = !showConversationPanel
+        showConversationPanel = willShow
+        if willShow {
+            prepareConversationSessions()
+            loadConversationSessionsInBackground()
+        } else {
+            conversationLoadTask?.cancel()
+            conversationLoadTask = nil
+            isConversationLoading = false
+            conversationSessions = []
+        }
     }
 
     // MARK: - Core Refresh Pipeline
@@ -211,17 +231,101 @@ final class StatsViewModel: ObservableObject {
             || cachedProject != currentProject
 
         if needFullReparse {
-            // 全量解析路径
-            let (loadedProjects, sessions, fileModTimes) = await Task.detached(priority: .userInitiated) {
-                Self.fullParseForSource(currentSource, project: currentProject)
-            }.value
+            // 全量解析路径（支持渐进式首屏渲染）
+            if currentProject == nil {
+                let (loadedProjects, currentModTimes, changedFiles) = await Task.detached(priority: .userInitiated) {
+                    Self.incrementalCheckForSource(currentSource, project: nil, oldModTimes: [:])
+                }.value
 
-            cachedProjects = loadedProjects
-            cachedSessions = sessions
-            cachedSource = currentSource
-            cachedProject = currentProject
-            cachedFileModTimes = fileModTimes
-            cachedSkillStats = SessionAnalyzer.collectAllSkillStats(sessions)
+                let sortedFiles = changedFiles.sorted {
+                    (currentModTimes[$0] ?? .distantPast) > (currentModTimes[$1] ?? .distantPast)
+                }
+
+                cachedProjects = loadedProjects
+                cachedSource = currentSource
+                cachedProject = currentProject
+                cachedFileModTimes = currentModTimes
+                historicalLoadTask?.cancel()
+                historicalLoadTask = nil
+
+                guard !sortedFiles.isEmpty else {
+                    cachedSessions = []
+                    cachedSkillStats = [:]
+                    deferredHistoricalFilePaths = []
+                    return
+                }
+
+                var initialFiles = sortedFiles
+                var deferredFiles: [String] = []
+                if sortedFiles.count >= Self.hugeDatasetFileThreshold {
+                    let cutoff = Calendar.current.date(
+                        byAdding: .day,
+                        value: -Self.hugeDatasetRecentDays,
+                        to: Date()
+                    ) ?? .distantPast
+                    let recentFiles = sortedFiles.filter { (currentModTimes[$0] ?? .distantPast) >= cutoff }
+                    let oldFiles = sortedFiles.filter { (currentModTimes[$0] ?? .distantPast) < cutoff }
+                    if !recentFiles.isEmpty {
+                        initialFiles = recentFiles
+                        deferredFiles = oldFiles
+                    }
+                }
+
+                let firstBatchSize = min(120, initialFiles.count)
+                let firstBatch = Array(initialFiles.prefix(firstBatchSize))
+                let remaining = Array(initialFiles.dropFirst(firstBatchSize))
+
+                let firstSessions = await Task.detached(priority: .userInitiated) {
+                    Self.parseSessions(forFiles: firstBatch, source: currentSource, compactForMemory: true)
+                }.value
+
+                cachedSessions = firstSessions
+                cachedSkillStats = SessionAnalyzer.collectAllSkillStats(firstSessions)
+                deferredHistoricalFilePaths = deferredFiles
+
+                // 先渲染第一屏，避免等待全量文件解析完成
+                if !remaining.isEmpty {
+                    await applyFilterAndUpdate(lightweight: true)
+                }
+
+                if !remaining.isEmpty {
+                    var allSessions = firstSessions
+                    let chunkSize = 220
+                    var idx = 0
+                    while idx < remaining.count {
+                        if Task.isCancelled { return }
+                        let end = min(idx + chunkSize, remaining.count)
+                        let chunk = Array(remaining[idx..<end])
+                        let parsedChunk = await Task.detached(priority: .utility) {
+                            Self.parseSessions(forFiles: chunk, source: currentSource, compactForMemory: true)
+                        }.value
+                        allSessions.append(contentsOf: parsedChunk)
+                        idx = end
+                    }
+                    cachedSessions = allSessions
+                    cachedSkillStats = SessionAnalyzer.collectAllSkillStats(allSessions)
+                }
+            } else {
+                // 指定项目时按原路径解析，保证路径筛选语义准确
+                let (loadedProjects, sessions, fileModTimes) = await Task.detached(priority: .userInitiated) {
+                    Self.fullParseForSource(currentSource, project: currentProject)
+                }.value
+
+                let compacted = await Task.detached(priority: .utility) {
+                    Self.compactSessionsForMemory(sessions)
+                }.value
+
+                cachedProjects = loadedProjects
+                cachedSessions = compacted
+                cachedSource = currentSource
+                cachedProject = currentProject
+                cachedFileModTimes = fileModTimes
+                cachedSkillStats = SessionAnalyzer.collectAllSkillStats(compacted)
+                deferredHistoricalFilePaths = []
+                historicalLoadTask?.cancel()
+                historicalLoadTask = nil
+            }
+            Self.releaseMemoryPressureIfPossible()
         } else {
             // 增量检查路径：source/project 未变，只检查文件是否有变化
             let oldModTimes = cachedFileModTimes
@@ -238,7 +342,7 @@ final class StatsViewModel: ObservableObject {
 
             // 只解析变化的文件
             let newSessions = await Task.detached(priority: .userInitiated) {
-                Self.parseSessions(forFiles: changedFiles, source: currentSource)
+                Self.parseSessions(forFiles: changedFiles, source: currentSource, compactForMemory: true)
             }.value
 
             // 将变化文件的路径收集为 Set，用于替换/追加
@@ -250,6 +354,10 @@ final class StatsViewModel: ObservableObject {
             cachedSessions = updated
             cachedFileModTimes = currentModTimes
             cachedSkillStats = SessionAnalyzer.collectAllSkillStats(updated)
+            if !deferredHistoricalFilePaths.isEmpty {
+                deferredHistoricalFilePaths.removeAll { changedPaths.contains($0) }
+            }
+            Self.releaseMemoryPressureIfPossible()
         }
     }
 
@@ -395,35 +503,161 @@ final class StatsViewModel: ObservableObject {
     }
 
     /// 仅解析指定文件路径列表中的 session。
-    nonisolated private static func parseSessions(forFiles files: [String], source: DataSource) -> [Session] {
+    nonisolated private static func parseSessions(
+        forFiles files: [String],
+        source: DataSource,
+        compactForMemory: Bool
+    ) -> [Session] {
+        _ = source
         let claudeParser = SessionParser()
         let codexParser = CodexParser()
         let geminiParser = GeminiParser()
 
-        return files.compactMap { filePath -> Session? in
-            // 根据文件路径判断属于哪个 parser
-            if filePath.contains("/.claude/") {
-                return claudeParser.parseSessionFile(atPath: filePath)
-            } else if filePath.contains("/.codex/") {
-                return codexParser.parseSessionFile(atPath: filePath)
-            } else if filePath.contains("/.gemini/") {
-                return geminiParser.parseSessionFile(atPath: filePath)
+        var parsed: [Session] = []
+        parsed.reserveCapacity(files.count)
+
+        for filePath in files {
+            if Task.isCancelled { break }
+            let session: Session? = autoreleasepool {
+                if filePath.contains("/.claude/") {
+                    return claudeParser.parseSessionFile(atPath: filePath)
+                } else if filePath.contains("/.codex/") {
+                    return codexParser.parseSessionFile(atPath: filePath)
+                } else if filePath.contains("/.gemini/") {
+                    return geminiParser.parseSessionFile(atPath: filePath)
+                }
+                return nil
             }
-            return nil
+            guard let session else { continue }
+            parsed.append(compactForMemory ? compactSession(session) : session)
         }
+        return parsed
+    }
+
+    // MARK: - Memory Compaction
+
+    /// 仅为最近会话保留完整消息内容，其余历史会话压缩为统计所需字段，降低常驻内存。
+    nonisolated private static func compactSessionsForMemory(
+        _ sessions: [Session],
+        keepRecentCount: Int = 0
+    ) -> [Session] {
+        guard sessions.count > keepRecentCount else { return sessions }
+
+        let keepPaths = Set(
+            sessions
+                .sorted { ($0.endTime ?? .distantPast) > ($1.endTime ?? .distantPast) }
+                .prefix(keepRecentCount)
+                .map(\.filePath)
+        )
+
+        return sessions.map { session in
+            guard !keepPaths.contains(session.filePath) else { return session }
+            return compactSession(session)
+        }
+    }
+
+    nonisolated private static func compactSession(_ session: Session) -> Session {
+        let compactedMessages = session.messages.map { message in
+            let compactedCalls = message.toolCalls.map(compactToolCall)
+            return Message(
+                role: message.role,
+                content: "",
+                model: message.model,
+                timestamp: message.timestamp,
+                toolCalls: compactedCalls,
+                toolResultInfos: message.toolResultInfos,
+                tokenUsage: message.tokenUsage,
+                isToolResult: message.isToolResult,
+                isMeta: message.isMeta,
+                messageId: message.messageId
+            )
+        }
+
+        return Session(
+            filePath: session.filePath,
+            messages: compactedMessages,
+            projectPath: session.projectPath
+        )
+    }
+
+    nonisolated private static func compactToolCall(_ call: ToolCall) -> ToolCall {
+        var input: [String: Any] = [:]
+
+        if let filePath = call.input["file_path"] as? String { input["file_path"] = filePath }
+        if let targetFile = call.input["target_file"] as? String { input["target_file"] = targetFile }
+        if let skill = call.input["skill"] as? String { input["skill"] = skill }
+
+        if let oldLines = call.input["__old_lines"] as? Int { input["__old_lines"] = oldLines }
+        if let newLines = call.input["__new_lines"] as? Int { input["__new_lines"] = newLines }
+        if let contentLines = call.input["__content_lines"] as? Int { input["__content_lines"] = contentLines }
+
+        if call.name == "Write" {
+            let content = call.input["content"] as? String ?? ""
+            input["__content_lines"] = fastLineCount(content)
+        } else if call.name == "Edit" {
+            let oldString = call.input["old_string"] as? String ?? ""
+            var newString = call.input["new_string"] as? String ?? ""
+            if oldString.isEmpty && newString.isEmpty {
+                newString = call.input["code_edit"] as? String ?? ""
+            }
+            input["__old_lines"] = fastLineCount(oldString)
+            input["__new_lines"] = fastLineCount(newString)
+        }
+
+        // 仅保留少量可读字段，避免大字符串常驻内存
+        if let cmd = call.input["cmd"] as? String, !cmd.isEmpty {
+            input["cmd"] = String(cmd.prefix(200))
+        }
+        if let query = call.input["query"] as? String, !query.isEmpty {
+            input["query"] = String(query.prefix(200))
+        }
+        if let q = call.input["q"] as? String, !q.isEmpty {
+            input["q"] = String(q.prefix(200))
+        }
+
+        return ToolCall(
+            name: call.name,
+            timestamp: call.timestamp,
+            inputLength: call.inputLength,
+            input: input,
+            toolUseId: call.toolUseId
+        )
+    }
+
+    nonisolated private static func fastLineCount(_ text: String) -> Int {
+        let trimmed = text.trimmingCharacters(in: .newlines)
+        guard !trimmed.isEmpty else { return 0 }
+        var count = 1
+        for b in trimmed.utf8 where b == 10 { // '\n'
+            count += 1
+        }
+        return count
+    }
+
+    /// Ask malloc to release unused pages after heavy parse/compaction work.
+    nonisolated private static func releaseMemoryPressureIfPossible() {
+        #if canImport(Darwin)
+        if let zone = malloc_default_zone() {
+            _ = malloc_zone_pressure_relief(zone, 1_000_000_000)
+        }
+        #endif
     }
 
 
     // MARK: - Phase 2: Apply Filter (in-memory)
 
     /// 基于缓存 sessions 做时间过滤、统计分析、日统计。无磁盘 I/O。
-    private func applyFilterAndUpdate() async {
+    private func applyFilterAndUpdate(lightweight: Bool = false) async {
 
         let sessions = cachedSessions
         let loadedProjects = cachedProjects
         let currentFilter = timeFilter
         let currentSource = selectedSource
         let skillStats = cachedSkillStats
+        let previousDaily = dailyStats
+        let previousTodayTokens = todayTokens
+        let previousTodayCost = todayCost
+        let previousTodaySessions = todaySessions
 
         let result: FilterResult = await Task.detached(priority: .userInitiated) {
             // 按时间范围过滤 sessions
@@ -451,18 +685,34 @@ final class StatsViewModel: ObservableObject {
                 .sorted { ($0.endTime ?? .distantPast) > ($1.endTime ?? .distantPast) }
                 .prefix(30).map { $0 }
 
-            // 14 天日统计（单次分桶算法，today 是最后一个桶）
-            let daily = Self.computeDailyStats(from: sessions)
-            let todayPoint = daily.last
-            let weeklyCost = daily.suffix(7).reduce(0.0) { $0 + $1.cost }
+            let daily: [DailyStatPoint]
+            let todayTokensValue: Int
+            let todayCostValue: Double
+            let todaySessionsValue: Int
+            let weeklyCost: Double
+            if lightweight {
+                daily = previousDaily
+                todayTokensValue = previousTodayTokens
+                todayCostValue = previousTodayCost
+                todaySessionsValue = previousTodaySessions
+                weeklyCost = previousDaily.suffix(7).reduce(0.0) { $0 + $1.cost }
+            } else {
+                // 14 天日统计（单次分桶算法，today 是最后一个桶）
+                daily = Self.computeDailyStats(from: sessions)
+                let todayPoint = daily.last
+                todayTokensValue = todayPoint?.tokens ?? 0
+                todayCostValue = todayPoint?.cost ?? 0
+                todaySessionsValue = todayPoint?.sessions ?? 0
+                weeklyCost = daily.suffix(7).reduce(0.0) { $0 + $1.cost }
+            }
 
             return FilterResult(
                 stats: stats,
                 recentSessions: recent,
                 filteredSessions: filteredSessions,
-                todayTokens: todayPoint?.tokens ?? 0,
-                todayCost: todayPoint?.cost ?? 0,
-                todaySessions: todayPoint?.sessions ?? 0,
+                todayTokens: todayTokensValue,
+                todayCost: todayCostValue,
+                todaySessions: todaySessionsValue,
                 dailyStats: daily,
                 weeklyCost: weeklyCost
             )
@@ -477,28 +727,41 @@ final class StatsViewModel: ObservableObject {
         if self.todaySessions != result.todaySessions { self.todaySessions = result.todaySessions }
         if self.dailyStats != result.dailyStats { self.dailyStats = result.dailyStats }
 
-        // Parse Cursor stats only when relevant
-        if currentSource == .cursor || currentSource == .all {
-            let cursorSince = currentFilter.startDate
-            let cursorResult: CursorStats = await Task.detached(priority: .userInitiated) {
-                CursorParser.parse(since: cursorSince)
-            }.value
-            self.cursorStats = cursorResult
-        } else {
-            self.cursorStats = nil
+        if !lightweight {
+            // Parse Cursor stats only when relevant
+            if currentSource == .cursor || currentSource == .all {
+                let cursorSince = currentFilter.startDate
+                let cursorResult: CursorStats = await Task.detached(priority: .userInitiated) {
+                    CursorParser.parse(since: cursorSince)
+                }.value
+                self.cursorStats = cursorResult
+            } else {
+                self.cursorStats = nil
+            }
         }
 
         self.currentFilteredSessions = result.filteredSessions
         self.lastRefreshed = Date()
 
-        // 懒加载 git stats（后台异步，不阻塞 UI）
-        triggerGitStatsCollection(for: result.filteredSessions)
+        if showConversationPanel {
+            prepareConversationSessions()
+            loadConversationSessionsInBackground()
+        }
 
-        // 获取用量额度（如果配置了 token），60 秒节流
-        fetchRateLimitIfNeeded()
+        if currentFilter == .all {
+            triggerDeferredHistoricalLoadIfNeeded()
+        }
 
-        // 检查用量预警
-        checkAlerts(dailyCost: result.todayCost, weeklyCost: result.weeklyCost)
+        if !lightweight {
+            // 懒加载 git stats（后台异步，不阻塞 UI）
+            triggerGitStatsCollection(for: result.filteredSessions)
+
+            // 获取用量额度（如果配置了 token），60 秒节流
+            fetchRateLimitIfNeeded()
+
+            // 检查用量预警
+            checkAlerts(dailyCost: result.todayCost, weeklyCost: result.weeklyCost)
+        }
     }
 
     // MARK: - Daily Stats (Single-Pass Bucketing)
@@ -597,6 +860,87 @@ final class StatsViewModel: ObservableObject {
         NotificationManager.shared.send(title: title, body: body)
     }
 
+    private func triggerDeferredHistoricalLoadIfNeeded() {
+        guard historicalLoadTask == nil else { return }
+        guard !deferredHistoricalFilePaths.isEmpty else { return }
+
+        let deferredPaths = deferredHistoricalFilePaths
+        deferredHistoricalFilePaths = []
+        let sourceAtStart = selectedSource
+        let projectAtStart = selectedProject
+
+        historicalLoadTask = Task { [deferredPaths] in
+            defer { self.historicalLoadTask = nil }
+
+            var parsedAll: [Session] = []
+            parsedAll.reserveCapacity(deferredPaths.count)
+            let chunkSize = 260
+            var idx = 0
+
+            while idx < deferredPaths.count {
+                if Task.isCancelled { return }
+                let end = min(idx + chunkSize, deferredPaths.count)
+                let chunk = Array(deferredPaths[idx..<end])
+                let parsedChunk = await Task.detached(priority: .utility) {
+                    Self.parseSessions(forFiles: chunk, source: sourceAtStart, compactForMemory: true)
+                }.value
+                if Task.isCancelled { return }
+                parsedAll.append(contentsOf: parsedChunk)
+                idx = end
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.selectedSource == sourceAtStart, self.selectedProject == projectAtStart else { return }
+            guard !parsedAll.isEmpty else { return }
+
+            let existingPaths = Set(self.cachedSessions.map(\.filePath))
+            let appended = parsedAll.filter { !existingPaths.contains($0.filePath) }
+            guard !appended.isEmpty else { return }
+
+            self.cachedSessions.append(contentsOf: appended)
+            self.cachedSkillStats = SessionAnalyzer.collectAllSkillStats(self.cachedSessions)
+            Self.releaseMemoryPressureIfPossible()
+            await self.applyFilterAndUpdate()
+        }
+    }
+
+    // MARK: - Conversation Lazy Loading
+
+    private func prepareConversationSessions() {
+        let base = currentFilteredSessions.isEmpty ? recentSessions : currentFilteredSessions
+        let ordered = base
+            .sorted { ($0.endTime ?? .distantPast) > ($1.endTime ?? .distantPast) }
+            .prefix(30)
+            .map { $0 }
+        if conversationSessions != ordered {
+            conversationSessions = ordered
+        }
+    }
+
+    private func loadConversationSessionsInBackground() {
+        guard showConversationPanel else { return }
+        let targetPaths = conversationSessions.map(\.filePath)
+        guard !targetPaths.isEmpty else { return }
+
+        conversationLoadTask?.cancel()
+        isConversationLoading = true
+
+        let source = selectedSource
+        conversationLoadTask = Task { [targetPaths] in
+            let fullSessions = await Task.detached(priority: .utility) {
+                Self.parseSessions(forFiles: targetPaths, source: source, compactForMemory: false)
+            }.value
+
+            guard !Task.isCancelled else { return }
+            let fullByPath = Dictionary(uniqueKeysWithValues: fullSessions.map { ($0.filePath, $0) })
+            let ordered = targetPaths.compactMap { fullByPath[$0] }
+            if self.showConversationPanel {
+                self.conversationSessions = ordered
+            }
+            self.isConversationLoading = false
+        }
+    }
+
     private func invalidateCache() {
         cachedSessions = []
         cachedProjects = []
@@ -604,6 +948,13 @@ final class StatsViewModel: ObservableObject {
         cachedProject = nil
         cachedFileModTimes = [:]
         cachedSkillStats = [:]
+        deferredHistoricalFilePaths = []
+        conversationLoadTask?.cancel()
+        conversationLoadTask = nil
+        historicalLoadTask?.cancel()
+        historicalLoadTask = nil
+        conversationSessions = []
+        isConversationLoading = false
         GitStatsCollector.shared.clearCache()
     }
 

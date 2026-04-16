@@ -7,6 +7,8 @@ final class CodexParser {
 
     private let fileManager = FileManager.default
     private let codexHome: String
+    private static let maxMessageChars = 8_000
+    private static let maxSmallInputChars = 200
     private static let toolNameMap: [String: String] = [
         "exec_command": "Bash",
         "write_stdin": "Bash",
@@ -33,20 +35,22 @@ final class CodexParser {
     // MARK: - Public API
 
     func findAllProjects() -> [ProjectInfo] {
-        let sessions = parseAllSessions()
         var projectMap: [String: (count: Int, lastActive: Date?)] = [:]
 
-        for session in sessions {
-            let projectName = session.projectPath ?? "Unknown"
-            let existing = projectMap[projectName] ?? (count: 0, lastActive: nil)
-            let sessionEnd = session.endTime
-            let latest: Date?
-            if let a = existing.lastActive, let b = sessionEnd {
-                latest = max(a, b)
-            } else {
-                latest = existing.lastActive ?? sessionEnd
+        for filePath in allSessionFilePaths() {
+            autoreleasepool {
+                let projectName = readProjectPath(fromFile: filePath) ?? "Unknown"
+                let existing = projectMap[projectName] ?? (count: 0, lastActive: nil)
+
+                let mtime = (try? fileManager.attributesOfItem(atPath: filePath)[.modificationDate]) as? Date
+                let latest: Date?
+                if let a = existing.lastActive, let b = mtime {
+                    latest = max(a, b)
+                } else {
+                    latest = existing.lastActive ?? mtime
+                }
+                projectMap[projectName] = (count: existing.count + 1, lastActive: latest)
             }
-            projectMap[projectName] = (count: existing.count + 1, lastActive: latest)
         }
 
         return projectMap.map { key, value in
@@ -60,11 +64,29 @@ final class CodexParser {
     }
 
     func parseAllSessions() -> [Session] {
-        return allSessionFilePaths().compactMap { parseSessionFile($0) }
+        let files = allSessionFilePaths()
+        var sessions: [Session] = []
+        sessions.reserveCapacity(files.count)
+
+        for filePath in files {
+            if let session = autoreleasepool(invoking: { parseSessionFile(filePath) }) {
+                sessions.append(session)
+            }
+        }
+        return sessions
     }
 
     func parseSessions(forProject projectPath: String) -> [Session] {
-        return parseAllSessions().filter { $0.projectPath == projectPath }
+        let files = allSessionFilePaths().filter { readProjectPath(fromFile: $0) == projectPath }
+        var sessions: [Session] = []
+        sessions.reserveCapacity(files.count)
+
+        for filePath in files {
+            if let session = autoreleasepool(invoking: { parseSessionFile(filePath) }) {
+                sessions.append(session)
+            }
+        }
+        return sessions
     }
 
     /// Returns all JSONL file paths under Codex session directories.
@@ -89,12 +111,10 @@ final class CodexParser {
     // MARK: - JSONL Parsing
 
     private func parseSessionFile(_ filePath: String) -> Session? {
-        guard let data = fileManager.contents(atPath: filePath),
-              let content = String(data: data, encoding: .utf8) else {
+        guard let content = try? String(contentsOfFile: filePath, encoding: .utf8) else {
             return nil
         }
 
-        let lines = content.components(separatedBy: .newlines).filter { !$0.isEmpty }
         var messages: [Message] = []
         var projectPath: String?
         var latestModel: String?
@@ -102,195 +122,202 @@ final class CodexParser {
         var seenAssistantKeys = Set<String>()
         var lastTotalTokens: Int?
 
-        for line in lines {
-            guard let lineData = line.data(using: .utf8),
+        content.enumerateLines { line, _ in
+            guard !line.isEmpty,
+                  let lineData = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
-                continue
+                return
             }
 
-            let tsString = json["timestamp"] as? String
-            let ts = parseTimestamp(tsString)
-            let type = json["type"] as? String ?? ""
-            let payload = json["payload"] as? [String: Any]
+            autoreleasepool {
+                let tsString = json["timestamp"] as? String
+                let ts = self.parseTimestamp(tsString)
+                let type = json["type"] as? String ?? ""
+                let payload = json["payload"] as? [String: Any]
 
-            switch type {
-            case "session_meta":
-                // Extract cwd as project path
-                if let meta = payload ?? json["meta"] as? [String: Any],
-                   let cwd = meta["cwd"] as? String {
-                    projectPath = cwd
-                } else if let cwd = json["cwd"] as? String {
-                    projectPath = cwd
-                }
-                if let model = extractModel(from: payload) {
-                    latestModel = model
-                }
-
-            case "event_msg":
-                guard let eventPayload = payload else { continue }
-                let eventType = eventPayload["type"] as? String ?? ""
-
-                if eventType == "token_count" {
-                    // Codex writes cumulative totals; if total is unchanged, skip duplicate events.
-                    if let info = eventPayload["info"] as? [String: Any],
-                       let totalUsage = info["total_token_usage"] as? [String: Any] {
-                        let total = intValue(totalUsage["total_tokens"])
-                        if let last = lastTotalTokens, total > 0, total == last {
-                            continue
-                        }
-                        if total > 0 {
-                            lastTotalTokens = total
-                        }
+                switch type {
+                case "session_meta":
+                    // Extract cwd as project path
+                    if let meta = payload ?? json["meta"] as? [String: Any],
+                       let cwd = meta["cwd"] as? String {
+                        projectPath = cwd
+                    } else if let cwd = json["cwd"] as? String {
+                        projectPath = cwd
+                    }
+                    if let model = self.extractModel(from: payload) {
+                        latestModel = model
                     }
 
-                    if let usage = extractTokenUsage(fromTokenCountPayload: eventPayload) {
-                        if let idx = messages.lastIndex(where: { $0.role == "assistant" }) {
-                            let mergedUsage = (messages[idx].tokenUsage ?? TokenDetail()) + usage
-                            let original = messages[idx]
-                            messages[idx] = Message(
-                                role: original.role,
-                                content: original.content,
-                                model: original.model ?? latestModel ?? "unknown",
-                                timestamp: original.timestamp,
-                                toolCalls: original.toolCalls,
-                                toolResultInfos: original.toolResultInfos,
-                                tokenUsage: mergedUsage,
-                                isToolResult: original.isToolResult,
-                                isMeta: original.isMeta,
-                                messageId: original.messageId
-                            )
-                        } else {
-                            messages.append(Message(
-                                role: "assistant",
-                                content: "",
-                                model: latestModel ?? "unknown",
-                                timestamp: ts,
-                                tokenUsage: usage,
-                                isMeta: true
-                            ))
+                case "event_msg":
+                    guard let eventPayload = payload else { return }
+                    let eventType = eventPayload["type"] as? String ?? ""
+
+                    if eventType == "token_count" {
+                        // Codex writes cumulative totals; if total is unchanged, skip duplicate events.
+                        if let info = eventPayload["info"] as? [String: Any],
+                           let totalUsage = info["total_token_usage"] as? [String: Any] {
+                            let total = self.intValue(totalUsage["total_tokens"])
+                            if let last = lastTotalTokens, total > 0, total == last {
+                                return
+                            }
+                            if total > 0 {
+                                lastTotalTokens = total
+                            }
                         }
-                    }
-                } else if eventType == "user_message" {
-                    let content = eventPayload["message"] as? String ?? ""
-                    guard !content.isEmpty else { continue }
-                    let key = "\(tsString ?? "")|u|\(content)"
-                    if seenUserKeys.contains(key) { continue }
-                    seenUserKeys.insert(key)
-                    messages.append(Message(
-                        role: "user",
-                        content: content,
-                        timestamp: ts
-                    ))
-                } else if eventType == "agent_message" {
-                    let content = eventPayload["message"] as? String ?? ""
-                    guard !content.isEmpty else { continue }
-                    let key = "\(tsString ?? "")|a|\(content)"
-                    if seenAssistantKeys.contains(key) { continue }
-                    seenAssistantKeys.insert(key)
-                    messages.append(Message(
-                        role: "assistant",
-                        content: content,
-                        model: latestModel,
-                        timestamp: ts
-                    ))
-                }
 
-            case "response_item":
-                guard let item = payload else { continue }
-                let itemType = item["type"] as? String ?? ""
-
-                if itemType == "function_call" {
-                    let rawName = item["name"] as? String ?? ""
-                    guard !rawName.isEmpty else { continue }
-
-                    var input = parseJSONDictionary(item["arguments"])
-                    if rawName == "apply_patch" {
-                        input = parseApplyPatchInput(item["arguments"])
-                    }
-                    let mapped = CodexParser.toolNameMap[rawName] ?? rawName
-
-                    let inputLength: Int
-                    if let inputData = try? JSONSerialization.data(withJSONObject: input) {
-                        inputLength = inputData.count
-                    } else {
-                        inputLength = 0
-                    }
-
-                    let toolCall = ToolCall(
-                        name: mapped,
-                        timestamp: ts,
-                        inputLength: inputLength,
-                        input: input,
-                        toolUseId: item["call_id"] as? String
-                    )
-                    messages.append(Message(
-                        role: "assistant",
-                        content: "",
-                        model: latestModel,
-                        timestamp: ts,
-                        toolCalls: [toolCall]
-                    ))
-                    continue
-                }
-
-                if itemType == "web_search_call" {
-                    let action = item["action"] as? [String: Any] ?? [:]
-                    let toolCall = ToolCall(
-                        name: "WebSearch",
-                        timestamp: ts,
-                        input: action
-                    )
-                    messages.append(Message(
-                        role: "assistant",
-                        content: "",
-                        model: latestModel,
-                        timestamp: ts,
-                        toolCalls: [toolCall]
-                    ))
-                    continue
-                }
-
-                if itemType == "message" {
-                    let role = item["role"] as? String ?? "assistant"
-                    let itemModel = item["model"] as? String
-                    if let m = itemModel { latestModel = m }
-
-                    let textContent = extractTextContent(item["content"])
-                    if role == "user" {
-                        if textContent.isEmpty || isMetaUserText(textContent) {
-                            continue
+                        if let usage = self.extractTokenUsage(fromTokenCountPayload: eventPayload) {
+                            if let idx = messages.lastIndex(where: { $0.role == "assistant" }) {
+                                let mergedUsage = (messages[idx].tokenUsage ?? TokenDetail()) + usage
+                                let original = messages[idx]
+                                messages[idx] = Message(
+                                    role: original.role,
+                                    content: original.content,
+                                    model: original.model ?? latestModel ?? "unknown",
+                                    timestamp: original.timestamp,
+                                    toolCalls: original.toolCalls,
+                                    toolResultInfos: original.toolResultInfos,
+                                    tokenUsage: mergedUsage,
+                                    isToolResult: original.isToolResult,
+                                    isMeta: original.isMeta,
+                                    messageId: original.messageId
+                                )
+                            } else {
+                                messages.append(Message(
+                                    role: "assistant",
+                                    content: "",
+                                    model: latestModel ?? "unknown",
+                                    timestamp: ts,
+                                    tokenUsage: usage,
+                                    isMeta: true
+                                ))
+                            }
                         }
-                        let key = "\(tsString ?? "")|u|\(textContent)"
-                        if seenUserKeys.contains(key) { continue }
+                    } else if eventType == "user_message" {
+                        let content = eventPayload["message"] as? String ?? ""
+                        guard !content.isEmpty else { return }
+                        let key = "\(tsString ?? "")|u|\(content)"
+                        if seenUserKeys.contains(key) { return }
                         seenUserKeys.insert(key)
                         messages.append(Message(
                             role: "user",
-                            content: textContent,
+                            content: self.truncate(content, maxChars: CodexParser.maxMessageChars),
                             timestamp: ts
                         ))
-                    } else if role == "assistant" {
-                        guard !textContent.isEmpty else { continue }
-                        let key = "\(tsString ?? "")|a|\(textContent)"
-                        if seenAssistantKeys.contains(key) { continue }
+                    } else if eventType == "agent_message" {
+                        let content = eventPayload["message"] as? String ?? ""
+                        guard !content.isEmpty else { return }
+                        let key = "\(tsString ?? "")|a|\(content)"
+                        if seenAssistantKeys.contains(key) { return }
                         seenAssistantKeys.insert(key)
                         messages.append(Message(
                             role: "assistant",
-                            content: textContent,
-                            model: itemModel ?? latestModel,
+                            content: self.truncate(content, maxChars: CodexParser.maxMessageChars),
+                            model: latestModel,
                             timestamp: ts
                         ))
                     }
-                }
 
-            case "turn_context":
-                // turn_context has the active model for this turn.
-                if let model = extractModel(from: payload) {
-                    latestModel = model
-                }
-                break
+                case "response_item":
+                    guard let item = payload else { return }
+                    let itemType = item["type"] as? String ?? ""
 
-            default:
-                break
+                    if itemType == "function_call" {
+                        let rawName = item["name"] as? String ?? ""
+                        guard !rawName.isEmpty else { return }
+
+                        // apply_patch arguments may contain very large patch text.
+                        // Parse only patch metadata and skip full JSON decode of huge blobs.
+                        let rawInput: [String: Any]
+                        if rawName == "apply_patch" {
+                            rawInput = self.parseApplyPatchInput(item["arguments"])
+                        } else {
+                            rawInput = self.parseJSONDictionary(item["arguments"])
+                        }
+                        let mapped = CodexParser.toolNameMap[rawName] ?? rawName
+                        let input = self.compactToolInput(name: mapped, input: rawInput)
+
+                        let inputLength: Int
+                        if let inputData = try? JSONSerialization.data(withJSONObject: input) {
+                            inputLength = inputData.count
+                        } else {
+                            inputLength = 0
+                        }
+
+                        let toolCall = ToolCall(
+                            name: mapped,
+                            timestamp: ts,
+                            inputLength: inputLength,
+                            input: input,
+                            toolUseId: item["call_id"] as? String
+                        )
+                        messages.append(Message(
+                            role: "assistant",
+                            content: "",
+                            model: latestModel,
+                            timestamp: ts,
+                            toolCalls: [toolCall]
+                        ))
+                        return
+                    }
+
+                    if itemType == "web_search_call" {
+                        let action = item["action"] as? [String: Any] ?? [:]
+                        let toolCall = ToolCall(
+                            name: "WebSearch",
+                            timestamp: ts,
+                            input: action
+                        )
+                        messages.append(Message(
+                            role: "assistant",
+                            content: "",
+                            model: latestModel,
+                            timestamp: ts,
+                            toolCalls: [toolCall]
+                        ))
+                        return
+                    }
+
+                    if itemType == "message" {
+                        let role = item["role"] as? String ?? "assistant"
+                        let itemModel = item["model"] as? String
+                        if let m = itemModel { latestModel = m }
+
+                        let textContent = self.extractTextContent(item["content"])
+                        if role == "user" {
+                            if textContent.isEmpty || self.isMetaUserText(textContent) {
+                                return
+                            }
+                            let key = "\(tsString ?? "")|u|\(textContent)"
+                            if seenUserKeys.contains(key) { return }
+                            seenUserKeys.insert(key)
+                            messages.append(Message(
+                                role: "user",
+                                content: self.truncate(textContent, maxChars: CodexParser.maxMessageChars),
+                                timestamp: ts
+                            ))
+                        } else if role == "assistant" {
+                            guard !textContent.isEmpty else { return }
+                            let key = "\(tsString ?? "")|a|\(textContent)"
+                            if seenAssistantKeys.contains(key) { return }
+                            seenAssistantKeys.insert(key)
+                            messages.append(Message(
+                                role: "assistant",
+                                content: self.truncate(textContent, maxChars: CodexParser.maxMessageChars),
+                                model: itemModel ?? latestModel,
+                                timestamp: ts
+                            ))
+                        }
+                    }
+
+                case "turn_context":
+                    // turn_context has the active model for this turn.
+                    if let model = self.extractModel(from: payload) {
+                        latestModel = model
+                    }
+
+                default:
+                    break
+                }
             }
         }
 
@@ -317,6 +344,45 @@ final class CodexParser {
         }
 
         return Array(Set(files)).sorted()
+    }
+
+    /// 从 rollout JSONL 的 session_meta 读取 cwd（项目路径），避免全量解析消息。
+    private func readProjectPath(fromFile filePath: String) -> String? {
+        // session_meta is near the beginning; read a small prefix to avoid loading huge files.
+        guard let prefix = readFilePrefix(filePath, maxBytes: 128 * 1024) else {
+            return nil
+        }
+
+        var result: String?
+        prefix.enumerateLines { line, stop in
+            guard let lineData = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                  (json["type"] as? String) == "session_meta" else {
+                return
+            }
+            if let payload = json["payload"] as? [String: Any] {
+                result = payload["cwd"] as? String
+            } else if let meta = json["meta"] as? [String: Any] {
+                result = meta["cwd"] as? String
+            } else {
+                result = json["cwd"] as? String
+            }
+            stop = true
+        }
+        return result
+    }
+
+    private func readFilePrefix(_ filePath: String, maxBytes: Int) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: filePath)) else {
+            return nil
+        }
+        defer { try? handle.close() }
+
+        let data = handle.readData(ofLength: maxBytes)
+        guard !data.isEmpty else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     private func intValue(_ raw: Any?) -> Int {
@@ -409,7 +475,13 @@ final class CodexParser {
     private func parseApplyPatchInput(_ rawArguments: Any?) -> [String: Any] {
         var patchText = ""
         if let s = rawArguments as? String {
-            patchText = s
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.first == "{", !trimmed.isEmpty {
+                let parsed = parseJSONDictionary(s)
+                patchText = (parsed["patch"] as? String) ?? (parsed["input"] as? String) ?? s
+            } else {
+                patchText = s
+            }
         } else if let dict = rawArguments as? [String: Any] {
             patchText = (dict["patch"] as? String) ?? (dict["input"] as? String) ?? ""
         }
@@ -418,7 +490,7 @@ final class CodexParser {
         var added = 0
         var removed = 0
 
-        for line in patchText.components(separatedBy: .newlines) {
+        patchText.enumerateLines { line, _ in
             if filePath.isEmpty {
                 if line.hasPrefix("*** Update File: ") {
                     filePath = String(line.dropFirst("*** Update File: ".count))
@@ -438,14 +510,63 @@ final class CodexParser {
 
         return [
             "target_file": filePath,
-            "old_string": dummyLines(removed),
-            "new_string": dummyLines(added),
+            "__old_lines": removed,
+            "__new_lines": added,
         ]
     }
 
-    private func dummyLines(_ count: Int) -> String {
-        guard count > 0 else { return "" }
-        return Array(repeating: "x", count: count).joined(separator: "\n")
+    private func compactToolInput(name: String, input: [String: Any]) -> [String: Any] {
+        var compacted: [String: Any] = [:]
+
+        if let filePath = input["file_path"] as? String { compacted["file_path"] = filePath }
+        if let targetFile = input["target_file"] as? String { compacted["target_file"] = targetFile }
+        if let skill = input["skill"] as? String { compacted["skill"] = skill }
+
+        if let oldLines = input["__old_lines"] as? Int { compacted["__old_lines"] = oldLines }
+        if let newLines = input["__new_lines"] as? Int { compacted["__new_lines"] = newLines }
+        if let contentLines = input["__content_lines"] as? Int { compacted["__content_lines"] = contentLines }
+
+        if name == "Write" {
+            let content = input["content"] as? String ?? ""
+            compacted["__content_lines"] = fastLineCount(content)
+        } else if name == "Edit" {
+            if compacted["__old_lines"] == nil || compacted["__new_lines"] == nil {
+                let oldString = input["old_string"] as? String ?? ""
+                var newString = input["new_string"] as? String ?? ""
+                if oldString.isEmpty && newString.isEmpty {
+                    newString = input["code_edit"] as? String ?? ""
+                }
+                compacted["__old_lines"] = fastLineCount(oldString)
+                compacted["__new_lines"] = fastLineCount(newString)
+            }
+        }
+
+        if let cmd = input["cmd"] as? String, !cmd.isEmpty {
+            compacted["cmd"] = truncate(cmd, maxChars: CodexParser.maxSmallInputChars)
+        }
+        if let query = input["query"] as? String, !query.isEmpty {
+            compacted["query"] = truncate(query, maxChars: CodexParser.maxSmallInputChars)
+        }
+        if let q = input["q"] as? String, !q.isEmpty {
+            compacted["q"] = truncate(q, maxChars: CodexParser.maxSmallInputChars)
+        }
+
+        return compacted
+    }
+
+    private func fastLineCount(_ text: String) -> Int {
+        let trimmed = text.trimmingCharacters(in: .newlines)
+        guard !trimmed.isEmpty else { return 0 }
+        var count = 1
+        for b in trimmed.utf8 where b == 10 { // '\n'
+            count += 1
+        }
+        return count
+    }
+
+    private func truncate(_ text: String, maxChars: Int) -> String {
+        guard text.count > maxChars else { return text }
+        return String(text.prefix(maxChars))
     }
 
     private lazy var iso8601Formatter: ISO8601DateFormatter = {

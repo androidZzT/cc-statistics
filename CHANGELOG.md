@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.12.17 (2026-04-16)
+
+### Performance
+- Reduce macOS app memory pressure in parser/analyzer path (streaming-style line parsing, compact tool inputs, lower transient allocations)
+- Add progressive loading for dashboard stats: render first batch quickly, then continue background parsing
+- Add huge-dataset guardrail: prioritize recent 30-day sessions when file count is very large, then backfill history on demand
+
+### UX
+- Make Conversation panel lazy-load full session messages on open to shorten initial dashboard load time
+
 ## v0.12.16 (2026-04-16)
 
 ### Bug Fixes

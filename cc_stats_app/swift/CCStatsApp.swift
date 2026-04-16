@@ -869,7 +869,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if show {
                     self.panelManager.show(
                         content: ConversationView(
-                            sessions: self.viewModel.recentSessions,
+                            viewModel: self.viewModel,
                             onClose: {
                                 Task { @MainActor in
                                     self.viewModel.showConversationPanel = false

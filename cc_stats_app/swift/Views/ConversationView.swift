@@ -4,7 +4,7 @@ import AppKit
 // MARK: - ConversationView
 
 struct ConversationView: View {
-    let sessions: [Session]
+    @ObservedObject var viewModel: StatsViewModel
     var onClose: () -> Void
 
     @State private var selectedSession: Session?
@@ -12,6 +12,8 @@ struct ConversationView: View {
     @State private var searchText: String = ""
     @State private var isSelectMode = false
     @State private var selectedMessageIDs: Set<UUID> = []
+    private var sessions: [Session] { viewModel.conversationSessions }
+    private var isLoading: Bool { viewModel.isConversationLoading }
 
     private var filteredSessions: [Session] {
         let base: [Session]
@@ -20,8 +22,10 @@ struct ConversationView: View {
         } else {
             let query = searchText.lowercased()
             base = sessions.filter { session in
-                session.messages.contains { msg in
-                    msg.content.lowercased().contains(query)
+                if session.sessionName.lowercased().contains(query) { return true }
+                if let project = session.projectPath, project.lowercased().contains(query) { return true }
+                return session.messages.contains { msg in
+                    !msg.content.isEmpty && msg.content.lowercased().contains(query)
                 }
             }
         }
@@ -70,6 +74,17 @@ struct ConversationView: View {
         .onAppear {
             selectedSession = sessions.first
         }
+        .onChange(of: sessions.map(\.filePath)) { _ in
+            guard let selected = selectedSession else {
+                selectedSession = sessions.first
+                return
+            }
+            if let updated = sessions.first(where: { $0.filePath == selected.filePath }) {
+                selectedSession = updated
+            } else {
+                selectedSession = sessions.first
+            }
+        }
     }
 
     // MARK: - Session List
@@ -80,6 +95,11 @@ struct ConversationView: View {
                 Text(L10n.sessionList)
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(Theme.textPrimary)
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.7)
+                }
                 Spacer()
                 Text("\(filteredSessions.count)")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -140,7 +160,8 @@ struct ConversationView: View {
     private func sessionRow(_ session: Session) -> some View {
         let isSelected = selectedSession?.id == session.id
         let userMessages = session.messages.filter { $0.role == "human" || $0.role == "user" }
-        let preview = userMessages.first.map { String($0.content.prefix(80)) } ?? L10n.noMessages
+        let preview = userMessages.first(where: { !$0.content.isEmpty }).map { String($0.content.prefix(80)) }
+            ?? String(session.sessionName.prefix(80))
 
         return Button {
             selectedSession = session
@@ -338,30 +359,53 @@ struct ConversationView: View {
 
             // Messages
             ScrollView(.vertical, showsIndicators: true) {
-                let visibleMessages = session.messages.filter { !$0.isToolResult && !$0.isMeta }
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(visibleMessages) { message in
-                        HStack(spacing: 6) {
-                            if isSelectMode {
-                                Button {
-                                    toggleMessage(message.id)
-                                } label: {
-                                    Image(systemName: selectedMessageIDs.contains(message.id)
-                                          ? "checkmark.circle.fill"
-                                          : "circle")
-                                        .font(.system(size: 14))
-                                        .foregroundColor(selectedMessageIDs.contains(message.id)
-                                                         ? Theme.cyan
-                                                         : Theme.textTertiary.opacity(0.4))
+                let visibleMessages = session.messages.filter {
+                    !$0.isToolResult
+                        && !$0.isMeta
+                        && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+                if visibleMessages.isEmpty {
+                    VStack(spacing: 8) {
+                        if isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(isLoading ? (L10n.isChinese ? "正在加载完整会话..." : "Loading full conversation...")
+                             : L10n.noMessages)
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.textTertiary)
+                        Text(L10n.isChinese ? "已按需懒加载，打开面板后会逐步填充消息内容"
+                             : "Messages are loaded on demand after opening the panel")
+                            .font(.system(size: 10))
+                            .foregroundColor(Theme.textTertiary.opacity(0.8))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 160)
+                    .padding(.top, 18)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(visibleMessages) { message in
+                            HStack(spacing: 6) {
+                                if isSelectMode {
+                                    Button {
+                                        toggleMessage(message.id)
+                                    } label: {
+                                        Image(systemName: selectedMessageIDs.contains(message.id)
+                                              ? "checkmark.circle.fill"
+                                              : "circle")
+                                            .font(.system(size: 14))
+                                            .foregroundColor(selectedMessageIDs.contains(message.id)
+                                                             ? Theme.cyan
+                                                             : Theme.textTertiary.opacity(0.4))
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
-                            }
 
-                            messageBubble(message)
+                                messageBubble(message)
+                            }
                         }
                     }
+                    .padding(12)
                 }
-                .padding(12)
             }
         }
         .background(Theme.background)
