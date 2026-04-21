@@ -31,6 +31,7 @@ cc_stats_web = ["web/**/*"]
 
 [project.scripts]
 cc-stats = "cc_stats.cli:main"
+cc-stats-bridge = "cc_stats.bridge.daemon:main"
 cc-stats-app = "cc_stats_app.__main__:main"
 cc-stats-web = "cc_stats_web.__main__:main"
 cc-stats-hooks = "cc_stats.hooks:main"

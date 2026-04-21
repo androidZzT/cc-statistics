@@ -1,0 +1,544 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0BCEEE77B30E7149367A6ADB /* BridgeConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CD9512AD4A9D9E01560AF61 /* BridgeConfiguration.swift */; };
+		0C9625F43284A955C53DC5C2 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5B7307CBF8042EB6954F2BE1 /* WidgetKit.framework */; };
+		250F0D33E5484FE8D70EA8FE /* ClaudeCodeIslandWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1A1B91510C50D1BD22836D6 /* ClaudeCodeIslandWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		2C952B6DA54A0D8538DA0718 /* BridgeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 650AA04D012FE7DFA20AE24D /* BridgeClient.swift */; };
+		3C8AACB0F8E1F461087568F1 /* ClaudeCodeIslandAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F6F372AA2B34BAAFD08E0D5 /* ClaudeCodeIslandAttributes.swift */; };
+		4F709D954D2B58BBC51A3838 /* BridgeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DABA889DE8843C4C5D8BFCE5 /* BridgeModels.swift */; };
+		6154DF6849260A03D12F1B2B /* BridgeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DABA889DE8843C4C5D8BFCE5 /* BridgeModels.swift */; };
+		63C8EA47CBB14D4599F081C4 /* BridgeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74B7D3793D7ECDB6015502E2 /* BridgeSettingsView.swift */; };
+		746EB13AB65E88F0ADBC810A /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5B7307CBF8042EB6954F2BE1 /* WidgetKit.framework */; };
+		7CA579332CF30BA4A5B3BEBC /* ClaudeCodeActivityManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9C8741AFD11AF7A513EE947 /* ClaudeCodeActivityManager.swift */; };
+		82498EFD894C2566DCC9AC03 /* IslandDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A5F8D9B83F044C555E0057 /* IslandDashboardView.swift */; };
+		88CC0724C37947FD8780F312 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 62250BF39FCE87A93340725E /* SwiftUI.framework */; };
+		9633E404D34C6FACFF20C048 /* JSONCoder+Bridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BCAD3E8E1189A90E2D759AF /* JSONCoder+Bridge.swift */; };
+		988E762406E78A262A946D13 /* BridgeSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63FC59726995324704517912 /* BridgeSyncCoordinator.swift */; };
+		9E425AABC3E89A7938965C55 /* ActivityKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C73EE39F513403E52EB4C399 /* ActivityKit.framework */; };
+		A1E66D066E5405FB96B6D40D /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6E34FBFC561C6589014FE7D5 /* AppIntents.framework */; };
+		ABA8F4CF22CDD4D599B34F32 /* JSONCoder+Bridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BCAD3E8E1189A90E2D759AF /* JSONCoder+Bridge.swift */; };
+		B4901DE32CA494F4901AC992 /* ApprovalIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6B0A135DC2874D89CD18B6C /* ApprovalIntents.swift */; };
+		BD995B34B438FAE2A1FF10D7 /* BridgeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 650AA04D012FE7DFA20AE24D /* BridgeClient.swift */; };
+		CDF99C0BEFE821B0ED2D9F36 /* BridgeConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CD9512AD4A9D9E01560AF61 /* BridgeConfiguration.swift */; };
+		D42DDE8E5802942416C47A17 /* ClaudeCodeIslandApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2383D278DDB1ADE27B1871 /* ClaudeCodeIslandApp.swift */; };
+		E0C87C235051A2E1EE486571 /* ClaudeCodeIslandWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 182BCCE1DFD9A91E8969BF75 /* ClaudeCodeIslandWidgetBundle.swift */; };
+		E4E00F6396F737EF7C0E1707 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 62250BF39FCE87A93340725E /* SwiftUI.framework */; };
+		E73BC74DEECD69816E9E2627 /* ClaudeCodeIslandWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C83D08179C61432F8845BC7 /* ClaudeCodeIslandWidget.swift */; };
+		F5BE6927CFDFCDC0FE1D2482 /* ClaudeCodeIslandAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F6F372AA2B34BAAFD08E0D5 /* ClaudeCodeIslandAttributes.swift */; };
+		FA2DABC38AD6862E3E9E1B04 /* ActivityKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C73EE39F513403E52EB4C399 /* ActivityKit.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		51BEDB23D2D6F0E3D92D2F3B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 08882D3D810A7CDA8C84BA8E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 25DB16620872F5A88A994256;
+			remoteInfo = ClaudeCodeIslandWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		01E65E0E293A7CEDA15FE4F4 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				250F0D33E5484FE8D70EA8FE /* ClaudeCodeIslandWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		01A5F8D9B83F044C555E0057 /* IslandDashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IslandDashboardView.swift; sourceTree = "<group>"; };
+		0C83D08179C61432F8845BC7 /* ClaudeCodeIslandWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCodeIslandWidget.swift; sourceTree = "<group>"; };
+		0CD9512AD4A9D9E01560AF61 /* BridgeConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeConfiguration.swift; sourceTree = "<group>"; };
+		182BCCE1DFD9A91E8969BF75 /* ClaudeCodeIslandWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCodeIslandWidgetBundle.swift; sourceTree = "<group>"; };
+		22323253CF672E9C65093BBB /* ClaudeCodeIslandApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ClaudeCodeIslandApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2F6F372AA2B34BAAFD08E0D5 /* ClaudeCodeIslandAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCodeIslandAttributes.swift; sourceTree = "<group>"; };
+		4BCAD3E8E1189A90E2D759AF /* JSONCoder+Bridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "JSONCoder+Bridge.swift"; sourceTree = "<group>"; };
+		5B7307CBF8042EB6954F2BE1 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		62250BF39FCE87A93340725E /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		63FC59726995324704517912 /* BridgeSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeSyncCoordinator.swift; sourceTree = "<group>"; };
+		650AA04D012FE7DFA20AE24D /* BridgeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeClient.swift; sourceTree = "<group>"; };
+		6E34FBFC561C6589014FE7D5 /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
+		74B7D3793D7ECDB6015502E2 /* BridgeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeSettingsView.swift; sourceTree = "<group>"; };
+		A1A1B91510C50D1BD22836D6 /* ClaudeCodeIslandWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ClaudeCodeIslandWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B6B0A135DC2874D89CD18B6C /* ApprovalIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalIntents.swift; sourceTree = "<group>"; };
+		C73EE39F513403E52EB4C399 /* ActivityKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ActivityKit.framework; path = System/Library/Frameworks/ActivityKit.framework; sourceTree = SDKROOT; };
+		C9C8741AFD11AF7A513EE947 /* ClaudeCodeActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCodeActivityManager.swift; sourceTree = "<group>"; };
+		DABA889DE8843C4C5D8BFCE5 /* BridgeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeModels.swift; sourceTree = "<group>"; };
+		ED2383D278DDB1ADE27B1871 /* ClaudeCodeIslandApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCodeIslandApp.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		315BA44389A31894B09B62C1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9E425AABC3E89A7938965C55 /* ActivityKit.framework in Frameworks */,
+				0C9625F43284A955C53DC5C2 /* WidgetKit.framework in Frameworks */,
+				E4E00F6396F737EF7C0E1707 /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F606C11F3E6227861101FAC6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FA2DABC38AD6862E3E9E1B04 /* ActivityKit.framework in Frameworks */,
+				746EB13AB65E88F0ADBC810A /* WidgetKit.framework in Frameworks */,
+				A1E66D066E5405FB96B6D40D /* AppIntents.framework in Frameworks */,
+				88CC0724C37947FD8780F312 /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		15A0881CD890E1745EC2D4B6 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				0CD9512AD4A9D9E01560AF61 /* BridgeConfiguration.swift */,
+				DABA889DE8843C4C5D8BFCE5 /* BridgeModels.swift */,
+				2F6F372AA2B34BAAFD08E0D5 /* ClaudeCodeIslandAttributes.swift */,
+				4BCAD3E8E1189A90E2D759AF /* JSONCoder+Bridge.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		4BC54DFD930C43F7B1F1407C /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				C73EE39F513403E52EB4C399 /* ActivityKit.framework */,
+				6E34FBFC561C6589014FE7D5 /* AppIntents.framework */,
+				62250BF39FCE87A93340725E /* SwiftUI.framework */,
+				5B7307CBF8042EB6954F2BE1 /* WidgetKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		4D17F2E099B398213B74DFB8 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				74B7D3793D7ECDB6015502E2 /* BridgeSettingsView.swift */,
+				63FC59726995324704517912 /* BridgeSyncCoordinator.swift */,
+				C9C8741AFD11AF7A513EE947 /* ClaudeCodeActivityManager.swift */,
+				ED2383D278DDB1ADE27B1871 /* ClaudeCodeIslandApp.swift */,
+				01A5F8D9B83F044C555E0057 /* IslandDashboardView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		7273E50B1C4FAE5E1733D07A = {
+			isa = PBXGroup;
+			children = (
+				4D17F2E099B398213B74DFB8 /* App */,
+				E83B709B6C6570714650F94F /* Intents */,
+				7C03FD9293A0EEA84CAE1890 /* Networking */,
+				15A0881CD890E1745EC2D4B6 /* Shared */,
+				A5DC617F9C17D9EB21EF6A36 /* Widgets */,
+				4BC54DFD930C43F7B1F1407C /* Frameworks */,
+				C00AA75720B1EAE45031BC65 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7C03FD9293A0EEA84CAE1890 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				650AA04D012FE7DFA20AE24D /* BridgeClient.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		A5DC617F9C17D9EB21EF6A36 /* Widgets */ = {
+			isa = PBXGroup;
+			children = (
+				0C83D08179C61432F8845BC7 /* ClaudeCodeIslandWidget.swift */,
+				182BCCE1DFD9A91E8969BF75 /* ClaudeCodeIslandWidgetBundle.swift */,
+			);
+			path = Widgets;
+			sourceTree = "<group>";
+		};
+		C00AA75720B1EAE45031BC65 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				22323253CF672E9C65093BBB /* ClaudeCodeIslandApp.app */,
+				A1A1B91510C50D1BD22836D6 /* ClaudeCodeIslandWidget.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E83B709B6C6570714650F94F /* Intents */ = {
+			isa = PBXGroup;
+			children = (
+				B6B0A135DC2874D89CD18B6C /* ApprovalIntents.swift */,
+			);
+			path = Intents;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		25DB16620872F5A88A994256 /* ClaudeCodeIslandWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1AC0CC12EDCCEFE4EE3CEE3E /* Build configuration list for PBXNativeTarget "ClaudeCodeIslandWidget" */;
+			buildPhases = (
+				F75EF2770BE2CD41B3A49A28 /* Sources */,
+				F606C11F3E6227861101FAC6 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ClaudeCodeIslandWidget;
+			packageProductDependencies = (
+			);
+			productName = ClaudeCodeIslandWidget;
+			productReference = A1A1B91510C50D1BD22836D6 /* ClaudeCodeIslandWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		48080605B679480B99A8E296 /* ClaudeCodeIslandApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8998FC55FB6BE7B1C6B7A44B /* Build configuration list for PBXNativeTarget "ClaudeCodeIslandApp" */;
+			buildPhases = (
+				A45E6A73D8D4731C372193F6 /* Sources */,
+				315BA44389A31894B09B62C1 /* Frameworks */,
+				01E65E0E293A7CEDA15FE4F4 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E8B2F607E4701BF44E566731 /* PBXTargetDependency */,
+			);
+			name = ClaudeCodeIslandApp;
+			packageProductDependencies = (
+			);
+			productName = ClaudeCodeIslandApp;
+			productReference = 22323253CF672E9C65093BBB /* ClaudeCodeIslandApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		08882D3D810A7CDA8C84BA8E /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					25DB16620872F5A88A994256 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					48080605B679480B99A8E296 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = EE0CDB463DDA6EEC8ECC7E35 /* Build configuration list for PBXProject "ClaudeCodeIsland" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 7273E50B1C4FAE5E1733D07A;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = C00AA75720B1EAE45031BC65 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				48080605B679480B99A8E296 /* ClaudeCodeIslandApp */,
+				25DB16620872F5A88A994256 /* ClaudeCodeIslandWidget */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A45E6A73D8D4731C372193F6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BD995B34B438FAE2A1FF10D7 /* BridgeClient.swift in Sources */,
+				CDF99C0BEFE821B0ED2D9F36 /* BridgeConfiguration.swift in Sources */,
+				4F709D954D2B58BBC51A3838 /* BridgeModels.swift in Sources */,
+				63C8EA47CBB14D4599F081C4 /* BridgeSettingsView.swift in Sources */,
+				988E762406E78A262A946D13 /* BridgeSyncCoordinator.swift in Sources */,
+				7CA579332CF30BA4A5B3BEBC /* ClaudeCodeActivityManager.swift in Sources */,
+				D42DDE8E5802942416C47A17 /* ClaudeCodeIslandApp.swift in Sources */,
+				F5BE6927CFDFCDC0FE1D2482 /* ClaudeCodeIslandAttributes.swift in Sources */,
+				82498EFD894C2566DCC9AC03 /* IslandDashboardView.swift in Sources */,
+				ABA8F4CF22CDD4D599B34F32 /* JSONCoder+Bridge.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F75EF2770BE2CD41B3A49A28 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B4901DE32CA494F4901AC992 /* ApprovalIntents.swift in Sources */,
+				2C952B6DA54A0D8538DA0718 /* BridgeClient.swift in Sources */,
+				0BCEEE77B30E7149367A6ADB /* BridgeConfiguration.swift in Sources */,
+				6154DF6849260A03D12F1B2B /* BridgeModels.swift in Sources */,
+				3C8AACB0F8E1F461087568F1 /* ClaudeCodeIslandAttributes.swift in Sources */,
+				E73BC74DEECD69816E9E2627 /* ClaudeCodeIslandWidget.swift in Sources */,
+				E0C87C235051A2E1EE486571 /* ClaudeCodeIslandWidgetBundle.swift in Sources */,
+				9633E404D34C6FACFF20C048 /* JSONCoder+Bridge.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		E8B2F607E4701BF44E566731 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 25DB16620872F5A88A994256 /* ClaudeCodeIslandWidget */;
+			targetProxy = 51BEDB23D2D6F0E3D92D2F3B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		42B1B9C4664A1CD35500DC1C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.1;
+			};
+			name = Debug;
+		};
+		456135968CCDA3B35CCAA779 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/ClaudeCodeIslandWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = "Config/ClaudeCodeIslandWidget-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ccstats.island.app.widget;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		522C79118C85604D1154CF1B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/ClaudeCodeIslandWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = "Config/ClaudeCodeIslandWidget-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ccstats.island.app.widget;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		C12718DA4E0A23D138B4A100 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.1;
+			};
+			name = Release;
+		};
+		D9ADB62EFFF0EE68ACAC42B4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/ClaudeCodeIsland.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = "Config/ClaudeCodeIsland-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ccstats.island.app;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		F52C423AEFD0CB2B8C5F1E3C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/ClaudeCodeIsland.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = "Config/ClaudeCodeIsland-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.ccstats.island.app;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1AC0CC12EDCCEFE4EE3CEE3E /* Build configuration list for PBXNativeTarget "ClaudeCodeIslandWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				522C79118C85604D1154CF1B /* Debug */,
+				456135968CCDA3B35CCAA779 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8998FC55FB6BE7B1C6B7A44B /* Build configuration list for PBXNativeTarget "ClaudeCodeIslandApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F52C423AEFD0CB2B8C5F1E3C /* Debug */,
+				D9ADB62EFFF0EE68ACAC42B4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EE0CDB463DDA6EEC8ECC7E35 /* Build configuration list for PBXProject "ClaudeCodeIsland" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				42B1B9C4664A1CD35500DC1C /* Debug */,
+				C12718DA4E0A23D138B4A100 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 08882D3D810A7CDA8C84BA8E /* Project object */;
+}

@@ -119,6 +119,10 @@ final class NotificationManager: NSObject, ObservableObject {
             }
         }
     }
+
+    func focusTerminal() {
+        activateTerminal()
+    }
 }
 
 // MARK: - UNUserNotificationCenterDelegate

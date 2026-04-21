@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from cc_stats.hooks import (
+    _bridge_base_url,
     get_hook_command,
     install_hooks,
+    process_hook_event,
     uninstall_hooks,
     _hook_matches,
     _hook_exists,
@@ -59,6 +62,13 @@ class TestHookMatches(unittest.TestCase):
         hook = {"type": "command"}
         assert _hook_matches(hook, "anything") is False
 
+    def test_matches_nested_format(self):
+        hook = {
+            "matcher": "*",
+            "hooks": [{"type": "command", "command": "/usr/bin/python3 -m cc_stats.hooks"}],
+        }
+        assert _hook_matches(hook, "anything") is True
+
 
 class TestHookExists(unittest.TestCase):
     """_hook_exists() — 检测 hook 是否已安装"""
@@ -78,12 +88,35 @@ class TestHookExists(unittest.TestCase):
     def test_empty_list(self):
         assert _hook_exists([], "anything") is False
 
+    def test_exists_nested_format(self):
+        hooks = [{"hooks": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}]}]
+        assert _hook_exists(hooks, "anything") is True
+
 
 class TestInstallHooks(unittest.TestCase):
-    """install_hooks() — 注册 Stop、PreToolUse、Notification 三个 event"""
+    """install_hooks() — 注册完整活动链路所需的 hook event"""
+
+    INSTALLED_EVENTS = (
+        "SessionStart",
+        "SessionEnd",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "SubagentStart",
+        "SubagentStop",
+        "Notification",
+        "Elicitation",
+        "WorktreeCreate",
+        "PreCompact",
+        "PostCompact",
+        "PermissionRequest",
+        "Stop",
+        "StopFailure",
+    )
 
     @patch("cc_stats.hooks.get_hook_command", return_value="/usr/local/bin/cc-stats-hooks")
-    def test_installs_all_three_events(self, mock_cmd, tmp_path=None):
+    def test_installs_all_events(self, mock_cmd, tmp_path=None):
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             settings_path = Path(tmpdir) / ".claude" / "settings.json"
@@ -95,15 +128,13 @@ class TestInstallHooks(unittest.TestCase):
                 settings = json.load(f)
 
             hooks = settings["hooks"]
-            assert "Stop" in hooks
-            assert "PreToolUse" in hooks
-            assert "Notification" in hooks
-
-            for event_type in ("Stop", "PreToolUse", "Notification"):
+            for event_type in self.INSTALLED_EVENTS:
+                assert event_type in hooks
                 entries = hooks[event_type]
                 assert len(entries) == 1
                 assert entries[0]["command"] == "/usr/local/bin/cc-stats-hooks"
                 assert entries[0]["type"] == "command"
+            assert hooks["PermissionRequest"][0]["timeout"] == 86400
 
     @patch("cc_stats.hooks.get_hook_command", return_value="/usr/local/bin/cc-stats-hooks")
     def test_does_not_duplicate_on_reinstall(self, mock_cmd):
@@ -117,7 +148,7 @@ class TestInstallHooks(unittest.TestCase):
             with open(settings_path, encoding="utf-8") as f:
                 settings = json.load(f)
 
-            for event_type in ("Stop", "PreToolUse", "Notification"):
+            for event_type in self.INSTALLED_EVENTS:
                 assert len(settings["hooks"][event_type]) == 1
 
     @patch("cc_stats.hooks.get_hook_command", return_value="/usr/local/bin/cc-stats-hooks")
@@ -147,19 +178,32 @@ class TestInstallHooks(unittest.TestCase):
 
 
 class TestUninstallHooks(unittest.TestCase):
-    """uninstall_hooks() — 清理 Stop、PreToolUse、Notification 三个 event"""
+    """uninstall_hooks() — 清理 cc-stats 安装的全部 hook event"""
 
     @patch("cc_stats.hooks.get_hook_command", return_value="/usr/local/bin/cc-stats-hooks")
-    def test_removes_all_three_events(self, mock_cmd):
+    def test_removes_all_events(self, mock_cmd):
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             settings_path = Path(tmpdir) / ".claude" / "settings.json"
             settings_path.parent.mkdir(parents=True, exist_ok=True)
             settings = {
                 "hooks": {
+                    "SessionStart": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "SessionEnd": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "UserPromptSubmit": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
                     "Stop": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
                     "PreToolUse": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "PostToolUse": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "PostToolUseFailure": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "SubagentStart": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "SubagentStop": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "PermissionRequest": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks", "timeout": 86400}],
                     "Notification": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "Elicitation": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "WorktreeCreate": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "PreCompact": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "PostCompact": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
+                    "StopFailure": [{"type": "command", "command": "/usr/local/bin/cc-stats-hooks"}],
                 }
             }
             with open(settings_path, "w", encoding="utf-8") as f:
@@ -231,6 +275,159 @@ class TestUninstallHooks(unittest.TestCase):
             with patch("cc_stats.hooks.Path.home", return_value=Path(tmpdir)):
                 result = uninstall_hooks(scope="user")
             assert result is True
+
+
+class TestPermissionRequestHook(unittest.TestCase):
+    @patch("cc_stats.hooks._publish_bridge_event")
+    @patch("cc_stats.hooks._wait_bridge_approval_decision", return_value=(True, ""))
+    def test_permission_request_allow_output(self, _wait_mock, _publish_mock):
+        event = {
+            "event": "PermissionRequest",
+            "session_id": "session_1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git push origin main"},
+            "tool_use_id": "tool_1",
+        }
+        out = process_hook_event(event)
+        assert out is not None
+        assert out["hookSpecificOutput"]["hookEventName"] == "PermissionRequest"
+        assert out["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+
+    @patch("cc_stats.hooks._publish_bridge_event")
+    @patch("cc_stats.hooks._wait_bridge_approval_decision", return_value=(False, "Blocked by mobile"))
+    def test_permission_request_deny_output(self, _wait_mock, _publish_mock):
+        event = {
+            "hook_event_name": "PermissionRequest",
+            "session_id": "session_2",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/tmp/a.txt"},
+            "tool_use_id": "tool_2",
+        }
+        out = process_hook_event(event)
+        assert out is not None
+        decision = out["hookSpecificOutput"]["decision"]
+        assert decision["behavior"] == "deny"
+        assert "Blocked by mobile" in decision["message"]
+
+    @patch("cc_stats.hooks._publish_bridge_event")
+    @patch("cc_stats.hooks._wait_bridge_approval_decision", return_value=(True, ""))
+    def test_permission_request_writes_activity_file_with_approval_id(self, _wait_mock, _publish_mock):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("cc_stats.hooks.Path.home", return_value=Path(tmpdir)):
+                event = {
+                    "event": "PermissionRequest",
+                    "session_id": "session_3",
+                    "tool_name": "Bash",
+                    "tool_use_id": "tool_abc",
+                    "tool_input": {"command": "git push origin main"},
+                }
+                out = process_hook_event(event)
+                assert out is not None
+                state_file = Path(tmpdir) / ".cc-stats" / "activity-state.json"
+                assert state_file.exists()
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                assert state["event"] == "PermissionRequest"
+                assert state["approval_id"] == "tool_abc"
+
+
+class TestPreToolUseHook(unittest.TestCase):
+    @patch("cc_stats.hooks._publish_bridge_event")
+    @patch("cc_stats.notifier.notify_permission_request")
+    def test_pre_tool_use_default_no_permission_notification(self, notify_mock, _publish_mock):
+        event = {
+            "event": "PreToolUse",
+            "session_id": "session_pre_1",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/tmp/a.txt"},
+        }
+        out = process_hook_event(event)
+        assert out is None
+        notify_mock.assert_not_called()
+
+    @patch("cc_stats.hooks._publish_bridge_event")
+    @patch("cc_stats.notifier.notify_permission_request")
+    def test_pre_tool_use_legacy_opt_in_notification(self, notify_mock, _publish_mock):
+        event = {
+            "event": "PreToolUse",
+            "session_id": "session_pre_2",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/tmp/a.txt"},
+        }
+        with patch.dict(os.environ, {"CC_STATS_NOTIFY_PRE_TOOL_USE": "1"}):
+            out = process_hook_event(event)
+        assert out is None
+        notify_mock.assert_called_once()
+
+
+class TestActivityStateWriting(unittest.TestCase):
+    @patch("cc_stats.hooks._publish_bridge_event")
+    def test_notification_idle_prompt_writes_idle_state(self, _publish_mock):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("cc_stats.hooks.Path.home", return_value=Path(tmpdir)):
+                event = {
+                    "event": "Notification",
+                    "notification_type": "idle_prompt",
+                    "message": "Waiting for input",
+                }
+                out = process_hook_event(event)
+                assert out is None
+                state_file = Path(tmpdir) / ".cc-stats" / "activity-state.json"
+                assert state_file.exists()
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                assert state["event"] == "Notification"
+                assert state["state"] == "idle"
+                assert state["notification_type"] == "idle_prompt"
+
+    @patch("cc_stats.hooks._publish_bridge_event")
+    @patch("cc_stats.hooks._wait_bridge_approval_decision", return_value=None)
+    def test_idle_prompt_does_not_clear_pending_permission_request(self, _wait_mock, _publish_mock):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("cc_stats.hooks.Path.home", return_value=Path(tmpdir)):
+                process_hook_event(
+                    {
+                        "event": "PermissionRequest",
+                        "tool_name": "Bash",
+                        "tool_use_id": "tool_pending_1",
+                        "tool_input": {"command": "git push"},
+                    }
+                )
+                process_hook_event(
+                    {
+                        "event": "Notification",
+                        "notification_type": "idle_prompt",
+                        "message": "Waiting for input",
+                    }
+                )
+
+                state_file = Path(tmpdir) / ".cc-stats" / "activity-state.json"
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                assert state["event"] == "PermissionRequest"
+                assert state["approval_id"] == "tool_pending_1"
+
+
+class TestBridgeBaseURL(unittest.TestCase):
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("cc_stats.hooks.request.urlopen")
+    def test_uses_local_bridge_when_healthcheck_succeeds(self, urlopen_mock):
+        class _Resp:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        urlopen_mock.return_value = _Resp()
+        assert _bridge_base_url() == "http://127.0.0.1:8765"
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("cc_stats.hooks.request.urlopen", side_effect=OSError("offline"))
+    def test_returns_empty_when_local_bridge_unavailable(self, _urlopen_mock):
+        assert _bridge_base_url() == ""
 
 
 if __name__ == "__main__":

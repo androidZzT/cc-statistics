@@ -3,6 +3,84 @@ import Combine
 import Carbon.HIToolbox
 import ServiceManagement
 
+extension Notification.Name {
+    static let islandDebugModeChanged = Notification.Name("ccstats.islandDebugModeChanged")
+}
+
+// MARK: - BridgeDaemonController
+
+final class BridgeDaemonController {
+    private var process: Process?
+    private let host = "127.0.0.1"
+    private let port = "8765"
+
+    func startIfNeeded() {
+        probeHealth { [weak self] healthy in
+            guard let self, !healthy else { return }
+            self.launch()
+        }
+    }
+
+    func stop() {
+        process?.terminate()
+        process = nil
+    }
+
+    private func launch() {
+        guard process == nil else { return }
+        guard let executable = bridgeExecutablePath() else {
+            return
+        }
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: executable)
+        proc.arguments = ["--host", host, "--port", port]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        proc.terminationHandler = { [weak self] _ in
+            self?.process = nil
+        }
+
+        do {
+            try proc.run()
+            process = proc
+        } catch {
+            process = nil
+        }
+    }
+
+    private func probeHealth(completion: @escaping (Bool) -> Void) {
+        guard let url = URL(string: "http://\(host):\(port)/v1/health") else {
+            completion(false)
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 0.25
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+            let healthy = (response as? HTTPURLResponse)?.statusCode == 200
+            completion(healthy)
+        }.resume()
+    }
+
+    private func bridgeExecutablePath() -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let candidates = [
+            ProcessInfo.processInfo.environment["CC_STATS_BRIDGE_BIN"] ?? "",
+            (home as NSString).appendingPathComponent(".local/bin/cc-stats-bridge"),
+            "/opt/homebrew/bin/cc-stats-bridge",
+            "/usr/local/bin/cc-stats-bridge",
+        ]
+
+        for candidate in candidates where !candidate.isEmpty {
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+}
+
 // MARK: - PanelManager
 
 final class PanelManager: ObservableObject {
@@ -189,6 +267,7 @@ class StatusBarController {
     private var renderedOverLimit: Bool = false
 
     private let logoImage: NSImage
+    private let staticClawdIcon: NSImage
     private var currentIcon: NSImage?
 
     // MARK: - Animation State
@@ -196,10 +275,12 @@ class StatusBarController {
     private var animationTimer: Timer?
     private var animationFrameIndex: Int = 0
     private(set) var activityState: SessionActivityState = .idle
+    private let islandDebugModeKey = "cc_stats_island_debug_force"
 
     /// Clawd mascot image names for each animation frame per state.
     static let animationFrames: [SessionActivityState: [String]] = [
         .active: ["clawd-typing-f0", "clawd-typing-f1", "clawd-typing-f2"],
+        .waitingApproval: ["clawd-thinking-f0", "clawd-thinking-f1"],
         .idle: ["clawd-idle-f0", "clawd-idle-f1"],
         .sleeping: ["clawd-sleeping-f0", "clawd-sleeping-f1", "clawd-sleeping-f2"],
     ]
@@ -207,6 +288,7 @@ class StatusBarController {
     /// Frame interval per state (seconds).
     static let frameIntervals: [SessionActivityState: TimeInterval] = [
         .active: 0.15,
+        .waitingApproval: 0.45,
         .idle: 0.6,
         .sleeping: 0.8,
     ]
@@ -215,11 +297,10 @@ class StatusBarController {
         self.onToggle = onToggle
         self.onToggleChat = onToggleChat
         self.logoImage = drawClaudeLogo(size: NSSize(width: 18, height: 18))
+        self.staticClawdIcon = Self.loadStaticClawdStatusBarIcon() ?? logoImage
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
-        // Load initial Clawd icon (colorful, not template)
-        let initialIcon = Self.loadClawdImage(frameName: "clawd-idle-f0") ?? logoImage
-        initialIcon.isTemplate = false
+        let initialIcon = staticClawdIcon
         self.currentIcon = initialIcon
         print("[CCStats] init: initialIcon loaded=\(currentIcon != nil), isTemplate=\(currentIcon?.isTemplate ?? false)")
 
@@ -262,6 +343,14 @@ class StatusBarController {
         let displayItem = NSMenuItem(title: L10n.statusBarDisplay, action: nil, keyEquivalent: "")
         displayItem.submenu = displayMenu
         menu.addItem(displayItem)
+        let debugItem = NSMenuItem(
+            title: "Island Debug Mode",
+            action: #selector(toggleIslandDebugMode(_:)),
+            keyEquivalent: ""
+        )
+        debugItem.target = self
+        debugItem.state = isIslandDebugModeEnabled ? .on : .off
+        menu.addItem(debugItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -309,6 +398,19 @@ class StatusBarController {
 
     @objc func showDashboard() { onToggle() }
     @objc func showChat() { onToggleChat() }
+    @objc func toggleIslandDebugMode(_ sender: NSMenuItem) {
+        let next = !isIslandDebugModeEnabled
+        UserDefaults.standard.set(next, forKey: islandDebugModeKey)
+        NotificationCenter.default.post(
+            name: .islandDebugModeChanged,
+            object: nil,
+            userInfo: ["enabled": next]
+        )
+    }
+
+    private var isIslandDebugModeEnabled: Bool {
+        UserDefaults.standard.bool(forKey: islandDebugModeKey)
+    }
 
     var isOverLimit: Bool = false
 
@@ -366,8 +468,8 @@ class StatusBarController {
 
     private func renderStatusBarImage(icon: NSImage, line1: String, line2: String, textColor: NSColor) -> NSImage {
         let barHeight: CGFloat = 22
-        let leftMargin: CGFloat = 2
-        let iconTextGap: CGFloat = 4
+        let leftMargin: CGFloat = 1
+        let iconTextGap: CGFloat = 3
         let rightMargin: CGFloat = 4
         let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
 
@@ -461,14 +563,11 @@ class StatusBarController {
     /// Fixed icon canvas size — all frames are scaled to fit within this box
     /// and drawn centered to prevent status bar jitter during animation.
     static let iconCanvasSize = NSSize(width: 30, height: 18)
+    static let staticStatusBarIconSize = NSSize(width: 20, height: 12)
 
-    /// Load a Clawd mascot image by frame name.
-    /// Search order: bundle Resources/clawd/ → dev source directory → nil.
-    /// All images are normalized to a fixed canvas size to prevent layout jitter.
-    static func loadClawdImage(frameName: String) -> NSImage? {
+    private static func loadClawdRawImage(frameName: String) -> NSImage? {
         var rawImage: NSImage?
 
-        // Try loading from bundle Resources/clawd/
         let resourcesDir = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Resources/clawd")
             .path
@@ -481,7 +580,6 @@ class StatusBarController {
             rawImage = NSImage(contentsOfFile: imagePath1x)
         }
 
-        // Fallback: load from source directory (development mode)
         if rawImage == nil {
             let swiftDir = URL(fileURLWithPath: #file).deletingLastPathComponent().path
             let devPath2x = "\(swiftDir)/Resources/clawd/\(frameName)@2x.png"
@@ -493,7 +591,14 @@ class StatusBarController {
             }
         }
 
-        guard let raw = rawImage else { return nil }
+        return rawImage
+    }
+
+    /// Load a Clawd mascot image by frame name.
+    /// Search order: bundle Resources/clawd/ → dev source directory → nil.
+    /// All images are normalized to a fixed canvas size to prevent layout jitter.
+    static func loadClawdImage(frameName: String) -> NSImage? {
+        guard let raw = loadClawdRawImage(frameName: frameName) else { return nil }
 
         // Scale to fit within canvas, preserving aspect ratio
         let rawRatio = raw.size.width / raw.size.height
@@ -522,27 +627,40 @@ class StatusBarController {
         return canvas
     }
 
+    static func loadStaticClawdStatusBarIcon() -> NSImage? {
+        let candidateNames = [
+            "clawd-status-static@2x.png",
+            "clawd-status-static.png",
+        ]
+
+        let searchDirs = [
+            Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/clawd").path,
+            "\(URL(fileURLWithPath: #file).deletingLastPathComponent().path)/Resources/clawd",
+        ]
+
+        for directory in searchDirs {
+            for name in candidateNames {
+                let path = "\(directory)/\(name)"
+                if FileManager.default.fileExists(atPath: path),
+                   let image = NSImage(contentsOfFile: path) {
+                    image.size = staticStatusBarIconSize
+                    image.isTemplate = false
+                    return image
+                }
+            }
+        }
+
+        return loadClawdImage(frameName: "clawd-idle-f0")
+    }
+
     // MARK: - Activity State Animation
 
     func updateActivityState(_ state: SessionActivityState) {
         print("[CCStats] updateActivityState called: \(state)")
         guard state != activityState else { return }
         activityState = state
-        animationFrameIndex = 0
         stopAnimation()
-
         applyActivityIcon()
-
-        let interval = Self.frameIntervals[state] ?? 0
-        let frames = Self.animationFrames[state] ?? []
-        guard interval > 0, frames.count > 1 else { return }
-
-        animationTimer = Timer.scheduledTimer(
-            withTimeInterval: interval,
-            repeats: true
-        ) { [weak self] _ in
-            self?.advanceAnimationFrame()
-        }
     }
 
     func stopAnimation() {
@@ -551,46 +669,13 @@ class StatusBarController {
     }
 
     private func advanceAnimationFrame() {
-        guard let frames = Self.animationFrames[activityState], frames.count > 1 else {
-            stopAnimation()
-            return
-        }
-        animationFrameIndex = (animationFrameIndex + 1) % frames.count
         applyActivityIcon()
     }
 
     private func applyActivityIcon() {
         guard let button = statusItem.button else { return }
-        let frames = Self.animationFrames[activityState] ?? ["clawd-idle-f0"]
-        let frameName = frames[animationFrameIndex % frames.count]
-
-        var image: NSImage?
-        var loadSource = "none"
-
-        // Use shared loading logic (bundle → dev directory)
-        if let loaded = Self.loadClawdImage(frameName: frameName) {
-            image = loaded
-            loadSource = "clawd"
-        }
-
-        // Final fallback: SF Symbol
-        if image == nil {
-            let fallbackSymbols: [SessionActivityState: String] = [
-                .active: "sparkle",
-                .idle: "sparkles",
-                .sleeping: "moon.zzz.fill",
-            ]
-            let symbolName = fallbackSymbols[activityState] ?? "sparkles"
-            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-            image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
-                .withSymbolConfiguration(config)
-            loadSource = "sf-symbol(\(symbolName))"
-        }
-
-        print("[CCStats] applyActivityIcon: state=\(activityState) frame=\(frameName) source=\(loadSource) imageNil=\(image == nil)")
-
-        // Clawd is colorful pixel art — never use template mode
-        image?.isTemplate = false
+        let image = staticClawdIcon
+        print("[CCStats] applyActivityIcon: state=\(activityState) source=static-clawd imageNil=\(false)")
 
         button.contentTintColor = nil
 
@@ -624,26 +709,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var hotkeyManager: HotkeyManager?
     var eventMonitor: Any?
     private let notificationServer = NotificationServer()
+    private let bridgeDaemonController = BridgeDaemonController()
     private let activityMonitor = SessionActivityMonitor()
+    private let islandOverlayController = IslandOverlayController()
+    private var lastActivitySnapshot: SessionActivitySnapshot?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if handleSnapshotRenderRequestIfNeeded() {
+            return
+        }
+
         // Initialize notification system (requests authorization + sets delegate)
         NotificationManager.shared.requestAuthorization()
 
         // Start local HTTP server so Python hooks can send native notifications
         notificationServer.start()
+        bridgeDaemonController.startIfNeeded()
 
         setupStatusBar()
         setupGlobalHotkey()
         setupActivityMonitor()
+        observeIslandDebugMode()
         observeConversationPanel()
         observeTokenUsage()
         observeTheme()
     }
 
+    private func handleSnapshotRenderRequestIfNeeded() -> Bool {
+        let env = ProcessInfo.processInfo.environment
+        guard let outputPath = env["CC_STATS_RENDER_ISLAND_SNAPSHOT_PATH"], !outputPath.isEmpty else {
+            return false
+        }
+
+        let mode = IslandSnapshotRenderer.PreviewMode(
+            rawValue: env["CC_STATS_RENDER_ISLAND_SNAPSHOT_MODE"] ?? ""
+        ) ?? .expandedApproval
+
+        do {
+            try IslandSnapshotRenderer.renderPreview(to: outputPath, mode: mode)
+            print("[CCStats] Rendered island snapshot to \(outputPath)")
+        } catch {
+            fputs("[CCStats] Failed to render island snapshot: \(error)\n", stderr)
+        }
+
+        DispatchQueue.main.async {
+            NSApp.terminate(nil)
+        }
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         activityMonitor.stop()
+        bridgeDaemonController.stop()
         statusBarController?.stopAnimation()
     }
 
@@ -669,13 +787,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupActivityMonitor() {
         print("[CCStats] setupActivityMonitor called")
+        islandOverlayController.setDebugMode(currentIslandDebugMode())
+        islandOverlayController.onOpenDashboard = { [weak self] in
+            self?.showMainWindow()
+        }
+        islandOverlayController.onOpenChat = { [weak self] in
+            self?.openConversationPanel()
+        }
+        islandOverlayController.onOpenTerminal = {
+            NotificationManager.shared.focusTerminal()
+        }
         activityMonitor.onStateChange = { [weak self] state in
             print("[CCStats] onStateChange: \(state)")
             DispatchQueue.main.async {
                 self?.statusBarController?.updateActivityState(state)
             }
         }
+        activityMonitor.onSnapshotChange = { [weak self] snapshot in
+            DispatchQueue.main.async {
+                self?.lastActivitySnapshot = snapshot
+                self?.islandOverlayController.update(with: snapshot)
+            }
+        }
         activityMonitor.start()
+    }
+
+    private func observeIslandDebugMode() {
+        NotificationCenter.default.publisher(for: .islandDebugModeChanged)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                guard let self else { return }
+                let enabled = (notification.userInfo?["enabled"] as? Bool) ?? self.currentIslandDebugMode()
+                self.islandOverlayController.setDebugMode(enabled)
+                if let snapshot = self.lastActivitySnapshot {
+                    self.islandOverlayController.update(with: snapshot)
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func currentIslandDebugMode() -> Bool {
+        let fromDefaults = UserDefaults.standard.bool(forKey: "cc_stats_island_debug_force")
+        let fromEnv = ProcessInfo.processInfo.environment["CC_STATS_ISLAND_DEBUG_FORCE"] == "1"
+        let fromFlagFile = FileManager.default.fileExists(atPath: (NSHomeDirectory() as NSString).appendingPathComponent(".cc-stats/island-debug-force"))
+        return fromDefaults || fromEnv || fromFlagFile
     }
 
     // MARK: - Global Hotkey (Cmd+Shift+C)
@@ -696,6 +851,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             showMainWindow()
         }
+    }
+
+    private func openConversationPanel() {
+        showMainWindow()
+        guard !viewModel.showConversationPanel else { return }
+        viewModel.toggleConversationPanel()
     }
 
     private func hideMainWindowAnimated() {

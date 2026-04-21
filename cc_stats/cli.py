@@ -594,7 +594,7 @@ def main(argv: list[str] | None = None) -> None:
         if install_hooks("user"):
             print("✅ Claude Code hooks 已安装到 ~/.claude/settings.json")
             print(f"   Hook 命令: {get_hook_command()}")
-            print("   支持事件: Stop (会话完成), PreToolUse (权限请求)")
+            print("   支持事件: Stop (会话完成), PreToolUse (工具进度), PermissionRequest (灵动岛确权)")
             print("\n   配置通知偏好: 编辑 ~/.cc-stats/notify_config.json")
         else:
             print("❌ 安装失败", file=sys.stderr)

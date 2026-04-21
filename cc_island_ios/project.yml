@@ -1,0 +1,79 @@
+name: ClaudeCodeIsland
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "16.1"
+settings:
+  base:
+    SWIFT_VERSION: 5.10
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 1.0.0
+    DEVELOPMENT_TEAM: ""
+targets:
+  ClaudeCodeIslandApp:
+    type: application
+    platform: iOS
+    info:
+      path: Config/ClaudeCodeIsland-Info.plist
+      properties:
+        CFBundleDisplayName: ClaudeCodeIsland
+        LSRequiresIPhoneOS: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    entitlements:
+      path: Config/ClaudeCodeIsland.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ccstats.island.app
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+    sources:
+      - path: App
+      - path: Networking
+      - path: Shared
+    dependencies:
+      - target: ClaudeCodeIslandWidget
+        embed: true
+      - sdk: ActivityKit.framework
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+
+  ClaudeCodeIslandWidget:
+    type: app-extension
+    platform: iOS
+    info:
+      path: Config/ClaudeCodeIslandWidget-Info.plist
+      properties:
+        CFBundleDisplayName: ClaudeCodeIslandWidget
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Config/ClaudeCodeIslandWidget.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ccstats.island.app.widget
+        CODE_SIGN_STYLE: Automatic
+        APPLICATION_EXTENSION_API_ONLY: YES
+        TARGETED_DEVICE_FAMILY: "1"
+    sources:
+      - path: Widgets
+      - path: Intents
+      - path: Networking
+      - path: Shared
+    dependencies:
+      - sdk: ActivityKit.framework
+      - sdk: WidgetKit.framework
+      - sdk: AppIntents.framework
+      - sdk: SwiftUI.framework
+
+schemes:
+  ClaudeCodeIsland:
+    build:
+      targets:
+        ClaudeCodeIslandApp: all
+        ClaudeCodeIslandWidget: all
+    run:
+      config: Debug
