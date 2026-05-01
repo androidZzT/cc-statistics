@@ -246,6 +246,11 @@ class SessionStats:
     # key: "YYYY-MM-DDTHH" UTC 小时；value: 该小时 Codex 用户交互轮数
     codex_messages_by_hour: dict[str, int] = field(default_factory=dict)
 
+    # 13. Codex 订阅额度 snapshot —— OpenAI 后端原值（used_percent / window_minutes / resets_at）
+    #     由 parser 从 event_msg/token_count.payload.rate_limits 读取，merge 时取最新一次
+    codex_rate_limits: dict | None = None
+    codex_rate_limits_ts: str = ""
+
 
 @dataclass
 class CacheStats:
@@ -474,6 +479,13 @@ def analyze_session(session: Session) -> SessionStats:
         sources={session.source} if getattr(session, "source", "") else set(),
     )
     is_codex = getattr(session, "source", "") == "codex"
+
+    # 携带 Codex 订阅额度快照（OpenAI 后端原值）
+    if is_codex:
+        rl = getattr(session, "codex_rate_limits", None)
+        if isinstance(rl, dict) and rl:
+            stats.codex_rate_limits = rl
+            stats.codex_rate_limits_ts = getattr(session, "codex_rate_limits_ts", "") or ""
 
     # 构建 tool_use_id → is_error 映射（用于 Skill 成功率统计）
     tool_result_errors: dict[str, bool] = {}
@@ -875,6 +887,11 @@ def merge_stats(all_stats: list[SessionStats]) -> SessionStats:
             merged.codex_messages_by_hour[hour_key] = (
                 merged.codex_messages_by_hour.get(hour_key, 0) + count
             )
+
+        # Codex 订阅额度 snapshot：取时间戳最新的那个
+        if s.codex_rate_limits and s.codex_rate_limits_ts > merged.codex_rate_limits_ts:
+            merged.codex_rate_limits = s.codex_rate_limits
+            merged.codex_rate_limits_ts = s.codex_rate_limits_ts
 
         # 编码节奏合并
         for period, data in s.coding_rhythm.items():

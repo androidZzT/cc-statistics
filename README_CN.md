@@ -246,7 +246,7 @@ cc-stats-app                  # 启动 macOS 状态栏应用
 
 > **多数据源能力差异：**
 > - **Skill / MCP 分析** 仅适用于 Claude Code（Codex/Gemini 没有 `Skill` 工具抽象）。
-> - **Usage Quota 预测** 现为统一面板：在同一区块内堆叠 Claude 5 分钟（output tokens，按 Claude Pro 档位）和 Codex 5h / 7d 滚动窗口；Codex 行展示交互轮次、总 token 和按真实模型单价（`match_model_pricing`）算出的费用，没有 Codex 会话时自动隐藏。
+> - **Usage Quota 预测** 在同一区块里堆叠所有可用窗口：Claude 5 分钟（output tokens，按 Claude Pro 档位）、Codex 5h、Codex 7d。Codex 部分**优先使用 Codex CLI 已缓存到 JSONL 里的 OpenAI 后端真值** `used_percent`（来自 `event_msg / token_count.rate_limits`，无需自己调 API、无需 auth 文件）；当会话里没带这个 snapshot 时才回退到按 token 数 + 每模型单价的本地估算。
 > - **Git 成本归属** (`--git`) 现已按每条会话实际使用的模型分别计价（Claude / Codex / Gemini）；缺少模型记录的会话回退到 Claude Sonnet 单价。
 
 ---

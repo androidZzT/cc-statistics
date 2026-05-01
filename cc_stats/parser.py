@@ -39,6 +39,12 @@ class Session:
     file_path: Path
     source: str = "claude"  # "claude" | "codex" | "gemini"
     messages: list[Message] = field(default_factory=list)
+    # Codex 专用：从 event_msg/token_count 里直接拿到的 OpenAI 后端原值快照
+    # 形如 {"primary": {"used_percent": 12.5, "window_minutes": 300, "resets_at": ...},
+    #       "secondary": {...}, "plan_type": "...", ...}
+    codex_rate_limits: dict[str, Any] | None = None
+    # 该 snapshot 对应的事件时间戳（ISO 字符串），用于跨 session 合并时挑最新
+    codex_rate_limits_ts: str = ""
 
 
 def parse_jsonl(path: Path) -> Session:
@@ -405,6 +411,9 @@ def parse_codex_jsonl(path: Path) -> Session:
     seen_assistant: set[tuple[str, str]] = set()
     last_total_tokens: int | None = None
     latest_model = ""
+    # 跟踪整个文件里最新一次 rate_limits snapshot（OpenAI 后端原值，不是本地估算）
+    latest_rate_limits: dict[str, Any] | None = None
+    latest_rate_limits_ts = ""
 
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -478,6 +487,12 @@ def parse_codex_jsonl(path: Path) -> Session:
                     continue
 
                 if ev_type == "token_count":
+                    # 优先记录最新 rate_limits snapshot（即便 token_usage 重复也要更新）
+                    rl = payload.get("rate_limits")
+                    if isinstance(rl, dict) and rl:
+                        latest_rate_limits = rl
+                        latest_rate_limits_ts = timestamp
+
                     info = payload.get("info", {})
                     if isinstance(info, dict):
                         totals = info.get("total_token_usage", {})
@@ -594,6 +609,8 @@ def parse_codex_jsonl(path: Path) -> Session:
         file_path=path,
         source="codex",
         messages=messages,
+        codex_rate_limits=latest_rate_limits,
+        codex_rate_limits_ts=latest_rate_limits_ts,
     )
 
 

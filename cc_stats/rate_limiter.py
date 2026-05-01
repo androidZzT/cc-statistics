@@ -35,10 +35,14 @@ class RateLimitStatus:
     minutes_until_limit: float | None  # None = 无限额或不会触发
     # —— 多窗口扩展（带默认值，向后兼容旧构造方式） ——
     label: str = "Claude 5-min"             # "Claude 5-min" / "Codex 5h" / "Codex 7d"
-    metric: str = "output_tokens"           # "output_tokens" | "total_tokens"
+    metric: str = "output_tokens"           # "output_tokens" | "total_tokens" | "used_percent"
     window_minutes: int = DEFAULT_WINDOW_MINUTES
     messages: int = 0                       # 窗口内交互轮数（Codex 用）
     cost_usd: float = 0.0                   # 窗口内估算费用（按真实模型单价）
+    # —— 直读自 Codex JSONL 里 OpenAI 后端 snapshot 的字段（snapshot 模式专用） ——
+    source_kind: str = "estimated"          # "estimated" | "api_snapshot"
+    resets_at_unix: int | None = None       # 窗口重置 Unix 时间戳（snapshot 模式提供）
+    snapshot_age_minutes: float | None = None  # 此 snapshot 距今多少分钟（陈旧提示用）
 
 
 def _classify(pct: float) -> str:
@@ -117,6 +121,112 @@ def analyze_rate_limit(
         messages=0,
         cost_usd=0.0,
     )
+
+
+def _parse_iso(ts: str) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def analyze_codex_quota_snapshot(
+    stats: SessionStats,
+    now: datetime | None = None,
+) -> list[RateLimitStatus]:
+    """从 Codex JSONL 缓存的 OpenAI 后端 snapshot 直接构建 RateLimitStatus。
+
+    Codex CLI 在每次 token_count 事件里都会写下 `rate_limits.primary`（5h 滚动窗口）
+    和 `rate_limits.secondary`（周窗口）的 `used_percent`，本函数把 snapshot 翻译成
+    与本工具其余统计一致的 RateLimitStatus 列表。
+
+    无 snapshot 时返回空列表，调用方可以回退到本地估算（analyze_codex_window）。
+    """
+    rl = getattr(stats, "codex_rate_limits", None)
+    if not isinstance(rl, dict) or not rl:
+        return []
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+
+    snapshot_dt = _parse_iso(getattr(stats, "codex_rate_limits_ts", "") or "")
+    age_minutes: float | None = None
+    if snapshot_dt is not None:
+        age_minutes = (now - snapshot_dt.astimezone(timezone.utc)).total_seconds() / 60
+
+    out: list[RateLimitStatus] = []
+
+    for key, label in (("primary", "Codex 5h"), ("secondary", "Codex 7d")):
+        win = rl.get(key)
+        if not isinstance(win, dict):
+            continue
+
+        pct_raw = win.get("used_percent")
+        if pct_raw is None:
+            continue
+        try:
+            used_percent = float(pct_raw)
+        except (TypeError, ValueError):
+            continue
+        if used_percent < 0:
+            continue
+
+        # 与本地 status 分级保持一致
+        pct = max(min(used_percent / 100.0, 1.0), 0.0)
+        # API 报告超 100% 时直接 critical
+        if used_percent >= 100 or pct >= 0.85:
+            status = "critical"
+        elif pct >= 0.60:
+            status = "warning"
+        else:
+            status = "safe"
+
+        wm_raw = win.get("window_minutes")
+        try:
+            window_minutes = int(wm_raw) if wm_raw is not None else (
+                300 if key == "primary" else 60 * 24 * 7
+            )
+        except (TypeError, ValueError):
+            window_minutes = 300 if key == "primary" else 60 * 24 * 7
+
+        # resets_at_unix → minutes_until_limit（剩余分钟）
+        resets_at = win.get("resets_at")
+        try:
+            resets_at_unix = int(resets_at) if resets_at is not None else None
+        except (TypeError, ValueError):
+            resets_at_unix = None
+
+        if resets_at_unix is not None:
+            minutes_until_reset: float | None = max(
+                (resets_at_unix - now.timestamp()) / 60, 0.0
+            )
+        else:
+            minutes_until_reset = None
+
+        out.append(RateLimitStatus(
+            status=status,
+            window_limit=100,            # 用 100 作为 used_percent 的分母
+            window_used=int(round(used_percent)),
+            pct=pct,
+            rate_per_min=0.0,            # snapshot 不携带 burn rate
+            minutes_until_limit=minutes_until_reset,
+            label=label,
+            metric="used_percent",
+            window_minutes=window_minutes,
+            messages=0,
+            cost_usd=0.0,
+            source_kind="api_snapshot",
+            resets_at_unix=resets_at_unix,
+            snapshot_age_minutes=age_minutes,
+        ))
+
+    return out
 
 
 def _parse_codex_hour_key(key: str) -> datetime | None:

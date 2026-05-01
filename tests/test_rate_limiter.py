@@ -13,6 +13,7 @@ from cc_stats.parser import Message, Session, ToolCall
 from cc_stats.rate_limiter import (
     DEFAULT_WINDOW_LIMIT,
     RateLimitStatus,
+    analyze_codex_quota_snapshot,
     analyze_codex_window,
     analyze_rate_limit,
 )
@@ -444,6 +445,146 @@ class TestCodexAnalyzerIntegration:
         assert result.status == "safe"
         assert result.messages == 1
         assert result.window_used == 300  # input 150 + output 100 + cache_read 50
+
+
+class TestCodexQuotaSnapshot:
+    """直接消费 Codex JSONL 里 OpenAI 后端 snapshot 的真值 used_percent"""
+
+    def _stats_with_snapshot(self, snapshot: dict, ts: str = "2026-04-16T11:30:00Z") -> SessionStats:
+        s = SessionStats(session_id="t", project_path="/tmp/t", sources={"codex"})
+        s.codex_rate_limits = snapshot
+        s.codex_rate_limits_ts = ts
+        return s
+
+    def test_no_snapshot_returns_empty_list(self):
+        s = SessionStats(session_id="t", project_path="/tmp/t", sources={"codex"})
+        assert analyze_codex_quota_snapshot(s) == []
+
+    def test_primary_and_secondary_both_emitted(self):
+        snap = {
+            "primary":   {"used_percent": 12.5, "window_minutes": 300, "resets_at": 1714579200},
+            "secondary": {"used_percent": 70.0, "window_minutes": 10080, "resets_at": 1715184000},
+            "plan_type": "pro",
+        }
+        stats = self._stats_with_snapshot(snap)
+        results = analyze_codex_quota_snapshot(
+            stats, now=datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+        )
+        assert len(results) == 2
+        five_h, seven_d = results
+        assert five_h.label == "Codex 5h"
+        assert five_h.metric == "used_percent"
+        assert five_h.source_kind == "api_snapshot"
+        assert five_h.window_used == 12      # banker's round(12.5) → 12
+        assert five_h.pct == pytest.approx(0.125)
+        assert five_h.status == "safe"
+        assert five_h.window_minutes == 300
+        assert five_h.resets_at_unix == 1714579200
+
+        assert seven_d.label == "Codex 7d"
+        assert seven_d.window_used == 70
+        assert seven_d.pct == pytest.approx(0.70)
+        assert seven_d.status == "warning"
+        assert seven_d.window_minutes == 10080
+
+    def test_used_percent_classified_critical_at_85(self):
+        snap = {"primary": {"used_percent": 85.0, "window_minutes": 300, "resets_at": None}}
+        stats = self._stats_with_snapshot(snap)
+        results = analyze_codex_quota_snapshot(
+            stats, now=datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+        )
+        assert results[0].status == "critical"
+
+    def test_above_100_percent_clamped_to_critical(self):
+        snap = {"primary": {"used_percent": 110.0, "window_minutes": 300}}
+        stats = self._stats_with_snapshot(snap)
+        results = analyze_codex_quota_snapshot(
+            stats, now=datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+        )
+        assert results[0].status == "critical"
+        assert results[0].pct == 1.0
+
+    def test_resets_at_translates_to_minutes_until(self):
+        snap = {
+            "primary": {
+                "used_percent": 50.0,
+                "window_minutes": 300,
+                "resets_at": int(datetime(2026, 4, 16, 14, 0, tzinfo=timezone.utc).timestamp()),
+            }
+        }
+        stats = self._stats_with_snapshot(snap)
+        now = datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc)
+        results = analyze_codex_quota_snapshot(stats, now=now)
+        # 2 小时后重置 → 120 分钟
+        assert results[0].minutes_until_limit == pytest.approx(120.0)
+
+    def test_format_renders_used_percent_block(self):
+        snap = {
+            "primary":   {"used_percent": 42.0, "window_minutes": 300, "resets_at":
+                          int(datetime(2026, 4, 16, 13, 30, tzinfo=timezone.utc).timestamp())},
+            "secondary": {"used_percent": 88.0, "window_minutes": 10080, "resets_at": None},
+        }
+        stats = self._stats_with_snapshot(snap)
+        statuses = analyze_codex_quota_snapshot(
+            stats, now=datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+        )
+        out = format_rate_limit(statuses)
+        assert "Codex 5h" in out
+        assert "Codex 7d" in out
+        assert "42.0%" in out
+        assert "88.0%" in out
+        assert "OpenAI 后端原值" in out
+        assert "1h 30m" in out  # primary reset countdown
+
+    def test_parser_persists_rate_limits_into_stats(self, tmp_path):
+        """parser → analyzer 端到端：JSONL 里的 rate_limits 被原样带到 SessionStats"""
+        from cc_stats.parser import parse_codex_jsonl
+        import json
+
+        path = tmp_path / "rollout.jsonl"
+        records = [
+            {"timestamp": "2026-04-16T11:00:00Z", "type": "session_meta",
+             "payload": {"id": "s", "cwd": "/tmp/p"}},
+            {"timestamp": "2026-04-16T11:00:01Z", "type": "turn_context",
+             "payload": {"model": "gpt-5.3-codex"}},
+            {"timestamp": "2026-04-16T11:10:00Z", "type": "event_msg",
+             "payload": {"type": "user_message", "message": "hi"}},
+            # 第一次 token_count：写入旧 snapshot
+            {"timestamp": "2026-04-16T11:11:00Z", "type": "event_msg",
+             "payload": {"type": "token_count",
+                         "info": {"last_token_usage": {"input_tokens": 100, "output_tokens": 50}},
+                         "rate_limits": {
+                             "primary":   {"used_percent": 5.0, "window_minutes": 300},
+                             "secondary": {"used_percent": 20.0, "window_minutes": 10080},
+                         }}},
+            # 第二次 token_count：写入更新的 snapshot —— parser 应取这个
+            {"timestamp": "2026-04-16T11:20:00Z", "type": "event_msg",
+             "payload": {"type": "token_count",
+                         "info": {"last_token_usage": {"input_tokens": 120, "output_tokens": 60}},
+                         "rate_limits": {
+                             "primary":   {"used_percent": 12.5, "window_minutes": 300},
+                             "secondary": {"used_percent": 30.0, "window_minutes": 10080},
+                         }}},
+        ]
+        with open(path, "w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+
+        session = parse_codex_jsonl(path)
+        assert session.codex_rate_limits is not None
+        assert session.codex_rate_limits["primary"]["used_percent"] == 12.5
+        assert session.codex_rate_limits_ts == "2026-04-16T11:20:00Z"
+
+        stats = analyze_session(session)
+        assert stats.codex_rate_limits is not None
+        assert stats.codex_rate_limits["secondary"]["used_percent"] == 30.0
+
+        results = analyze_codex_quota_snapshot(
+            stats, now=datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
+        )
+        assert len(results) == 2
+        assert results[0].pct == pytest.approx(0.125)
+        assert results[1].pct == pytest.approx(0.30)
 
 
 class TestCLIRateLimit:

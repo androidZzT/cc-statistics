@@ -372,16 +372,28 @@ def format_stats(stats: SessionStats, session_count: int = 1) -> str:
         lines.append(rhythm_block)
 
     # ── ⑨ Usage Quota 预测 ──
-    # 同一管道收集多个滚动窗口：Claude 5-min（仅当存在 Claude 用量）+ Codex 5h / 7d（仅当存在 Codex 用量）
+    # 同一管道收集多个滚动窗口：
+    #   Claude 5-min  — 仅当存在 Claude 用量
+    #   Codex 5h / 7d — 优先用 OpenAI 后端 snapshot（rate_limits.primary/secondary 真值百分比），
+    #                   会话里没带 snapshot 时回退到本地按小时分桶估算
     from .pricing import is_claude_model
-    from .rate_limiter import analyze_codex_window, analyze_rate_limit
+    from .rate_limiter import (
+        analyze_codex_quota_snapshot,
+        analyze_codex_window,
+        analyze_rate_limit,
+    )
 
     statuses: list[RateLimitStatus] = []
     if any(is_claude_model(m) for m in getattr(stats, "token_by_model", {}).keys()):
         statuses.append(analyze_rate_limit(stats))
+
     if "codex" in getattr(stats, "sources", set()):
-        statuses.append(analyze_codex_window(stats, hours=5, label="Codex 5h"))
-        statuses.append(analyze_codex_window(stats, hours=24 * 7, label="Codex 7d"))
+        snapshot_statuses = analyze_codex_quota_snapshot(stats)
+        if snapshot_statuses:
+            statuses.extend(snapshot_statuses)
+        else:
+            statuses.append(analyze_codex_window(stats, hours=5, label="Codex 5h"))
+            statuses.append(analyze_codex_window(stats, hours=24 * 7, label="Codex 7d"))
 
     rl_block = format_rate_limit(statuses)
     if rl_block:
@@ -479,6 +491,23 @@ def format_coding_rhythm(stats: SessionStats) -> str:
     return "\n".join(lines)
 
 
+def _format_reset_countdown(minutes: float) -> str:
+    """把"距离重置还有多少分钟"格式化为 'Xd Yh Zm'"""
+    minutes = max(int(round(minutes)), 0)
+    if minutes <= 0:
+        return "now"
+    d, rem = divmod(minutes, 60 * 24)
+    h, m = divmod(rem, 60)
+    parts = []
+    if d:
+        parts.append(f"{d}d")
+    if h:
+        parts.append(f"{h}h")
+    if m or not parts:
+        parts.append(f"{m}m")
+    return " ".join(parts)
+
+
 def _format_rate_limit_block(status: RateLimitStatus) -> list[str]:
     """单个滚动窗口的状态块 — 不带 section header。"""
     lines: list[str] = []
@@ -492,8 +521,40 @@ def _format_rate_limit_block(status: RateLimitStatus) -> list[str]:
     else:
         status_label = _dim("idle")
 
-    lines.append(f"  [{_bold(status.label)}]   {status_label}")
+    badge = ""
+    if getattr(status, "source_kind", "estimated") == "api_snapshot":
+        badge = "  " + _dim("(OpenAI 后端原值)")
+    lines.append(f"  [{_bold(status.label)}]   {status_label}{badge}")
 
+    # —— Snapshot 模式：直接展示订阅百分比 + 重置时间 ——
+    if getattr(status, "metric", "") == "used_percent":
+        pct_display = status.pct * 100
+        pct_str = f"{pct_display:.1f}%"
+        if status.pct >= 0.85:
+            pct_colored = _red(pct_str)
+        elif status.pct >= 0.60:
+            pct_colored = _yellow(pct_str)
+        else:
+            pct_colored = _green(pct_str)
+        if status.window_minutes >= 60 * 24:
+            window_unit = f"{status.window_minutes // (60 * 24)}d window"
+        elif status.window_minutes >= 60:
+            window_unit = f"{status.window_minutes // 60}h window"
+        else:
+            window_unit = f"{status.window_minutes}-min window"
+        lines.append(f"  Used:        {pct_colored}  ({window_unit})")
+
+        if status.minutes_until_limit is not None:
+            countdown = _format_reset_countdown(status.minutes_until_limit)
+            lines.append(f"  Resets in:   {_dim(countdown)}")
+
+        snap_age = getattr(status, "snapshot_age_minutes", None)
+        if isinstance(snap_age, (int, float)) and snap_age >= 60:
+            age_str = _format_reset_countdown(snap_age)
+            lines.append(f"  Snapshot:    {_dim(f'{age_str} ago')}")
+        return lines
+
+    # —— 估算模式：保留原 rate / window / messages / cost / ETA 渲染 ——
     if status.window_minutes >= 60 * 24:
         rate_unit = f"tokens/min ({status.window_minutes // (60 * 24)}d window)"
     elif status.window_minutes >= 60:

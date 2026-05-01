@@ -246,7 +246,7 @@ All data is read from local files. Nothing is sent over the network.
 
 > **Source coverage notes:**
 > - **Skill / MCP Analytics** is Claude Code-specific (Codex/Gemini do not expose a `Skill` tool wrapper).
-> - **Usage Quota Forecast** is a unified section that stacks every applicable rolling window in one place: Claude 5-min (output tokens, calibrated to Claude Pro tiers), Codex 5h, and Codex 7d. Codex windows show messages, total tokens and cost (priced via `match_model_pricing`); they are hidden automatically when no Codex session is in the report.
+> - **Usage Quota Forecast** stacks every applicable rolling window in one section: Claude 5-min (output tokens, calibrated to Claude Pro tiers), Codex 5h, and Codex 7d. For Codex windows, the report **prefers the real subscription `used_percent` that Codex CLI cached from OpenAI's backend** (extracted from `event_msg / token_count.rate_limits` in the JSONL — no API call required); if a session has no snapshot it falls back to a local estimate based on token count and per-model pricing.
 > - **Git cost attribution** (`--git`) prices each commit window using the actual model that produced the tokens (Claude / Codex / Gemini); sessions without a recorded model fall back to Claude Sonnet pricing.
 
 ---
