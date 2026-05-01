@@ -116,6 +116,14 @@ def _get_local_minute(ts: str) -> str | None:
     return dt.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
+def _get_utc_hour(ts: str) -> str | None:
+    """从消息时间戳提取 UTC 小时键 (YYYY-MM-DDTHH)，用于跨时区一致的窗口聚合。"""
+    dt = _parse_ts(ts)
+    if dt is None:
+        return None
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H")
+
+
 def _detect_lang(file_path: str) -> str:
     """根据文件扩展名检测编程语言"""
     _, ext = os.path.splitext(file_path)
@@ -231,6 +239,12 @@ class SessionStats:
 
     # 11. 会话来源集合（"claude" | "codex" | "gemini"）
     sources: set[str] = field(default_factory=set)
+
+    # 12. Codex 订阅用量追踪（仅当 source == "codex" 时填充）
+    # key: "YYYY-MM-DDTHH" UTC 小时；嵌套 dict 按模型拆分 token，便于按真实单价计费
+    codex_token_by_hour: dict[str, dict[str, "TokenUsage"]] = field(default_factory=dict)
+    # key: "YYYY-MM-DDTHH" UTC 小时；value: 该小时 Codex 用户交互轮数
+    codex_messages_by_hour: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -459,6 +473,7 @@ def analyze_session(session: Session) -> SessionStats:
         project_path=session.project_path,
         sources={session.source} if getattr(session, "source", "") else set(),
     )
+    is_codex = getattr(session, "source", "") == "codex"
 
     # 构建 tool_use_id → is_error 映射（用于 Skill 成功率统计）
     tool_result_errors: dict[str, bool] = {}
@@ -487,6 +502,13 @@ def analyze_session(session: Session) -> SessionStats:
         # -------- 1. 用户指令数 --------
         if msg.role == "user" and not msg.is_tool_result and not msg.is_meta:
             stats.user_message_count += 1
+
+            if is_codex:
+                hour_key = _get_utc_hour(msg.timestamp)
+                if hour_key:
+                    stats.codex_messages_by_hour[hour_key] = (
+                        stats.codex_messages_by_hour.get(hour_key, 0) + 1
+                    )
 
         # -------- 2. 工具调用 --------
         if msg.role == "assistant":
@@ -616,6 +638,17 @@ def analyze_session(session: Session) -> SessionStats:
                     m.output_tokens += out
                     m.cache_read_input_tokens += cache_read
                     m.cache_creation_input_tokens += cache_create
+
+                # -------- 8b. Codex 订阅用量：按 UTC 小时 + 模型分桶 --------
+                if is_codex:
+                    hour_key = _get_utc_hour(msg.timestamp)
+                    if hour_key:
+                        per_model = stats.codex_token_by_hour.setdefault(hour_key, {})
+                        bucket = per_model.setdefault(model, TokenUsage())
+                        bucket.input_tokens += inp
+                        bucket.output_tokens += out
+                        bucket.cache_read_input_tokens += cache_read
+                        bucket.cache_creation_input_tokens += cache_create
 
     # 裁剪 token_by_minute 只保留最近 30 分钟
     if stats.token_by_minute:
@@ -828,6 +861,20 @@ def merge_stats(all_stats: list[SessionStats]) -> SessionStats:
             m.output_tokens += tu.output_tokens
             m.cache_read_input_tokens += tu.cache_read_input_tokens
             m.cache_creation_input_tokens += tu.cache_creation_input_tokens
+
+        # Codex 订阅用量合并
+        for hour_key, per_model in s.codex_token_by_hour.items():
+            target = merged.codex_token_by_hour.setdefault(hour_key, {})
+            for model, tu in per_model.items():
+                bucket = target.setdefault(model, TokenUsage())
+                bucket.input_tokens += tu.input_tokens
+                bucket.output_tokens += tu.output_tokens
+                bucket.cache_read_input_tokens += tu.cache_read_input_tokens
+                bucket.cache_creation_input_tokens += tu.cache_creation_input_tokens
+        for hour_key, count in s.codex_messages_by_hour.items():
+            merged.codex_messages_by_hour[hour_key] = (
+                merged.codex_messages_by_hour.get(hour_key, 0) + count
+            )
 
         # 编码节奏合并
         for period, data in s.coding_rhythm.items():

@@ -1,26 +1,66 @@
-"""Usage Quota 预测器 — 基于滑动窗口的用量额度分析"""
+"""Usage Quota 预测器 — 基于滑动窗口的用量额度分析
+
+支持多种窗口画像：
+- Claude Pro Sonnet：5 分钟 output token 滚动窗口（默认 40_000 tokens）
+- Codex 订阅：5 小时 / 7 天滚动窗口（OpenAI Plus/Pro 限额因档位而异，本工具不假设具体限额）
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .analyzer import SessionStats
+from .pricing import match_model_pricing
 
-# 默认限制：Claude Pro Sonnet 系列 5 分钟滑动窗口
+# Claude 默认限制：Pro Sonnet 系列 5 分钟滑动窗口
 DEFAULT_WINDOW_LIMIT = 40_000  # output tokens / 5 min
 DEFAULT_WINDOW_MINUTES = 5
 
 
 @dataclass
 class RateLimitStatus:
-    """用量额度状态"""
+    """单个滚动窗口的用量状态。
+
+    同一份字段服务于不同画像：Claude 5-min 关注 output_tokens，
+    Codex 5h/7d 关注 total_tokens 与 messages（user 交互轮数）。
+
+    保持位置参数与旧调用方兼容，新增字段带默认值放在尾部。
+    """
     status: str          # "safe" | "warning" | "critical" | "idle"
-    window_limit: int    # 5 分钟窗口 limit（默认 40000）
-    window_used: int     # 5 分钟内已用 output tokens
-    pct: float           # window_used / window_limit (0.0 ~ 1.0+)
-    rate_per_min: float  # tokens/min（最近窗口内）
-    minutes_until_limit: float | None  # None = 不会触发
+    window_limit: int    # 0 表示未设定限额
+    window_used: int     # 当前窗口已用 token 数（按 metric）
+    pct: float           # window_used / window_limit；limit=0 时为 0.0
+    rate_per_min: float  # 窗口内平均 tokens/min
+    minutes_until_limit: float | None  # None = 无限额或不会触发
+    # —— 多窗口扩展（带默认值，向后兼容旧构造方式） ——
+    label: str = "Claude 5-min"             # "Claude 5-min" / "Codex 5h" / "Codex 7d"
+    metric: str = "output_tokens"           # "output_tokens" | "total_tokens"
+    window_minutes: int = DEFAULT_WINDOW_MINUTES
+    messages: int = 0                       # 窗口内交互轮数（Codex 用）
+    cost_usd: float = 0.0                   # 窗口内估算费用（按真实模型单价）
+
+
+def _classify(pct: float) -> str:
+    if pct >= 0.85:
+        return "critical"
+    if pct >= 0.60:
+        return "warning"
+    return "safe"
+
+
+def _idle(label: str, metric: str, window_minutes: int, window_limit: int) -> RateLimitStatus:
+    return RateLimitStatus(
+        label=label,
+        metric=metric,
+        status="idle",
+        window_minutes=window_minutes,
+        window_limit=window_limit,
+        window_used=0,
+        pct=0.0,
+        rate_per_min=0.0,
+        minutes_until_limit=None,
+    )
 
 
 def analyze_rate_limit(
@@ -28,44 +68,21 @@ def analyze_rate_limit(
     window_limit: int = DEFAULT_WINDOW_LIMIT,
     window_minutes: int = DEFAULT_WINDOW_MINUTES,
 ) -> RateLimitStatus:
-    """基于 token_by_minute 数据计算用量额度预测
-
-    Args:
-        stats: 会话统计结果（需要 token_by_minute 数据）
-        window_limit: 滑动窗口的 output token 上限
-        window_minutes: 滑动窗口大小（分钟）
-    """
+    """Claude Pro Sonnet 5 分钟滚动窗口预测（基于 token_by_minute）。"""
     if not stats.token_by_minute:
-        return RateLimitStatus(
-            status="idle",
-            window_limit=window_limit,
-            window_used=0,
-            pct=0.0,
-            rate_per_min=0.0,
-            minutes_until_limit=None,
-        )
+        return _idle("Claude 5-min", "output_tokens", window_minutes, window_limit)
 
-    # 找到数据中最新的时间点作为窗口终点
     sorted_keys = sorted(stats.token_by_minute.keys())
     latest_key = sorted_keys[-1]
 
     try:
         latest_dt = datetime.strptime(latest_key, "%Y-%m-%d %H:%M")
     except ValueError:
-        return RateLimitStatus(
-            status="idle",
-            window_limit=window_limit,
-            window_used=0,
-            pct=0.0,
-            rate_per_min=0.0,
-            minutes_until_limit=None,
-        )
+        return _idle("Claude 5-min", "output_tokens", window_minutes, window_limit)
 
-    # 窗口起点（不含）：latest - window_minutes
     window_start_dt = latest_dt - timedelta(minutes=window_minutes)
     window_start_key = window_start_dt.strftime("%Y-%m-%d %H:%M")
 
-    # 累加窗口内的 output tokens
     window_used = 0
     active_minutes = 0
     for key in sorted_keys:
@@ -74,40 +91,127 @@ def analyze_rate_limit(
             active_minutes += 1
 
     if active_minutes == 0:
-        return RateLimitStatus(
-            status="idle",
-            window_limit=window_limit,
-            window_used=0,
-            pct=0.0,
-            rate_per_min=0.0,
-            minutes_until_limit=None,
-        )
+        return _idle("Claude 5-min", "output_tokens", window_minutes, window_limit)
 
     pct = window_used / window_limit if window_limit > 0 else 0.0
     rate_per_min = window_used / window_minutes
 
-    # 预测剩余时间
     remaining = window_limit - window_used
     if rate_per_min > 0 and remaining > 0:
-        minutes_until_limit = remaining / rate_per_min
+        minutes_until_limit: float | None = remaining / rate_per_min
     elif remaining <= 0:
         minutes_until_limit = 0.0
     else:
         minutes_until_limit = None
 
-    # 状态分级
-    if pct >= 0.85:
-        status = "critical"
-    elif pct >= 0.60:
-        status = "warning"
-    else:
-        status = "safe"
-
     return RateLimitStatus(
-        status=status,
+        label="Claude 5-min",
+        metric="output_tokens",
+        status=_classify(pct),
+        window_minutes=window_minutes,
         window_limit=window_limit,
         window_used=window_used,
         pct=pct,
         rate_per_min=rate_per_min,
         minutes_until_limit=minutes_until_limit,
+        messages=0,
+        cost_usd=0.0,
+    )
+
+
+def _parse_codex_hour_key(key: str) -> datetime | None:
+    """analyzer 写入的 'YYYY-MM-DDTHH' UTC 小时键"""
+    try:
+        return datetime.strptime(key, "%Y-%m-%dT%H").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def analyze_codex_window(
+    stats: SessionStats,
+    hours: int,
+    label: str,
+    window_limit: int = 0,
+    now: datetime | None = None,
+) -> RateLimitStatus:
+    """Codex 订阅滚动窗口（5h / 7d 等）。
+
+    复用 RateLimitStatus 数据形态：window_used = 总 token 数（含 cache），
+    messages = 窗口内 user_message 数，cost_usd = 按模型真实单价分别计费的合计。
+
+    数据源：analyzer 在解析 Codex 会话时填充的 codex_token_by_hour /
+    codex_messages_by_hour（按 UTC 小时分桶，按模型嵌套）。
+    """
+    window_minutes = hours * 60
+    metric = "total_tokens"
+
+    if not stats.codex_token_by_hour and not stats.codex_messages_by_hour:
+        return _idle(label, metric, window_minutes, window_limit)
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+    since = now - timedelta(hours=hours)
+
+    messages = 0
+    for hour_key, count in stats.codex_messages_by_hour.items():
+        dt = _parse_codex_hour_key(hour_key)
+        if dt is None or dt < since or dt > now:
+            continue
+        messages += count
+
+    total_tokens = 0
+    cost_usd = 0.0
+    for hour_key, per_model in stats.codex_token_by_hour.items():
+        dt = _parse_codex_hour_key(hour_key)
+        if dt is None or dt < since or dt > now:
+            continue
+        for model, tu in per_model.items():
+            total_tokens += (
+                tu.input_tokens
+                + tu.output_tokens
+                + tu.cache_read_input_tokens
+                + tu.cache_creation_input_tokens
+            )
+            p = match_model_pricing(model or "")
+            cost_usd += tu.input_tokens / 1_000_000 * p["input"]
+            cost_usd += tu.output_tokens / 1_000_000 * p["output"]
+            cost_usd += tu.cache_read_input_tokens / 1_000_000 * p["cache_read"]
+            cost_usd += tu.cache_creation_input_tokens / 1_000_000 * p["cache_create"]
+
+    if messages == 0 and total_tokens == 0:
+        return _idle(label, metric, window_minutes, window_limit)
+
+    pct = total_tokens / window_limit if window_limit > 0 else 0.0
+    rate_per_min = total_tokens / window_minutes if window_minutes > 0 else 0.0
+
+    if window_limit > 0:
+        remaining = window_limit - total_tokens
+        if rate_per_min > 0 and remaining > 0:
+            minutes_until_limit: float | None = remaining / rate_per_min
+        elif remaining <= 0:
+            minutes_until_limit = 0.0
+        else:
+            minutes_until_limit = None
+        status = _classify(pct)
+    else:
+        # 没有限额 → 仅展示当前用量
+        minutes_until_limit = None
+        status = "safe"
+
+    return RateLimitStatus(
+        label=label,
+        metric=metric,
+        status=status,
+        window_minutes=window_minutes,
+        window_limit=window_limit,
+        window_used=total_tokens,
+        pct=pct,
+        rate_per_min=rate_per_min,
+        minutes_until_limit=minutes_until_limit,
+        messages=messages,
+        cost_usd=round(cost_usd, 4),
     )

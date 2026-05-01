@@ -372,17 +372,20 @@ def format_stats(stats: SessionStats, session_count: int = 1) -> str:
         lines.append(rhythm_block)
 
     # ── ⑨ Usage Quota 预测 ──
-    # 限流档位仅按 Claude Pro Sonnet 标定，对 Codex/Gemini 会话无意义；只要有任意 Claude 用量就保留
+    # 同一管道收集多个滚动窗口：Claude 5-min（仅当存在 Claude 用量）+ Codex 5h / 7d（仅当存在 Codex 用量）
     from .pricing import is_claude_model
-    has_claude_usage = any(
-        is_claude_model(m) for m in getattr(stats, "token_by_model", {}).keys()
-    )
-    if has_claude_usage:
-        from .rate_limiter import analyze_rate_limit
-        rl_status = analyze_rate_limit(stats)
-        rl_block = format_rate_limit(rl_status)
-        if rl_block:
-            lines.append(rl_block)
+    from .rate_limiter import analyze_codex_window, analyze_rate_limit
+
+    statuses: list[RateLimitStatus] = []
+    if any(is_claude_model(m) for m in getattr(stats, "token_by_model", {}).keys()):
+        statuses.append(analyze_rate_limit(stats))
+    if "codex" in getattr(stats, "sources", set()):
+        statuses.append(analyze_codex_window(stats, hours=5, label="Codex 5h"))
+        statuses.append(analyze_codex_window(stats, hours=24 * 7, label="Codex 7d"))
+
+    rl_block = format_rate_limit(statuses)
+    if rl_block:
+        lines.append(rl_block)
 
     return "\n".join(lines)
 
@@ -476,69 +479,97 @@ def format_coding_rhythm(stats: SessionStats) -> str:
     return "\n".join(lines)
 
 
-def format_rate_limit(status: RateLimitStatus) -> str:
-    """格式化 Usage Quota 预测结果
+def _format_rate_limit_block(status: RateLimitStatus) -> list[str]:
+    """单个滚动窗口的状态块 — 不带 section header。"""
+    lines: list[str] = []
 
-    idle 时返回空字符串（不显示区块）。
+    if status.status == "safe":
+        status_label = f"✅ {_green('SAFE')}"
+    elif status.status == "warning":
+        status_label = f"⚠️  {_yellow('WARNING')}"
+    elif status.status == "critical":
+        status_label = f"🔴 {_red('CRITICAL')}"
+    else:
+        status_label = _dim("idle")
+
+    lines.append(f"  [{_bold(status.label)}]   {status_label}")
+
+    if status.window_minutes >= 60 * 24:
+        rate_unit = f"tokens/min ({status.window_minutes // (60 * 24)}d window)"
+    elif status.window_minutes >= 60:
+        rate_unit = f"tokens/min ({status.window_minutes // 60}h window)"
+    else:
+        rate_unit = f"tokens/min ({status.window_minutes}-min window)"
+    rate_str = f"{status.rate_per_min:,.0f} {rate_unit}"
+    lines.append(f"  Rate:        {_yellow(rate_str)}")
+
+    if status.window_limit > 0:
+        pct_str = f"{status.pct * 100:.0f}%"
+        if status.pct >= 0.85:
+            pct_colored = _red(pct_str)
+        elif status.pct >= 0.60:
+            pct_colored = _yellow(pct_str)
+        else:
+            pct_colored = _green(pct_str)
+        lines.append(
+            f"  Window:      {status.window_used:,} / "
+            f"{status.window_limit:,} ({pct_colored})"
+        )
+    else:
+        lines.append(f"  Window:      {status.window_used:,} {_dim('(无限额参考)')}")
+
+    if status.messages > 0:
+        lines.append(f"  Messages:    {status.messages:,}")
+
+    if status.cost_usd > 0:
+        lines.append(f"  Cost:        ${status.cost_usd:,.2f}")
+
+    if status.window_limit > 0:
+        if status.status == "critical":
+            if status.minutes_until_limit is not None and status.minutes_until_limit <= 0:
+                eta_str = _red("~0 min until quota limit — Consider pausing")
+            elif status.minutes_until_limit is not None:
+                eta_str = _red(f"~{status.minutes_until_limit:.0f} min until quota limit — Consider pausing")
+            else:
+                eta_str = _red("Consider pausing")
+            lines.append(f"  ETA:         {eta_str}")
+        else:
+            if status.minutes_until_limit is not None:
+                if status.minutes_until_limit <= 0:
+                    lines.append(f"  Remaining:   {_red('limit reached')}")
+                else:
+                    rem_str = f"~{status.minutes_until_limit:.0f} min of headroom"
+                    if status.status == "warning":
+                        rem_str = _yellow(rem_str)
+                    lines.append(f"  Remaining:   {rem_str}")
+            else:
+                lines.append(f"  Remaining:   {_dim('N/A')}")
+
+    return lines
+
+
+def format_rate_limit(statuses) -> str:
+    """格式化 Usage Quota 预测结果（Claude 5-min / Codex 5h / Codex 7d 共用）。
+
+    接受单个 RateLimitStatus 或 list；全部 idle 时返回空字符串。
     """
-    if status.status == "idle":
+    if isinstance(statuses, RateLimitStatus):
+        statuses = [statuses]
+    elif statuses is None:
+        return ""
+
+    active = [s for s in statuses if s and s.status != "idle"]
+    if not active:
         return ""
 
     lines: list[str] = []
     sep = _dim("─" * 60)
-
     lines.append(f"  {_cyan_bold('⑨')} {_bold('Usage Quota Forecast')}")
     lines.append(sep)
-
-    # 状态标签
-    if status.status == "safe":
-        status_label = f"\u2705 {_green('SAFE')}"
-    elif status.status == "warning":
-        status_label = f"\u26a0\ufe0f  {_yellow('WARNING')}"
-    else:
-        status_label = f"\U0001f534 {_red('CRITICAL')}"
-
-    lines.append(f"  Status:      {status_label}")
-
-    # 速率
-    rate_str = f"{status.rate_per_min:,.0f} tokens/min (5-min window)"
-    lines.append(f"  Rate:        {_yellow(rate_str)}")
-
-    # 窗口使用量
-    pct_display = status.pct * 100
-    pct_str = f"{pct_display:.0f}%"
-    if status.pct >= 0.85:
-        pct_colored = _red(pct_str)
-    elif status.pct >= 0.60:
-        pct_colored = _yellow(pct_str)
-    else:
-        pct_colored = _green(pct_str)
-    lines.append(
-        f"  Window:      {status.window_used:,} / "
-        f"{status.window_limit:,} ({pct_colored})"
-    )
-
-    # Remaining / ETA
-    if status.status == "critical":
-        if status.minutes_until_limit is not None and status.minutes_until_limit <= 0:
-            eta_str = _red("~0 min until quota limit \u2014 Consider pausing")
-        elif status.minutes_until_limit is not None:
-            eta_str = _red(f"~{status.minutes_until_limit:.0f} min until quota limit \u2014 Consider pausing")
-        else:
-            eta_str = _red("Consider pausing")
-        lines.append(f"  ETA:         {eta_str}")
-    else:
-        if status.minutes_until_limit is not None:
-            if status.minutes_until_limit <= 0:
-                lines.append(f"  Remaining:   {_red('limit reached')}")
-            else:
-                rem_str = f"~{status.minutes_until_limit:.0f} min of headroom"
-                if status.status == "warning":
-                    rem_str = _yellow(rem_str)
-                lines.append(f"  Remaining:   {rem_str}")
-        else:
-            lines.append(f"  Remaining:   {_dim('N/A')}")
-
+    for i, s in enumerate(active):
+        if i > 0:
+            lines.append("")
+        lines.extend(_format_rate_limit_block(s))
     lines.append("")
     return "\n".join(lines)
 
