@@ -147,7 +147,7 @@ function renderProjectSelect(){
   filtered.forEach(p=>{
     const o=document.createElement('option');o.value=p.dir_name;
     const parts=p.display_name.split('/');
-    const tag=p.source==='gemini'?' [G]':'';
+    const tag=p.source==='gemini'?' [G]':p.source==='codex'?' [C]':'';
     o.textContent=parts.slice(-1)[0]+tag+' ('+p.session_count+')';
     sel.appendChild(o);
   });

@@ -63,7 +63,12 @@ def export_session(session: Session, include_tools: bool = False) -> str:
                 pass
             break
 
-    lines.append(f"# Claude Code 对话记录")
+    source_label = {
+        "claude": "Claude Code",
+        "codex": "Codex",
+        "gemini": "Gemini CLI",
+    }.get(getattr(session, "source", "claude"), "AI Coding")
+    lines.append(f"# {source_label} 对话记录")
     lines.append(f"")
     if start_ts:
         lines.append(f"**时间:** {start_ts}")
@@ -100,7 +105,11 @@ def export_session(session: Session, include_tools: bool = False) -> str:
         elif msg.role == "assistant":
             model = msg.model or ""
             model_suffix = f" ({model})" if model else ""
-            lines.append(f"### Claude{model_suffix}{time_suffix}")
+            assistant_label = {
+                "codex": "Codex",
+                "gemini": "Gemini",
+            }.get(getattr(session, "source", "claude"), "Claude")
+            lines.append(f"### {assistant_label}{model_suffix}{time_suffix}")
             lines.append(f"")
             lines.append(text)
             lines.append(f"")

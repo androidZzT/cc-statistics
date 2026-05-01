@@ -240,9 +240,14 @@ All data is read from local files. Nothing is sent over the network.
 |--------|-----------|
 | Claude Code | `~/.claude/projects/<project>/<session>.jsonl` |
 | Gemini CLI | `~/.gemini/tmp/<project>/chats/<session>.json` |
-| Codex CLI | `~/.codex/sessions/*.jsonl` |
+| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | Git Changes | `git log --numstat` in project directory |
+
+> **Source coverage notes:**
+> - **Skill / MCP Analytics** is Claude Code-specific (Codex/Gemini do not expose a `Skill` tool wrapper).
+> - **Usage Quota Forecast** (`--rate-limit`) is calibrated to Claude Pro tiers; the section is hidden automatically when a report contains only Codex/Gemini sessions.
+> - **Git cost attribution** (`--git`) prices each commit window using the actual model that produced the tokens (Claude / Codex / Gemini); sessions without a recorded model fall back to Claude Sonnet pricing.
 
 ---
 

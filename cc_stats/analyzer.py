@@ -229,6 +229,9 @@ class SessionStats:
     # key: "Exploration"|"Building"|"Execution", value: session count
     work_mode_distribution: dict[str, int] = field(default_factory=dict)
 
+    # 11. 会话来源集合（"claude" | "codex" | "gemini"）
+    sources: set[str] = field(default_factory=set)
+
 
 @dataclass
 class CacheStats:
@@ -454,6 +457,7 @@ def analyze_session(session: Session) -> SessionStats:
     stats = SessionStats(
         session_id=session.session_id,
         project_path=session.project_path,
+        sources={session.source} if getattr(session, "source", "") else set(),
     )
 
     # 构建 tool_use_id → is_error 映射（用于 Skill 成功率统计）
@@ -735,6 +739,7 @@ def merge_stats(all_stats: list[SessionStats]) -> SessionStats:
     all_ends = []
 
     for s in all_stats:
+        merged.sources |= s.sources
         merged.user_message_count += s.user_message_count
         merged.tool_call_total += s.tool_call_total
 

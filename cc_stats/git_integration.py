@@ -1,4 +1,8 @@
-"""Git 集成：将 Claude Code 会话按时间归属到 git commit，计算每 commit 的 AI 成本"""
+"""Git 集成：将 AI 编程会话按时间归属到 git commit，计算每 commit 的 AI 成本
+
+会话来源支持 Claude Code / Codex / Gemini，定价按每个模型分别匹配
+（见 cc_stats.pricing.match_model_pricing）。
+"""
 
 from __future__ import annotations
 
@@ -7,11 +11,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .pricing import match_model_pricing
 
-# Claude 模型定价 (USD per 1M tokens) — 与 analyzer.py 保持一致
-_INPUT_PRICE = 3.0        # $3/1M input tokens (Sonnet baseline)
-_OUTPUT_PRICE = 15.0      # $15/1M output tokens
-_CACHE_READ_PRICE = 0.30  # $0.30/1M cache read tokens
+# 缺失 token_by_model 时的回退模型（保持与历史 Claude Sonnet 计价一致）
+_FALLBACK_MODEL = "claude-sonnet-4.6"
 
 
 @dataclass(frozen=True)
@@ -164,13 +167,27 @@ def _estimate_cost(
     input_tokens: int,
     output_tokens: int,
     cache_read_tokens: int,
+    model: str = _FALLBACK_MODEL,
 ) -> float:
-    """估算 token 费用（USD）"""
+    """按指定模型估算 token 费用（USD）。默认回退到 Claude Sonnet。"""
+    p = match_model_pricing(model)
     return (
-        input_tokens * _INPUT_PRICE / 1_000_000
-        + output_tokens * _OUTPUT_PRICE / 1_000_000
-        + cache_read_tokens * _CACHE_READ_PRICE / 1_000_000
+        input_tokens * p["input"] / 1_000_000
+        + output_tokens * p["output"] / 1_000_000
+        + cache_read_tokens * p["cache_read"] / 1_000_000
     )
+
+
+def _estimate_cost_by_model(usage_by_model: dict[str, dict[str, int]]) -> float:
+    """对每个模型分别计价后求和。usage_by_model[model] = {input, output, cache_read, cache_create}"""
+    total = 0.0
+    for model, u in usage_by_model.items():
+        p = match_model_pricing(model)
+        total += int(u.get("input", 0)) * p["input"] / 1_000_000
+        total += int(u.get("output", 0)) * p["output"] / 1_000_000
+        total += int(u.get("cache_read", 0)) * p["cache_read"] / 1_000_000
+        total += int(u.get("cache_create", 0)) * p["cache_create"] / 1_000_000
+    return total
 
 
 def attribute_sessions_to_commits(
@@ -189,9 +206,12 @@ def attribute_sessions_to_commits(
         sessions: session 信息列表，每个 dict 包含:
             - start_time: datetime
             - end_time: datetime
-            - input_tokens: int
+            - input_tokens: int      (汇总展示用，所有模型相加)
             - output_tokens: int
             - cache_read_tokens: int
+            - token_by_model: dict[str, dict] (可选)
+                  按模型拆分的 token 数，键 = 模型名，值 = {input, output, cache_read, cache_create}
+                  用于按真实模型单价计费；缺失时回退到 Claude Sonnet 单价
 
     Returns:
         CommitCost 列表（与 commits 顺序对应）
@@ -211,6 +231,8 @@ def attribute_sessions_to_commits(
 
         cost = CommitCost(commit=commit)
         matched_sessions: set[int] = set()
+        # 累计的按模型 usage（commit 维度），用于精确计价
+        commit_usage_by_model: dict[str, dict[str, int]] = {}
 
         for j, sess in enumerate(sessions):
             s_start = sess["start_time"]
@@ -249,20 +271,40 @@ def attribute_sessions_to_commits(
                 overlap_duration = (overlap_end - overlap_start).total_seconds()
                 ratio = overlap_duration / session_duration
 
-            inp = int(sess["input_tokens"] * ratio)
-            out = int(sess["output_tokens"] * ratio)
-            cache = int(sess["cache_read_tokens"] * ratio)
+            inp = int(sess.get("input_tokens", 0) * ratio)
+            out = int(sess.get("output_tokens", 0) * ratio)
+            cache = int(sess.get("cache_read_tokens", 0) * ratio)
 
             cost.input_tokens += inp
             cost.output_tokens += out
             cost.cache_read_tokens += cache
             matched_sessions.add(j)
 
+            # 按模型累计（用于精确计价）
+            tbm = sess.get("token_by_model")
+            if isinstance(tbm, dict) and tbm:
+                for model, u in tbm.items():
+                    if not isinstance(u, dict):
+                        continue
+                    bucket = commit_usage_by_model.setdefault(
+                        model, {"input": 0, "output": 0, "cache_read": 0, "cache_create": 0}
+                    )
+                    bucket["input"] += int(int(u.get("input", 0)) * ratio)
+                    bucket["output"] += int(int(u.get("output", 0)) * ratio)
+                    bucket["cache_read"] += int(int(u.get("cache_read", 0)) * ratio)
+                    bucket["cache_create"] += int(int(u.get("cache_create", 0)) * ratio)
+            else:
+                # 没有 token_by_model：按 Claude Sonnet 回退（保留历史行为）
+                bucket = commit_usage_by_model.setdefault(
+                    _FALLBACK_MODEL, {"input": 0, "output": 0, "cache_read": 0, "cache_create": 0}
+                )
+                bucket["input"] += inp
+                bucket["output"] += out
+                bucket["cache_read"] += cache
+
         cost.session_count = len(matched_sessions)
         cost.total_tokens = cost.input_tokens + cost.output_tokens + cost.cache_read_tokens
-        cost.estimated_cost_usd = _estimate_cost(
-            cost.input_tokens, cost.output_tokens, cost.cache_read_tokens
-        )
+        cost.estimated_cost_usd = _estimate_cost_by_model(commit_usage_by_model)
         results.append(cost)
 
     return results
@@ -292,16 +334,32 @@ def analyze_git_integration(
     if not commits:
         return GitIntegrationResult(repo_path=repo_path)
 
-    # 2. 从 SessionStats 提取 session 摘要
+    # 2. 从 SessionStats 提取 session 摘要（含按模型拆分的 token）
     sessions: list[dict] = []
     for s in all_stats:
         tu = s.token_usage
+
+        # 把 token_by_model 转成按模型分桶的 usage 字典
+        token_by_model: dict[str, dict[str, int]] = {}
+        per_model = getattr(s, "token_by_model", None)
+        if isinstance(per_model, dict):
+            for model, mu in per_model.items():
+                if not isinstance(model, str):
+                    continue
+                token_by_model[model] = {
+                    "input": int(getattr(mu, "input_tokens", 0) or 0),
+                    "output": int(getattr(mu, "output_tokens", 0) or 0),
+                    "cache_read": int(getattr(mu, "cache_read_input_tokens", 0) or 0),
+                    "cache_create": int(getattr(mu, "cache_creation_input_tokens", 0) or 0),
+                }
+
         sessions.append({
             "start_time": s.start_time,
             "end_time": s.end_time,
             "input_tokens": tu.input_tokens,
             "output_tokens": tu.output_tokens,
             "cache_read_tokens": tu.cache_read_input_tokens,
+            "token_by_model": token_by_model,
         })
 
     # 3. 归属 session 到 commit

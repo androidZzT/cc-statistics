@@ -240,9 +240,14 @@ cc-stats-app                  # 启动 macOS 状态栏应用
 |--------|---------|
 | Claude Code | `~/.claude/projects/<project>/<session>.jsonl` |
 | Gemini CLI | `~/.gemini/tmp/<project>/chats/<session>.json` |
-| Codex CLI | `~/.codex/sessions/*.jsonl` |
+| Codex CLI | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` |
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | Git 变更 | 项目目录的 `git log --numstat` |
+
+> **多数据源能力差异：**
+> - **Skill / MCP 分析** 仅适用于 Claude Code（Codex/Gemini 没有 `Skill` 工具抽象）。
+> - **Usage Quota 预测** (`--rate-limit`) 按 Claude Pro 档位标定；当报告里只有 Codex/Gemini 会话时自动隐藏该区块。
+> - **Git 成本归属** (`--git`) 现已按每条会话实际使用的模型分别计价（Claude / Codex / Gemini）；缺少模型记录的会话回退到 Claude Sonnet 单价。
 
 ---
 

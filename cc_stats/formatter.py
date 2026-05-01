@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import unicodedata
 from datetime import timedelta
 
 from .analyzer import (
@@ -66,6 +67,22 @@ def _fmt_duration(td: timedelta) -> str:
     if seconds or not parts:
         parts.append(f"{seconds}s")
     return " ".join(parts)
+
+
+def _display_width(s: str) -> int:
+    """计算字符串的终端显示宽度（CJK 字符占 2 列）"""
+    return sum(2 if unicodedata.east_asian_width(c) in ('W', 'F') else 1 for c in s)
+
+
+def _report_title(sources: set[str]) -> str:
+    """根据会话来源选择报告标题"""
+    if not sources or sources == {"claude"}:
+        return "Claude Code 会话统计报告"
+    if sources == {"codex"}:
+        return "Codex 会话统计报告"
+    if sources == {"gemini"}:
+        return "Gemini CLI 会话统计报告"
+    return "AI Coding 会话统计报告"
 
 
 def _fmt_tokens(n: int) -> str:
@@ -168,10 +185,16 @@ def format_stats(stats: SessionStats, session_count: int = 1) -> str:
     sep = _dim("─" * 60)
 
     # ── Header ──
+    title = _report_title(getattr(stats, "sources", set()))
+    inner_width = 58  # 与 ╔══...══╗ 顶/底边内宽保持一致
+    title_w = _display_width(title)
+    left_pad = max((inner_width - title_w) // 2, 0)
+    right_pad = max(inner_width - title_w - left_pad, 0)
+    title_line = " " * left_pad + title + " " * right_pad
     lines.append("")
-    lines.append(_cyan("  ╔══════════════════════════════════════════════════════════╗"))
-    lines.append(_cyan("  ║") + _white_bold("        Claude Code 会话统计报告") + "                   " + _cyan("║"))
-    lines.append(_cyan("  ╚══════════════════════════════════════════════════════════╝"))
+    lines.append(_cyan("  ╔" + "═" * inner_width + "╗"))
+    lines.append(_cyan("  ║") + _white_bold(title_line) + _cyan("║"))
+    lines.append(_cyan("  ╚" + "═" * inner_width + "╝"))
     lines.append("")
 
     if stats.project_path and stats.project_path != "all":
@@ -349,11 +372,17 @@ def format_stats(stats: SessionStats, session_count: int = 1) -> str:
         lines.append(rhythm_block)
 
     # ── ⑨ Usage Quota 预测 ──
-    from .rate_limiter import analyze_rate_limit
-    rl_status = analyze_rate_limit(stats)
-    rl_block = format_rate_limit(rl_status)
-    if rl_block:
-        lines.append(rl_block)
+    # 限流档位仅按 Claude Pro Sonnet 标定，对 Codex/Gemini 会话无意义；只要有任意 Claude 用量就保留
+    from .pricing import is_claude_model
+    has_claude_usage = any(
+        is_claude_model(m) for m in getattr(stats, "token_by_model", {}).keys()
+    )
+    if has_claude_usage:
+        from .rate_limiter import analyze_rate_limit
+        rl_status = analyze_rate_limit(stats)
+        rl_block = format_rate_limit(rl_status)
+        if rl_block:
+            lines.append(rl_block)
 
     return "\n".join(lines)
 
