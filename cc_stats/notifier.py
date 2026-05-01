@@ -281,7 +281,9 @@ def notify_session_complete(
         mins = int(duration_seconds) // 60
         parts.append(f"{mins}min" if mins > 0 else f"{int(duration_seconds)}s")
     if tokens > 0:
-        if tokens >= 1_000_000:
+        if tokens >= 1_000_000_000:
+            parts.append(f"{tokens / 1e9:.1f}B tokens")
+        elif tokens >= 1_000_000:
             parts.append(f"{tokens / 1e6:.1f}M tokens")
         elif tokens >= 1_000:
             parts.append(f"{tokens / 1e3:.1f}K tokens")

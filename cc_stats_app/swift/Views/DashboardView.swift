@@ -1324,7 +1324,9 @@ struct DashboardView: View {
     }
 
     private func formatTokens(_ count: Int) -> String {
-        if count >= 1_000_000 {
+        if count >= 1_000_000_000 {
+            return String(format: "%.1fB", Double(count) / 1_000_000_000)
+        } else if count >= 1_000_000 {
             return String(format: "%.1fM", Double(count) / 1_000_000)
         } else if count >= 1_000 {
             return String(format: "%.1fK", Double(count) / 1_000)

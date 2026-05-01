@@ -70,6 +70,8 @@ def _fmt_duration(td: timedelta) -> str:
 
 def _fmt_tokens(n: int) -> str:
     """格式化 token 数量"""
+    if n >= 1_000_000_000:
+        return f"{n / 1_000_000_000:.1f}B"
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"
     if n >= 1_000:
