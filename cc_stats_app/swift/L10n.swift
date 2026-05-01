@@ -141,6 +141,16 @@ enum L10n {
     static var rateLimitUnavailable: String { isChinese ? "未配置 Token" : "Token not configured" }
     static var helpRateLimit: String { isChinese ? "Claude Pro/Max 订阅的速率配额用量" : "Claude Pro/Max subscription rate quota usage" }
 
+    // Codex 用量额度（OpenAI 后端写到 JSONL 的 snapshot，无需 API token）
+    static var codexRateLimit: String { isChinese ? "Codex 用量额度" : "Codex Usage Quota" }
+    static var codexFiveHourUsage: String { isChinese ? "Codex 5小时" : "Codex 5h" }
+    static var codexSevenDayUsage: String { isChinese ? "Codex 7天" : "Codex 7d" }
+    static var helpCodexRateLimit: String {
+        isChinese
+            ? "Codex 订阅 5h / 7d 滚动窗口用量百分比，由 Codex CLI 缓存到本地 JSONL（无需配置 token）。"
+            : "Codex subscription 5h / 7d rolling-window usage, read from the snapshot Codex CLI cached into local JSONL (no token required)."
+    }
+
     // MARK: - Update
     static var newVersion: String { isChinese ? "发现新版本" : "New version" }
     static var updateNow: String { isChinese ? "立即更新" : "Update" }

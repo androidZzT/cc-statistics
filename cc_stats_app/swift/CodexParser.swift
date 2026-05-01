@@ -121,6 +121,9 @@ final class CodexParser {
         var seenUserKeys = Set<String>()
         var seenAssistantKeys = Set<String>()
         var lastTotalTokens: Int?
+        // 跟踪整个文件里最新一次 OpenAI rate_limits snapshot
+        var latestRateLimits: CodexRateLimitsSnapshot?
+        var latestRateLimitsTs: Date?
 
         content.enumerateLines { line, _ in
             guard !line.isEmpty,
@@ -153,6 +156,12 @@ final class CodexParser {
                     let eventType = eventPayload["type"] as? String ?? ""
 
                     if eventType == "token_count" {
+                        // 优先记录最新 OpenAI rate_limits snapshot（即便 token_usage 是重复的也要更新）
+                        if let snapshot = self.parseRateLimitsSnapshot(eventPayload["rate_limits"]) {
+                            latestRateLimits = snapshot
+                            latestRateLimitsTs = ts
+                        }
+
                         // Codex writes cumulative totals; if total is unchanged, skip duplicate events.
                         if let info = eventPayload["info"] as? [String: Any],
                            let totalUsage = info["total_token_usage"] as? [String: Any] {
@@ -326,7 +335,53 @@ final class CodexParser {
         return Session(
             filePath: filePath,
             messages: messages,
-            projectPath: projectPath
+            projectPath: projectPath,
+            codexRateLimits: latestRateLimits,
+            codexRateLimitsTs: latestRateLimitsTs
+        )
+    }
+
+    /// 把 event_msg/token_count.rate_limits 这块 JSON 翻译成强类型 snapshot。
+    /// 缺字段或字段类型不对时返回 nil（容错，避免因一条脏数据丢掉整次解析）。
+    private func parseRateLimitsSnapshot(_ raw: Any?) -> CodexRateLimitsSnapshot? {
+        guard let dict = raw as? [String: Any] else { return nil }
+        let primary = parseRateLimitWindow(dict["primary"])
+        let secondary = parseRateLimitWindow(dict["secondary"])
+        if primary == nil && secondary == nil { return nil }
+        return CodexRateLimitsSnapshot(primary: primary, secondary: secondary)
+    }
+
+    private func parseRateLimitWindow(_ raw: Any?) -> CodexRateLimitWindow? {
+        guard let dict = raw as? [String: Any] else { return nil }
+        guard let pctRaw = dict["used_percent"] else { return nil }
+
+        let usedPercent: Double
+        if let d = pctRaw as? Double { usedPercent = d }
+        else if let n = pctRaw as? NSNumber { usedPercent = n.doubleValue }
+        else if let s = pctRaw as? String, let d = Double(s) { usedPercent = d }
+        else { return nil }
+        guard usedPercent >= 0 else { return nil }
+
+        let windowMinutes: Int?
+        if let n = dict["window_minutes"] as? NSNumber { windowMinutes = n.intValue }
+        else if let i = dict["window_minutes"] as? Int { windowMinutes = i }
+        else { windowMinutes = nil }
+
+        let resetsAt: Date?
+        if let n = dict["resets_at"] as? NSNumber {
+            resetsAt = Date(timeIntervalSince1970: n.doubleValue)
+        } else if let i = dict["resets_at"] as? Int {
+            resetsAt = Date(timeIntervalSince1970: Double(i))
+        } else if let s = dict["resets_at"] as? String, let i = Int(s) {
+            resetsAt = Date(timeIntervalSince1970: Double(i))
+        } else {
+            resetsAt = nil
+        }
+
+        return CodexRateLimitWindow(
+            usedPercent: usedPercent,
+            windowMinutes: windowMinutes,
+            resetsAt: resetsAt
         )
     }
 

@@ -146,11 +146,52 @@ struct Message: Identifiable, Equatable {
 
 // MARK: - Session
 
+// MARK: - Codex Rate-Limit Snapshot
+//
+// 镜像 OpenAI Codex 上游 protocol 中的 RateLimitSnapshot / RateLimitWindow，
+// 由 CodexParser 直接从 event_msg/token_count.rate_limits 解析得到，
+// 不发起任何网络请求 — 数据已被 Codex CLI 缓存到本地 JSONL。
+
+struct CodexRateLimitWindow: Equatable {
+    /// 0-100，OpenAI 后端给出的真实订阅消耗百分比
+    let usedPercent: Double
+    /// 滚动窗口长度（分钟）。primary 通常 ~300，secondary 通常 ~10080
+    let windowMinutes: Int?
+    /// 窗口重置的绝对时刻（OpenAI 给的是 Unix 秒，这里转成 Date）
+    let resetsAt: Date?
+}
+
+struct CodexRateLimitsSnapshot: Equatable {
+    /// 5 小时滚动窗口
+    let primary: CodexRateLimitWindow?
+    /// 周窗口
+    let secondary: CodexRateLimitWindow?
+}
+
 struct Session: Identifiable, Equatable {
     let id = UUID()
     let filePath: String
     let messages: [Message]
     let projectPath: String?
+    /// Codex JSONL 里 OpenAI 后端写下的订阅额度快照（来自 event_msg/token_count.rate_limits）。
+    /// 仅 Codex 会话填充；其它来源恒为 nil。
+    let codexRateLimits: CodexRateLimitsSnapshot?
+    /// 上述 snapshot 对应的事件时间戳（用于跨会话挑最新一条）。
+    let codexRateLimitsTs: Date?
+
+    init(
+        filePath: String,
+        messages: [Message],
+        projectPath: String?,
+        codexRateLimits: CodexRateLimitsSnapshot? = nil,
+        codexRateLimitsTs: Date? = nil
+    ) {
+        self.filePath = filePath
+        self.messages = messages
+        self.projectPath = projectPath
+        self.codexRateLimits = codexRateLimits
+        self.codexRateLimitsTs = codexRateLimitsTs
+    }
 
     static func == (lhs: Session, rhs: Session) -> Bool {
         lhs.filePath == rhs.filePath && lhs.messages.count == rhs.messages.count

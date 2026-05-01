@@ -69,6 +69,9 @@ final class StatsViewModel: ObservableObject {
     @Published var isTokenExpired: Bool = false
     @Published var burnAlertLevel5h: BurnAlertLevel = .none
     @Published var burnAlertLevel7d: BurnAlertLevel = .none
+    /// Codex 订阅额度快照 — 直接来自 Codex JSONL 里 OpenAI 后端缓存的 rate_limits（不发请求）。
+    /// 没有 Codex 会话或所有 Codex 会话都没带 snapshot 时为 nil。
+    @Published var codexRateLimits: CodexRateLimitsSnapshot?
 
     enum StatsTab: String, CaseIterable {
         case claudeCode = "Claude Code"
@@ -556,6 +559,20 @@ final class StatsViewModel: ObservableObject {
         }
     }
 
+    /// 在一组 sessions 里挑出 codexRateLimitsTs 最新的一条 snapshot；都没有则返回 nil。
+    nonisolated private static func latestCodexRateLimits(in sessions: [Session]) -> CodexRateLimitsSnapshot? {
+        var bestSnap: CodexRateLimitsSnapshot?
+        var bestTs: Date?
+        for s in sessions {
+            guard let snap = s.codexRateLimits, let ts = s.codexRateLimitsTs else { continue }
+            if bestTs == nil || ts > bestTs! {
+                bestTs = ts
+                bestSnap = snap
+            }
+        }
+        return bestSnap
+    }
+
     nonisolated private static func compactSession(_ session: Session) -> Session {
         let compactedMessages = session.messages.map { message in
             let compactedCalls = message.toolCalls.map(compactToolCall)
@@ -576,7 +593,9 @@ final class StatsViewModel: ObservableObject {
         return Session(
             filePath: session.filePath,
             messages: compactedMessages,
-            projectPath: session.projectPath
+            projectPath: session.projectPath,
+            codexRateLimits: session.codexRateLimits,
+            codexRateLimitsTs: session.codexRateLimitsTs
         )
     }
 
@@ -742,6 +761,12 @@ final class StatsViewModel: ObservableObject {
 
         self.currentFilteredSessions = result.filteredSessions
         self.lastRefreshed = Date()
+
+        // 从 filteredSessions 里挑时间戳最新的 Codex snapshot 公布给 UI
+        let newCodexRL = StatsViewModel.latestCodexRateLimits(in: result.filteredSessions)
+        if self.codexRateLimits != newCodexRL {
+            self.codexRateLimits = newCodexRL
+        }
 
         if showConversationPanel {
             prepareConversationSessions()

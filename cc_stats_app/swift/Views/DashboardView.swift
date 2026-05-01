@@ -1120,6 +1120,52 @@ struct DashboardView: View {
                 }
             }
         }
+
+        codexRateLimitSection
+    }
+
+    /// Codex 订阅额度区块 — 直接读 Codex JSONL 里 OpenAI 缓存的 used_percent / resets_at
+    @ViewBuilder
+    private var codexRateLimitSection: some View {
+        if let snap = viewModel.codexRateLimits,
+           snap.primary != nil || snap.secondary != nil {
+            GlassCard {
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionHeader(
+                        icon: "gauge.with.dots.needle.50percent",
+                        title: L10n.codexRateLimit,
+                        accentColor: Theme.amber,
+                        helpText: L10n.helpCodexRateLimit
+                    )
+
+                    HStack(spacing: 12) {
+                        if let primary = snap.primary {
+                            rateLimitGauge(
+                                label: L10n.codexFiveHourUsage,
+                                percent: Int(primary.usedPercent.rounded()),
+                                resetTime: UsageAPI.formatResetTime(primary.resetsAt),
+                                alertLevel: codexAlertLevel(for: primary.usedPercent)
+                            )
+                        }
+                        if let secondary = snap.secondary {
+                            rateLimitGauge(
+                                label: L10n.codexSevenDayUsage,
+                                percent: Int(secondary.usedPercent.rounded()),
+                                resetTime: UsageAPI.formatResetTime(secondary.resetsAt),
+                                alertLevel: codexAlertLevel(for: secondary.usedPercent)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func codexAlertLevel(for usedPercent: Double) -> BurnAlertLevel {
+        if usedPercent >= 85 { return .critical }
+        if usedPercent >= 60 { return .warning }
+        if usedPercent >= 40 { return .info }
+        return .none
     }
 
     private func rateLimitGauge(label: String, percent: Int, resetTime: String, alertLevel: BurnAlertLevel = .none) -> some View {
