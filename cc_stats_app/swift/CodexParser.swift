@@ -111,10 +111,6 @@ final class CodexParser {
     // MARK: - JSONL Parsing
 
     private func parseSessionFile(_ filePath: String) -> Session? {
-        guard let content = try? String(contentsOfFile: filePath, encoding: .utf8) else {
-            return nil
-        }
-
         var messages: [Message] = []
         var projectPath: String?
         var latestModel: String?
@@ -122,11 +118,11 @@ final class CodexParser {
         var seenAssistantKeys = Set<String>()
         var lastTotalTokens: Int?
 
-        content.enumerateLines { line, _ in
+        JSONLLineReader.forEachLine(in: filePath) { line in
             guard !line.isEmpty,
                   let lineData = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
-                return
+                return true
             }
 
             autoreleasepool {
@@ -319,6 +315,7 @@ final class CodexParser {
                     break
                 }
             }
+            return true
         }
 
         guard !messages.isEmpty else { return nil }

@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.0.1 (2026-05-08)
+
+### Island
+- Add a live bridge client for macOS island task state, including running, approval, completed, failed, and canceled snapshots
+- Expand Clawd island animations with thinking, typing, building, juggling, conducting, notification, error, happy, sweeping, carrying, idle, and sleeping motions
+- Keep failed/canceled terminal states visible until dismissed so late completion/progress events cannot overwrite errors
+- Refine island layout, sizing, outside-click dismissal, and approval controls; remove the orange approval dot from the header
+
+### App & Data
+- Improve large-session loading with streaming JSONL reads and lower peak memory usage
+- Add cache-efficiency stats and token display support up to billion-scale units
+- Improve Codex/Gemini/Cursor parsing, model attribution, and dashboard aggregation paths
+
+### Hooks & Bridge
+- Improve Claude Code hook event coverage for live task progress, permission requests, failures, compaction, subagents, and worktree events
+- Harden bridge state transitions and approval resolution tests
+
 ## v1.0.0 (2026-04-21)
 
 ### Major Release

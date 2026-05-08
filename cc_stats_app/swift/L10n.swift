@@ -47,6 +47,12 @@ enum L10n {
     static var cacheRead: String { isChinese ? "缓存读" : "Cache Read" }
     static var cacheWrite: String { isChinese ? "缓存写" : "Cache Write" }
     static var cache: String { isChinese ? "缓存" : "Cache" }
+    static var cacheGrade: String { isChinese ? "缓存等级" : "Cache Grade" }
+    static var cacheHitRate: String { isChinese ? "命中率" : "Hit Rate" }
+    static var cacheSavings: String { isChinese ? "节省费用" : "Saved" }
+    static var cacheByModel: String { isChinese ? "按模型" : "By Model" }
+    static var cacheNoReadYet: String { isChinese ? "缓存已写入，尚未产生复用读取" : "Cache created, but no cache reads yet" }
+    static var cacheNoData: String { isChinese ? "暂无缓存数据" : "No cache data yet" }
 
     // MARK: - Data Source
     static var allSources: String { isChinese ? "全部来源" : "All Sources" }
@@ -183,6 +189,9 @@ enum L10n {
     }
     static var helpTokenUsage: String {
         isChinese ? "消耗的 token 明细" : "Token consumption details"
+    }
+    static var helpCacheGrade: String {
+        isChinese ? "缓存读 token 在输入上下文中的占比，越高表示复用越充分" : "Share of cache-read tokens in total input context; higher means better reuse"
     }
     static var helpEfficiency: String {
         isChinese ? "每消耗 1K token 产出多少代码" : "Code output per 1K tokens spent"

@@ -43,85 +43,50 @@ class SessionAnalyzer {
     // MARK: - Public API
 
     static func analyze(sessions: [Session], since: Date? = nil, until: Date? = nil) -> SessionStats {
-        let perSession = sessions.map { analyzeSession($0, since: since, until: until) }
-        return merge(stats: perSession)
+        var merged = SessionStats()
+        for session in sessions {
+            mergeInto(&merged, analyzeSession(session, since: since, until: until))
+        }
+        return merged
     }
 
     static func merge(stats: [SessionStats]) -> SessionStats {
-        guard !stats.isEmpty else {
-            return SessionStats(
-                userInstructions: 0,
-                toolCalls: [:],
-                totalDuration: 0,
-                aiProcessingTime: 0,
-                userActiveTime: 0,
-                codeChanges: [],
-                tokenUsage: [:],
-                sessionCount: 0,
-                gitCommits: 0,
-                gitAdditions: 0,
-                gitDeletions: 0
-            )
-        }
-
-        var mergedToolCalls: [String: Int] = [:]
-        var mergedTokenUsage: [String: TokenDetail] = [:]
-        var mergedCodeChanges: [CodeChange] = []
-        var mergedSkillStats: [String: SkillUsage] = [:]
-        var totalUserInstructions = 0
-        var totalDuration: TimeInterval = 0
-        var totalAIProcessingTime: TimeInterval = 0
-        var totalUserActiveTime: TimeInterval = 0
-        var totalSessionCount = 0
-        var totalGitCommits = 0
-        var totalGitAdditions = 0
-        var totalGitDeletions = 0
-
+        var merged = SessionStats()
         for s in stats {
-            totalUserInstructions += s.userInstructions
-            totalDuration += s.totalDuration
-            totalAIProcessingTime += s.aiProcessingTime
-            totalUserActiveTime += s.userActiveTime
-            totalSessionCount += s.sessionCount
-            totalGitCommits += s.gitCommits
-            totalGitAdditions += s.gitAdditions
-            totalGitDeletions += s.gitDeletions
+            mergeInto(&merged, s)
+        }
+        return merged
+    }
 
-            for (tool, count) in s.toolCalls {
-                mergedToolCalls[tool, default: 0] += count
-            }
+    private static func mergeInto(_ target: inout SessionStats, _ s: SessionStats) {
+        target.userInstructions += s.userInstructions
+        target.totalDuration += s.totalDuration
+        target.aiProcessingTime += s.aiProcessingTime
+        target.userActiveTime += s.userActiveTime
+        target.sessionCount += s.sessionCount
+        target.gitCommits += s.gitCommits
+        target.gitAdditions += s.gitAdditions
+        target.gitDeletions += s.gitDeletions
 
-            for (model, detail) in s.tokenUsage {
-                mergedTokenUsage[model, default: TokenDetail()] += detail
-            }
-
-            mergedCodeChanges.append(contentsOf: s.codeChanges)
-
-            for (name, su) in s.skillStats {
-                if mergedSkillStats[name] == nil {
-                    mergedSkillStats[name] = SkillUsage(name: name)
-                }
-                mergedSkillStats[name]!.callCount += su.callCount
-                mergedSkillStats[name]!.successCount += su.successCount
-                mergedSkillStats[name]!.errorCount += su.errorCount
-                mergedSkillStats[name]!.unknownCount += su.unknownCount
-            }
+        for (tool, count) in s.toolCalls {
+            target.toolCalls[tool, default: 0] += count
         }
 
-        return SessionStats(
-            userInstructions: totalUserInstructions,
-            toolCalls: mergedToolCalls,
-            totalDuration: totalDuration,
-            aiProcessingTime: totalAIProcessingTime,
-            userActiveTime: totalUserActiveTime,
-            codeChanges: mergedCodeChanges,
-            tokenUsage: mergedTokenUsage,
-            sessionCount: totalSessionCount,
-            gitCommits: totalGitCommits,
-            gitAdditions: totalGitAdditions,
-            gitDeletions: totalGitDeletions,
-            skillStats: mergedSkillStats
-        )
+        for (model, detail) in s.tokenUsage {
+            target.tokenUsage[model, default: TokenDetail()] += detail
+        }
+
+        target.codeChanges.append(contentsOf: s.codeChanges)
+
+        for (name, su) in s.skillStats {
+            if target.skillStats[name] == nil {
+                target.skillStats[name] = SkillUsage(name: name)
+            }
+            target.skillStats[name]!.callCount += su.callCount
+            target.skillStats[name]!.successCount += su.successCount
+            target.skillStats[name]!.errorCount += su.errorCount
+            target.skillStats[name]!.unknownCount += su.unknownCount
+        }
     }
 
     // MARK: - Single Session Analysis

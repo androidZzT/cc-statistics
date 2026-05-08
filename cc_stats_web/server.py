@@ -10,7 +10,13 @@ from datetime import datetime, timedelta, timezone
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-from cc_stats.analyzer import SessionStats, TokenUsage, analyze_session, merge_stats
+from cc_stats.analyzer import (
+    SessionStats,
+    TokenUsage,
+    analyze_session,
+    compute_cache_stats,
+    merge_stats,
+)
 from cc_stats.parser import (
     find_gemini_sessions,
     find_sessions,
@@ -117,6 +123,8 @@ def _stats_to_dict(stats: SessionStats, session_count: int = 1) -> dict:
             "cost": round(cost, 4),
         })
 
+    cache = compute_cache_stats(stats.token_usage, stats.token_by_model)
+
     return {
         "session_count": session_count,
         "user_message_count": stats.user_message_count,
@@ -141,6 +149,15 @@ def _stats_to_dict(stats: SessionStats, session_count: int = 1) -> dict:
         "token_usage": _token_dict(stats.token_usage),
         "token_by_model": model_tokens,
         "estimated_cost": round(total_cost, 2),
+        "cache_stats": {
+            "hit_rate": round(cache.hit_rate, 4),
+            "grade": cache.grade,
+            "grade_label": cache.grade_label,
+            "cache_read_tokens": cache.cache_read_tokens,
+            "total_input_tokens": cache.total_input_tokens,
+            "savings_usd": round(cache.savings_usd, 4),
+            "by_model": cache.by_model,
+        },
     }
 
 

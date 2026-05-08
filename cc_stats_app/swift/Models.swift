@@ -236,6 +236,22 @@ struct CodeChange: Identifiable, Equatable {
     }
 }
 
+// MARK: - Cache Stats
+
+struct CacheStatsSummary: Equatable {
+    var hitRate: Double = 0
+    var grade: String = "na"
+    var gradeLabel: String = "N/A"
+    var cacheReadTokens: Int = 0
+    var totalInputTokens: Int = 0
+    var savingsUSD: Double = 0
+    var byModel: [String: Double] = [:]
+
+    var isAvailable: Bool {
+        cacheReadTokens > 0
+    }
+}
+
 // MARK: - Session Stats
 
 struct SessionStats: Equatable {
@@ -304,6 +320,49 @@ struct SessionStats: Equatable {
         CostEstimator.estimateCost(tokenUsage: tokenUsage)
     }
 
+    var hasCacheActivity: Bool {
+        totalCacheReadTokens > 0 || totalCacheCreationTokens > 0
+    }
+
+    var cacheStats: CacheStatsSummary {
+        let totalInput = totalInputTokens + totalCacheReadTokens
+        guard totalCacheReadTokens > 0 else {
+            return CacheStatsSummary(
+                cacheReadTokens: totalCacheReadTokens,
+                totalInputTokens: totalInput
+            )
+        }
+
+        let hitRate = totalInput > 0 ? Double(totalCacheReadTokens) / Double(totalInput) : 0
+        let gradeInfo = Self.cacheGrade(for: hitRate)
+
+        var savingsUSD = 0.0
+        var byModel: [String: Double] = [:]
+
+        for (model, detail) in tokenUsage {
+            let modelTotalInput = detail.inputTokens + detail.cacheReadInputTokens
+            if modelTotalInput > 0 && detail.cacheReadInputTokens > 0 {
+                byModel[model] = Double(detail.cacheReadInputTokens) / Double(modelTotalInput)
+            }
+
+            if CostEstimator.isClaudeModel(model) {
+                let pricing = CostEstimator.pricingForModel(model)
+                let savingsPerMillion = pricing.inputPerMillion - pricing.cacheReadPerMillion
+                savingsUSD += Double(detail.cacheReadInputTokens) / 1_000_000 * savingsPerMillion
+            }
+        }
+
+        return CacheStatsSummary(
+            hitRate: hitRate,
+            grade: gradeInfo.grade,
+            gradeLabel: gradeInfo.label,
+            cacheReadTokens: totalCacheReadTokens,
+            totalInputTokens: totalInput,
+            savingsUSD: savingsUSD,
+            byModel: byModel
+        )
+    }
+
     // MARK: - Efficiency Score
 
     var totalCodeLines: Int {
@@ -352,6 +411,13 @@ struct SessionStats: Equatable {
         if s >= 60 { return "B" }
         if s >= 40 { return "C" }
         return "D"
+    }
+
+    private static func cacheGrade(for hitRate: Double) -> (grade: String, label: String) {
+        if hitRate >= 0.80 { return ("excellent", "Excellent") }
+        if hitRate >= 0.60 { return ("good", "Good") }
+        if hitRate >= 0.40 { return ("fair", "Fair") }
+        return ("poor", "Poor")
     }
 }
 
@@ -497,6 +563,14 @@ enum CostEstimator {
         cost += Double(detail.cacheReadInputTokens) / 1_000_000 * p.cacheReadPerMillion
         cost += Double(detail.cacheCreationInputTokens) / 1_000_000 * p.cacheCreatePerMillion
         return cost
+    }
+
+    static func pricingForModel(_ model: String) -> ModelPricing {
+        matchPricing(model)
+    }
+
+    static func isClaudeModel(_ model: String) -> Bool {
+        model.lowercased().contains("claude")
     }
 
     private static func matchPricing(_ model: String) -> ModelPricing {

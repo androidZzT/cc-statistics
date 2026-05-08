@@ -360,6 +360,96 @@ class TestPreToolUseHook(unittest.TestCase):
         notify_mock.assert_called_once()
 
 
+class TestLiveBridgeHookEvents(unittest.TestCase):
+    @patch("cc_stats.hooks._publish_bridge_event")
+    def test_user_prompt_submit_publishes_task_started_and_progress(self, publish_mock):
+        event = {
+            "event": "UserPromptSubmit",
+            "session_id": "session_live_1",
+            "prompt": "Refactor the island live stream state",
+            "model": "claude-sonnet-4.5",
+        }
+
+        out = process_hook_event(event)
+
+        assert out is None
+        assert publish_mock.call_count == 2
+        assert publish_mock.call_args_list[0].kwargs["event_type"] == "task_started"
+        assert publish_mock.call_args_list[0].kwargs["payload"]["title"] == "Refactor the island live stream state"
+        assert publish_mock.call_args_list[1].kwargs["event_type"] == "task_progress"
+        assert publish_mock.call_args_list[1].kwargs["payload"]["phase"] == "planning"
+
+    @patch("cc_stats.hooks._publish_bridge_event")
+    def test_post_tool_use_publishes_tool_completion_progress(self, publish_mock):
+        event = {
+            "event": "PostToolUse",
+            "session_id": "session_live_2",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/tmp/app.swift"},
+        }
+
+        out = process_hook_event(event)
+
+        assert out is None
+        publish_mock.assert_called_once()
+        kwargs = publish_mock.call_args.kwargs
+        assert kwargs["event_type"] == "task_progress"
+        assert kwargs["payload"]["phase"] == "tool_completed"
+        assert kwargs["payload"]["last_tool"]["status"] == "completed"
+
+    @patch("cc_stats.hooks._publish_bridge_event")
+    def test_post_tool_use_failure_publishes_failed_progress(self, publish_mock):
+        event = {
+            "event": "PostToolUseFailure",
+            "session_id": "session_live_3",
+            "tool_name": "Bash",
+            "tool_input": {"command": "pytest -q"},
+        }
+
+        out = process_hook_event(event)
+
+        assert out is None
+        publish_mock.assert_called_once()
+        kwargs = publish_mock.call_args.kwargs
+        assert kwargs["event_type"] == "task_progress"
+        assert kwargs["payload"]["phase"] == "tool_failed"
+        assert kwargs["payload"]["last_tool"]["status"] == "failed"
+
+    @patch("cc_stats.hooks._publish_bridge_event")
+    def test_stop_failure_publishes_terminal_failure(self, publish_mock):
+        event = {
+            "event": "StopFailure",
+            "session_id": "session_live_failed",
+            "message": "Tool execution crashed",
+        }
+
+        out = process_hook_event(event)
+
+        assert out is None
+        publish_mock.assert_called_once()
+        kwargs = publish_mock.call_args.kwargs
+        assert kwargs["event_type"] == "task_failed"
+        assert kwargs["payload"]["error_message"] == "Tool execution crashed"
+
+    @patch("cc_stats.hooks._publish_bridge_event")
+    @patch("cc_stats.notifier.notify_session_complete")
+    def test_user_cancelled_stop_publishes_terminal_canceled(self, notify_mock, publish_mock):
+        event = {
+            "event": "Stop",
+            "session_id": "session_live_canceled",
+            "stop_reason": "user_cancelled",
+        }
+
+        out = process_hook_event(event)
+
+        assert out is None
+        notify_mock.assert_not_called()
+        publish_mock.assert_called_once()
+        kwargs = publish_mock.call_args.kwargs
+        assert kwargs["event_type"] == "task_canceled"
+        assert kwargs["payload"]["reason"] == "user_cancelled"
+
+
 class TestActivityStateWriting(unittest.TestCase):
     @patch("cc_stats.hooks._publish_bridge_event")
     def test_notification_idle_prompt_writes_idle_state(self, _publish_mock):

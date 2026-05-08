@@ -123,10 +123,102 @@ def test_approval_reject_flow_marks_failed() -> None:
         )
     )
 
-    task = store.current_task()
-    assert task is not None
+    assert store.current_task() is None
+    task = store.list_tasks(limit=1)[0]
     assert task.status == TaskStatus.FAILED
+    assert task.phase == "approval_denied"
     assert task.error_message == "Approval rejected by user."
+
+
+def test_completed_event_does_not_override_failed_terminal_state() -> None:
+    store = BridgeStateStore()
+    store.apply_event(_event("evt_01", EventType.TASK_STARTED, {"title": "Dangerous step"}))
+    store.apply_event(
+        _event(
+            "evt_02",
+            EventType.APPROVAL_REQUIRED,
+            {
+                "approval_id": "apr_terminal",
+                "tool": "Bash",
+                "action": "rm -rf /",
+                "risk": "high",
+            },
+        )
+    )
+    store.apply_event(
+        _event(
+            "evt_03",
+            EventType.APPROVAL_RESOLVED,
+            {"approval_id": "apr_terminal", "approved": False},
+        )
+    )
+    store.apply_event(
+        _event(
+            "evt_04",
+            EventType.TASK_COMPLETED,
+            {"result_summary": "Stop hook arrived after denial"},
+        )
+    )
+
+    task = store.list_tasks(limit=1)[0]
+    assert task.status == TaskStatus.FAILED
+    assert task.phase == "approval_denied"
+    assert task.error_message == "Approval rejected by user."
+    assert store.current_task() is None
+
+
+def test_expired_approval_clears_current_task(monkeypatch) -> None:
+    store = BridgeStateStore()
+    store.apply_event(_event("evt_01", EventType.TASK_STARTED, {"title": "Needs approval"}))
+    store.apply_event(
+        _event(
+            "evt_02",
+            EventType.APPROVAL_REQUIRED,
+            {
+                "approval_id": "apr_timeout",
+                "tool": "Bash",
+                "action": "deploy production",
+                "risk": "high",
+                "expires_in_sec": 1,
+            },
+        )
+    )
+
+    monkeypatch.setattr("cc_stats.bridge.state_store.utc_now", lambda: _ts(10))
+
+    assert store.pending_approvals() == []
+    assert store.current_task() is None
+    task = store.list_tasks(limit=1)[0]
+    assert task.status == TaskStatus.FAILED
+    assert task.phase == "approval_timeout"
+    assert task.error_message == "Approval timeout."
+
+
+def test_resolving_expired_approval_marks_task_timed_out() -> None:
+    store = BridgeStateStore()
+    store.apply_event(_event("evt_01", EventType.TASK_STARTED, {"title": "Needs approval"}))
+    store.apply_event(
+        _event(
+            "evt_02",
+            EventType.APPROVAL_REQUIRED,
+            {
+                "approval_id": "apr_late",
+                "tool": "Bash",
+                "action": "deploy production",
+                "risk": "high",
+                "expires_in_sec": 1,
+            },
+        )
+    )
+
+    accepted = store.resolve_approval("apr_late", approved=True, resolved_at=_ts(10))
+
+    assert accepted is False
+    assert store.current_task() is None
+    task = store.list_tasks(limit=1)[0]
+    assert task.status == TaskStatus.FAILED
+    assert task.phase == "approval_timeout"
+    assert task.error_message == "Approval timeout."
 
 
 def test_events_since_event_id() -> None:

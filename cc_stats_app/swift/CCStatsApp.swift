@@ -710,9 +710,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var eventMonitor: Any?
     private let notificationServer = NotificationServer()
     private let bridgeDaemonController = BridgeDaemonController()
+    private let bridgeLiveClient = BridgeLiveClient()
     private let activityMonitor = SessionActivityMonitor()
     private let islandOverlayController = IslandOverlayController()
     private var lastActivitySnapshot: SessionActivitySnapshot?
+    private var lastBridgeTaskSnapshot: BridgeLiveTaskSnapshot?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -761,6 +763,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         activityMonitor.stop()
+        bridgeLiveClient.stop()
         bridgeDaemonController.stop()
         statusBarController?.stopAnimation()
     }
@@ -806,10 +809,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         activityMonitor.onSnapshotChange = { [weak self] snapshot in
             DispatchQueue.main.async {
                 self?.lastActivitySnapshot = snapshot
-                self?.islandOverlayController.update(with: snapshot)
+                self?.refreshIslandOverlay()
             }
         }
         activityMonitor.start()
+
+        bridgeLiveClient.onSnapshotChange = { [weak self] snapshot in
+            self?.lastBridgeTaskSnapshot = snapshot
+            self?.refreshIslandOverlay()
+        }
+        bridgeLiveClient.start()
     }
 
     private func observeIslandDebugMode() {
@@ -819,11 +828,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 let enabled = (notification.userInfo?["enabled"] as? Bool) ?? self.currentIslandDebugMode()
                 self.islandOverlayController.setDebugMode(enabled)
-                if let snapshot = self.lastActivitySnapshot {
-                    self.islandOverlayController.update(with: snapshot)
-                }
+                self.refreshIslandOverlay()
             }
             .store(in: &cancellables)
+    }
+
+    private func refreshIslandOverlay() {
+        let snapshot = lastActivitySnapshot ?? SessionActivitySnapshot(
+            state: .idle,
+            event: "",
+            timestamp: nil,
+            bridgeEnabled: true,
+            approvalId: nil,
+            toolName: nil,
+            action: nil
+        )
+        islandOverlayController.update(activitySnapshot: snapshot, liveTask: lastBridgeTaskSnapshot)
     }
 
     private func currentIslandDebugMode() -> Bool {

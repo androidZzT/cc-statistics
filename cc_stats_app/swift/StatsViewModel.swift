@@ -89,7 +89,9 @@ final class StatsViewModel: ObservableObject {
 
     private let burnMonitor = UsageBurnMonitor()
     private static let hugeDatasetFileThreshold = 3000
+    private static let hugeDatasetByteThreshold: Int64 = 512 * 1024 * 1024
     private static let hugeDatasetRecentDays = 30
+    private static let chartHistoryDays = 14
     private var refreshTimer: Timer?
     private var refreshTask: Task<Void, Never>?
     /// 刷新代次：每次 refresh/setTimeFilter 递增，
@@ -177,9 +179,7 @@ final class StatsViewModel: ObservableObject {
     /// 如果缓存存在，走快速路径（纯内存），否则走完整刷新。
     func setTimeFilter(_ filter: TimeFilter) {
         timeFilter = filter
-        if filter == .all {
-            triggerDeferredHistoricalLoadIfNeeded()
-        }
+        triggerDeferredHistoricalLoadIfNeeded()
         if !cachedSessions.isEmpty {
             refreshTask?.cancel()
             isLoading = true
@@ -240,6 +240,9 @@ final class StatsViewModel: ObservableObject {
                 let sortedFiles = changedFiles.sorted {
                     (currentModTimes[$0] ?? .distantPast) > (currentModTimes[$1] ?? .distantPast)
                 }
+                let totalBytes = await Task.detached(priority: .utility) {
+                    Self.totalFileBytes(sortedFiles)
+                }.value
 
                 cachedProjects = loadedProjects
                 cachedSource = currentSource
@@ -257,12 +260,12 @@ final class StatsViewModel: ObservableObject {
 
                 var initialFiles = sortedFiles
                 var deferredFiles: [String] = []
-                if sortedFiles.count >= Self.hugeDatasetFileThreshold {
-                    let cutoff = Calendar.current.date(
-                        byAdding: .day,
-                        value: -Self.hugeDatasetRecentDays,
-                        to: Date()
-                    ) ?? .distantPast
+                if let cutoff = Self.initialLoadCutoff(for: timeFilter) {
+                    initialFiles = sortedFiles.filter { (currentModTimes[$0] ?? .distantPast) >= cutoff }
+                    deferredFiles = sortedFiles.filter { (currentModTimes[$0] ?? .distantPast) < cutoff }
+                } else if sortedFiles.count >= Self.hugeDatasetFileThreshold
+                    || totalBytes >= Self.hugeDatasetByteThreshold {
+                    let cutoff = Self.recentCutoff(days: Self.hugeDatasetRecentDays)
                     let recentFiles = sortedFiles.filter { (currentModTimes[$0] ?? .distantPast) >= cutoff }
                     let oldFiles = sortedFiles.filter { (currentModTimes[$0] ?? .distantPast) < cutoff }
                     if !recentFiles.isEmpty {
@@ -362,6 +365,34 @@ final class StatsViewModel: ObservableObject {
     }
 
     // MARK: - Static Parse Helpers (called from Task.detached)
+
+    private static func initialLoadCutoff(for filter: TimeFilter) -> Date? {
+        guard let filterStart = filter.startDate else { return nil }
+        let chartStart = recentCutoff(days: chartHistoryDays)
+        return min(filterStart, chartStart)
+    }
+
+    private static func recentCutoff(days: Int) -> Date {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        return calendar.date(byAdding: .day, value: -(days - 1), to: today) ?? .distantPast
+    }
+
+    nonisolated private static func totalFileBytes(_ paths: [String]) -> Int64 {
+        let fm = FileManager.default
+        var total: Int64 = 0
+        for path in paths {
+            guard let attrs = try? fm.attributesOfItem(atPath: path) else { continue }
+            if let size = attrs[.size] as? NSNumber {
+                total += size.int64Value
+            } else if let size = attrs[.size] as? Int64 {
+                total += size
+            } else if let size = attrs[.size] as? Int {
+                total += Int64(size)
+            }
+        }
+        return total
+    }
 
     /// 全量解析：返回 (projects, sessions, fileModTimes)
     nonisolated private static func fullParseForSource(
@@ -748,9 +779,7 @@ final class StatsViewModel: ObservableObject {
             loadConversationSessionsInBackground()
         }
 
-        if currentFilter == .all {
-            triggerDeferredHistoricalLoadIfNeeded()
-        }
+        triggerDeferredHistoricalLoadIfNeeded()
 
         if !lightweight {
             // 懒加载 git stats（后台异步，不阻塞 UI）
@@ -864,8 +893,19 @@ final class StatsViewModel: ObservableObject {
         guard historicalLoadTask == nil else { return }
         guard !deferredHistoricalFilePaths.isEmpty else { return }
 
-        let deferredPaths = deferredHistoricalFilePaths
-        deferredHistoricalFilePaths = []
+        let cutoff = timeFilter.startDate
+        let deferredPaths: [String]
+        if let cutoff {
+            deferredPaths = deferredHistoricalFilePaths.filter {
+                (cachedFileModTimes[$0] ?? .distantPast) >= cutoff
+            }
+            guard !deferredPaths.isEmpty else { return }
+            let loadingSet = Set(deferredPaths)
+            deferredHistoricalFilePaths.removeAll { loadingSet.contains($0) }
+        } else {
+            deferredPaths = deferredHistoricalFilePaths
+            deferredHistoricalFilePaths = []
+        }
         let sourceAtStart = selectedSource
         let projectAtStart = selectedProject
 
@@ -1071,7 +1111,9 @@ final class StatsViewModel: ObservableObject {
         }
         // 之后每 4 小时检查
         versionCheckTimer = Timer.scheduledTimer(withTimeInterval: 4 * 3600, repeats: true) { [weak self] _ in
-            self?.performVersionCheck()
+            Task { @MainActor in
+                self?.performVersionCheck()
+            }
         }
     }
 

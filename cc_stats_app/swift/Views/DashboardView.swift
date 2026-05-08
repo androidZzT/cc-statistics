@@ -781,7 +781,147 @@ struct DashboardView: View {
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundColor(Theme.amber)
                 }
+
+                if stats.hasCacheActivity {
+                    Divider()
+                        .background(Theme.border)
+
+                    cacheGradeSection(stats: stats)
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func cacheGradeSection(stats: SessionStats) -> some View {
+        let cache = stats.cacheStats
+        let gradeColor = cacheGradeColor(cache.grade)
+        let byModel = cache.byModel.sorted { lhs, rhs in
+            if lhs.value == rhs.value { return lhs.key < rhs.key }
+            return lhs.value > rhs.value
+        }
+
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "externaldrive.badge.timemachine")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(gradeColor)
+                Text(L10n.cacheGrade)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Theme.textPrimary)
+                    .textCase(.uppercase)
+                Spacer()
+                cacheGradeBadge(cache: cache)
+            }
+
+            if cache.isAvailable {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(Int(round(cache.hitRate * 100)))%")
+                            .font(.system(size: 24, weight: .bold, design: .rounded))
+                            .foregroundColor(gradeColor)
+                        Text(L10n.cacheHitRate)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Theme.textSecondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        cacheDetailRow(
+                            label: L10n.cacheRead,
+                            value: "\(formatTokens(cache.cacheReadTokens)) / \(formatTokens(cache.totalInputTokens))"
+                        )
+                        cacheDetailRow(
+                            label: L10n.cacheSavings,
+                            value: CostEstimator.formatCost(cache.savingsUSD)
+                        )
+                    }
+
+                    Spacer(minLength: 0)
+                }
+
+                if !byModel.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(L10n.cacheByModel)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(Theme.textSecondary)
+
+                        ForEach(Array(byModel.prefix(3)), id: \.key) { entry in
+                            HStack(spacing: 8) {
+                                Text(entry.key)
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundColor(Theme.textPrimary)
+                                    .lineLimit(1)
+                                    .frame(width: 150, alignment: .leading)
+
+                                GeometryReader { geometry in
+                                    ZStack(alignment: .leading) {
+                                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                            .fill(Color.white.opacity(0.04))
+                                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                            .fill(gradeColor.opacity(0.8))
+                                            .frame(width: max(geometry.size.width * CGFloat(entry.value), 4))
+                                    }
+                                }
+                                .frame(height: 8)
+
+                                Text("\(Int(round(entry.value * 100)))%")
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundColor(gradeColor)
+                                    .frame(width: 38, alignment: .trailing)
+                            }
+                        }
+                    }
+                }
+            } else {
+                Text(L10n.cacheNoReadYet)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Theme.textSecondary)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    private func cacheGradeColor(_ grade: String) -> Color {
+        switch grade {
+        case "excellent":
+            return Theme.green
+        case "good":
+            return Theme.cyan
+        case "fair":
+            return Theme.amber
+        case "poor":
+            return Theme.red
+        default:
+            return Theme.textTertiary
+        }
+    }
+
+    private func cacheGradeBadge(cache: CacheStatsSummary) -> some View {
+        let color = cacheGradeColor(cache.grade)
+        return Text(cache.gradeLabel.uppercased())
+            .font(.system(size: 9, weight: .bold))
+            .foregroundColor(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(color.opacity(0.12))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(color.opacity(0.25), lineWidth: 0.5)
+                    )
+            )
+    }
+
+    private func cacheDetailRow(label: String, value: String) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(Theme.textSecondary)
+                .frame(width: 72, alignment: .leading)
+            Text(value)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(Theme.textPrimary)
         }
     }
 
@@ -1346,6 +1486,7 @@ struct DashboardView: View {
     // MARK: - Export
 
     private func exportJSON(stats: SessionStats) {
+        let cache = stats.cacheStats
         var data: [String: Any] = [
             "sessions": stats.sessionCount,
             "instructions": stats.userInstructions,
@@ -1357,6 +1498,15 @@ struct DashboardView: View {
             "git_commits": stats.gitCommits,
             "git_additions": stats.gitAdditions,
             "git_deletions": stats.gitDeletions,
+            "cache_stats": [
+                "hit_rate": cache.hitRate,
+                "grade": cache.grade,
+                "grade_label": cache.gradeLabel,
+                "cache_read_tokens": cache.cacheReadTokens,
+                "total_input_tokens": cache.totalInputTokens,
+                "savings_usd": cache.savingsUSD,
+                "by_model": cache.byModel,
+            ],
         ]
         // Tool calls
         data["tool_calls"] = stats.toolCalls

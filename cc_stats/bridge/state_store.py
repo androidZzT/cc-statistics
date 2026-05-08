@@ -121,10 +121,12 @@ class BridgeStateStore:
             task = self._tasks.get(item.task_id)
             if task and task.status == TaskStatus.WAITING_APPROVAL:
                 task.status = TaskStatus.FAILED
-                task.phase = "failed"
+                task.phase = "approval_timeout"
                 task.error_message = "Approval timeout."
                 task.summary = task.error_message
                 task.updated_at = now
+                if self._current_task_id == item.task_id:
+                    self._current_task_id = None
 
     def _resolve_approval_locked(
         self,
@@ -139,6 +141,15 @@ class BridgeStateStore:
             item.resolved = True
             item.approved = False
             item.resolved_at = now
+            task = self._tasks.get(item.task_id)
+            if task and task.status == TaskStatus.WAITING_APPROVAL:
+                task.status = TaskStatus.FAILED
+                task.phase = "approval_timeout"
+                task.error_message = "Approval timeout."
+                task.summary = task.error_message
+                task.updated_at = now
+                if self._current_task_id == item.task_id:
+                    self._current_task_id = None
             return False, item
         item.resolved = True
         item.approved = approved
@@ -146,12 +157,17 @@ class BridgeStateStore:
         task = self._tasks.get(item.task_id)
         if task:
             task.updated_at = now
-            task.status = TaskStatus.RUNNING if approved else TaskStatus.FAILED
             if approved:
+                task.status = TaskStatus.RUNNING
+                task.phase = "running"
                 task.error_message = ""
             else:
+                task.status = TaskStatus.FAILED
+                task.phase = "approval_denied"
                 task.error_message = "Approval rejected by user."
                 task.summary = task.error_message
+                if self._current_task_id == item.task_id:
+                    self._current_task_id = None
         return True, item
 
     def _get_or_create_task(self, event: Event) -> TaskSnapshot:
@@ -224,6 +240,11 @@ class BridgeStateStore:
 
     def _on_task_completed(self, event: Event) -> None:
         task = self._get_or_create_task(event)
+        if task.status in {TaskStatus.FAILED, TaskStatus.CANCELED}:
+            task.updated_at = event.timestamp
+            if self._current_task_id == event.task_id:
+                self._current_task_id = None
+            return
         task.status = TaskStatus.COMPLETED
         task.phase = "completed"
         task.duration_sec = max(0, int(event.payload.get("duration_sec", task.duration_sec) or 0))

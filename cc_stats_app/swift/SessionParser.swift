@@ -125,18 +125,13 @@ final class SessionParser {
 
     /// Parse a single JSONL session file into a Session object.
     private func parseSessionFile(_ filePath: String, projectPath: String) -> Session? {
-        guard let data = fileManager.contents(atPath: filePath),
-              let content = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-
-        let lines = content.components(separatedBy: .newlines).filter { !$0.isEmpty }
         var messages: [Message] = []
 
-        for line in lines {
+        JSONLLineReader.forEachLine(in: filePath) { line in
             if let message = parseLine(line) {
                 messages.append(message)
             }
+            return true
         }
 
         guard !messages.isEmpty else { return nil }
@@ -150,15 +145,11 @@ final class SessionParser {
             if let agentFiles = try? fileManager.contentsOfDirectory(atPath: subagentsDir) {
                 for agentFile in agentFiles where agentFile.hasSuffix(".jsonl") {
                     let agentFilePath = (subagentsDir as NSString).appendingPathComponent(agentFile)
-                    guard let agentData = fileManager.contents(atPath: agentFilePath),
-                          let agentContent = String(data: agentData, encoding: .utf8) else {
-                        continue
-                    }
-                    let agentLines = agentContent.components(separatedBy: CharacterSet.newlines).filter { !$0.isEmpty }
-                    for agentLine in agentLines {
+                    JSONLLineReader.forEachLine(in: agentFilePath) { agentLine in
                         if let message = parseLine(agentLine) {
                             messages.append(message)
                         }
+                        return true
                     }
                 }
             }
@@ -397,14 +388,17 @@ final class SessionParser {
 
         // 从第一个 JSONL 文件中读取 cwd 字段
         for filePath in jsonlFiles.prefix(1) {
-            guard let data = fileManager.contents(atPath: filePath),
-                  let content = String(data: data, encoding: .utf8) else { continue }
-            for line in content.components(separatedBy: .newlines) where !line.isEmpty {
+            var decodedName: String?
+            JSONLLineReader.forEachLine(in: filePath) { line in
                 guard let lineData = line.data(using: .utf8),
                       let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                      let cwd = json["cwd"] as? String, !cwd.isEmpty else { continue }
+                      let cwd = json["cwd"] as? String, !cwd.isEmpty else { return true }
                 // 取路径最后一段作为项目名
-                return (cwd as NSString).lastPathComponent
+                decodedName = (cwd as NSString).lastPathComponent
+                return false
+            }
+            if let decodedName {
+                return decodedName
             }
         }
 

@@ -4,6 +4,7 @@
 
 支持的 hook 事件:
 - Stop: 会话结束时发送完成通知
+- StopFailure: 会话异常结束时发送失败状态
 - PreToolUse: 工具调用前发送进度通知
 - PermissionRequest: 需要确权时推送审批并支持回写 allow/deny
 - Notification: Claude Code 空闲等待用户输入时通知
@@ -109,6 +110,26 @@ def _extract_action_description(tool_input: Any) -> str:
         or str(tool_input.get("file_path", "") or "")
         or str(tool_input.get("description", "") or "")
     )
+
+
+def _extract_prompt_summary(event: dict[str, Any]) -> str:
+    for key in ("prompt", "message", "user_prompt", "text"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().replace("\n", " ")[:180]
+    return "Claude task started"
+
+
+def _extract_failure_summary(event: dict[str, Any]) -> str:
+    for key in ("error_message", "message", "error", "reason", "stop_reason"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().replace("\n", " ")[:240]
+    return "Claude task failed"
+
+
+def _project_dir() -> str:
+    return os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
 
 
 def _approval_id_from_event(event: dict[str, Any]) -> str:
@@ -237,6 +258,14 @@ def handle_stop(event: dict[str, Any]) -> None:
     # 从 stop_reason 判断是否正常结束
     stop_reason = event.get("stop_reason", "end_turn")
     if stop_reason == "user_cancelled":
+        _publish_bridge_event(
+            raw_event=event,
+            event_type="task_canceled",
+            payload={
+                "duration_sec": 0,
+                "reason": "user_cancelled",
+            },
+        )
         return  # 用户主动取消不通知
 
     # 尝试解析最近的会话文件获取统计
@@ -259,6 +288,43 @@ def handle_stop(event: dict[str, Any]) -> None:
             "duration_sec": int(duration),
             "usage": {"input_tokens": 0, "output_tokens": int(tokens), "cost_usd": float(cost)},
             "result_summary": "Claude task completed",
+        },
+    )
+
+
+def handle_stop_failure(event: dict[str, Any]) -> None:
+    """处理 StopFailure 事件 — 标记实时任务失败。"""
+    message = _extract_failure_summary(event)
+    _publish_bridge_event(
+        raw_event=event,
+        event_type="task_failed",
+        payload={
+            "duration_sec": 0,
+            "error_message": message,
+        },
+    )
+
+
+def handle_user_prompt_submit(event: dict[str, Any]) -> None:
+    """处理 UserPromptSubmit 事件 — 标记实时任务开始。"""
+    prompt = _extract_prompt_summary(event)
+    _publish_bridge_event(
+        raw_event=event,
+        event_type="task_started",
+        payload={
+            "title": prompt,
+            "repo": _project_dir(),
+            "model": str(event.get("model") or ""),
+        },
+    )
+    _publish_bridge_event(
+        raw_event=event,
+        event_type="task_progress",
+        payload={
+            "phase": "planning",
+            "summary": prompt,
+            "duration_sec": 0,
+            "usage": {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
         },
     )
 
@@ -334,6 +400,45 @@ def handle_pre_tool_use(event: dict[str, Any]) -> None:
                 "command_preview": description,
                 "status": "running",
             },
+        },
+    )
+
+
+def handle_post_tool_use(event: dict[str, Any], failed: bool = False) -> None:
+    """处理 PostToolUse / PostToolUseFailure 事件 — 更新工具执行结果。"""
+    tool_name = str(event.get("tool_name") or "")
+    tool_input = event.get("tool_input", {})
+    description = _extract_action_description(tool_input)
+    status = "failed" if failed else "completed"
+    summary = description or f"{tool_name or 'Tool'} {status}"
+    _publish_bridge_event(
+        raw_event=event,
+        event_type="task_progress",
+        payload={
+            "phase": "tool_failed" if failed else "tool_completed",
+            "summary": summary,
+            "duration_sec": 0,
+            "usage": {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+            "last_tool": {
+                "name": tool_name or "Unknown",
+                "command_preview": description,
+                "status": status,
+            },
+        },
+    )
+
+
+def handle_subagent_event(event: dict[str, Any], event_name: str) -> None:
+    """处理 SubagentStart / SubagentStop 事件 — 标记子任务阶段。"""
+    summary = str(event.get("message") or event.get("description") or event_name)
+    _publish_bridge_event(
+        raw_event=event,
+        event_type="task_progress",
+        payload={
+            "phase": "subagent" if event_name == "SubagentStart" else "subagent_done",
+            "summary": summary[:180],
+            "duration_sec": 0,
+            "usage": {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
         },
     )
 
@@ -470,6 +575,8 @@ def process_hook_event(event: dict[str, Any]) -> dict[str, Any] | None:
 
     handlers = {
         "Stop": handle_stop,
+        "StopFailure": handle_stop_failure,
+        "UserPromptSubmit": handle_user_prompt_submit,
         "PreToolUse": handle_pre_tool_use,
         "PermissionRequest": handle_permission_request,
         "Notification": handle_notification,
@@ -480,6 +587,12 @@ def process_hook_event(event: dict[str, Any]) -> dict[str, Any] | None:
         result = handler(mutable_event)
         if isinstance(result, dict):
             return result
+    elif event_type == "PostToolUse":
+        handle_post_tool_use(mutable_event)
+    elif event_type == "PostToolUseFailure":
+        handle_post_tool_use(mutable_event, failed=True)
+    elif event_type in {"SubagentStart", "SubagentStop"}:
+        handle_subagent_event(mutable_event, event_type)
     return None
 
 

@@ -67,6 +67,30 @@ select:hover{border-color:var(--cyan)}
 .model-tokens{font-size:10px;color:var(--text3);font-family:monospace}
 .stacked-bar{height:8px;border-radius:4px;display:flex;overflow:hidden;margin-top:4px}
 .stacked-seg{height:100%;transition:width .5s ease}
+.cache-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}
+.cache-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;border:1px solid transparent}
+.cache-badge.excellent{color:var(--green);background:rgba(63,185,80,.12);border-color:rgba(63,185,80,.2)}
+.cache-badge.good{color:var(--cyan);background:rgba(88,166,255,.12);border-color:rgba(88,166,255,.2)}
+.cache-badge.fair{color:var(--amber);background:rgba(240,136,62,.12);border-color:rgba(240,136,62,.2)}
+.cache-badge.poor{color:var(--red);background:rgba(248,81,73,.12);border-color:rgba(248,81,73,.2)}
+.cache-badge.na{color:var(--text2);background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.08)}
+.cache-hit{font-size:28px;font-weight:800;letter-spacing:-1px;margin-top:6px}
+.cache-hit-sub{font-size:11px;color:var(--text3)}
+.cache-savings{font-size:18px;font-weight:700;color:var(--amber);text-align:right}
+.cache-savings-sub{font-size:10px;color:var(--text3);text-align:right}
+.cache-track{height:10px;background:rgba(255,255,255,.04);border-radius:999px;overflow:hidden;margin-bottom:10px}
+.cache-fill{height:100%;border-radius:999px;transition:width .5s ease}
+.cache-detail{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);font-size:11px}
+.cache-detail:last-of-type{border-bottom:none}
+.cache-detail .label{color:var(--text2)}
+.cache-detail .value{color:var(--text);font-weight:600;font-family:monospace}
+.cache-model-title{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 6px}
+.cache-model-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.cache-model-name{font-size:10px;color:var(--text2);width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace}
+.cache-model-bar{flex:1;height:8px;background:rgba(255,255,255,.04);border-radius:999px;overflow:hidden}
+.cache-model-fill{height:100%;border-radius:999px;transition:width .5s ease}
+.cache-model-rate{font-size:10px;color:var(--text);width:36px;text-align:right;font-weight:700;font-family:monospace}
+.cache-empty{font-size:11px;color:var(--text3);padding:4px 0}
 .skill-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .skill-name{font-size:11px;color:var(--text2);width:90px;text-align:right;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .skill-bar{flex:1;height:16px;background:rgba(255,255,255,.03);border-radius:3px;overflow:hidden}
@@ -121,6 +145,7 @@ select:hover{border-color:var(--cyan)}
     <div class="card"><div class="card-title">Token Usage</div><div id="token-section"></div></div>
     <div class="card"><div class="card-title">Tool Calls</div><div id="tools-section"></div></div>
   </div>
+  <div class="card" id="cache-card" style="margin-bottom:16px"><div class="card-title">Cache Grade</div><div id="cache-section"></div></div>
   <div class="card" id="skill-card" style="display:none;margin-bottom:16px"><div class="card-title">Skill Usage</div><div id="skill-section"></div></div>
   <div class="info" id="info"></div>
 </div>
@@ -129,6 +154,7 @@ let currentProject='',currentDays=1,currentSource='',allProjects=[];
 const COLORS=['#58a6ff','#bc8cff','#3fb950','#f0883e','#f85149','#f778ba','#39d2c0','#d29922'];
 function fmt(n){if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toLocaleString()}
 function fmtCost(n){return n>=100?'$'+n.toFixed(0):n>=1?'$'+n.toFixed(2):n>=.01?'$'+n.toFixed(3):'$'+n.toFixed(4)}
+function pct(n){return Math.round(n*100)+'%'}
 
 async function api(path,params){
   const url=new URL(path,location.origin);
@@ -166,6 +192,7 @@ async function loadStats(){
   updateTime(stats);
   updateCode(stats);
   updateTokens(stats);
+  updateCache(stats);
   updateTools(stats);
   updateSkills(skills);
   const info=document.getElementById('info');
@@ -227,6 +254,29 @@ function updateTokens(d){
       +'<div class="stacked-bar"><div class="stacked-seg" style="width:'+Math.round(m.input_tokens/total*100)+'%;background:var(--cyan)"></div><div class="stacked-seg" style="width:'+Math.round(m.output_tokens/total*100)+'%;background:var(--purple)"></div><div class="stacked-seg" style="width:'+Math.round(m.cache_read/total*100)+'%;background:var(--green)"></div><div class="stacked-seg" style="width:'+Math.round(m.cache_creation/total*100)+'%;background:var(--amber)"></div></div></div>';
   });
   html+='<div style="display:flex;gap:12px;margin-top:8px;font-size:10px"><span style="color:var(--cyan)">In: '+fmt(d.token_usage.input_tokens)+'</span><span style="color:var(--purple)">Out: '+fmt(d.token_usage.output_tokens)+'</span><span style="color:var(--green)">Cache: '+fmt(d.token_usage.cache_read+d.token_usage.cache_creation)+'</span><span style="color:var(--amber);font-weight:700">'+fmtCost(d.estimated_cost)+'</span></div>';
+  el.innerHTML=html;
+}
+
+function updateCache(d){
+  const card=document.getElementById('cache-card');
+  const el=document.getElementById('cache-section');
+  const cache=d.cache_stats;
+  if(!cache){card.style.display='none';return;}
+  card.style.display='';
+  const tone=cache.grade||'na';
+  const byModel=Object.entries(cache.by_model||{}).sort((a,b)=>b[1]-a[1]).slice(0,4);
+  if((cache.cache_read_tokens||0)===0){
+    el.innerHTML='<div class="cache-hero"><div><div class="cache-badge na">'+(cache.grade_label||'N/A')+'</div><div class="cache-hit">—</div><div class="cache-hit-sub">No cache reuse yet</div></div><div class="cache-savings">'+fmtCost(cache.savings_usd||0)+'</div></div><div class="cache-empty">Cache writes may exist, but there are no cache-read tokens yet.</div>';
+    return;
+  }
+  let html='<div class="cache-hero"><div><div class="cache-badge '+tone+'">'+cache.grade_label+'</div><div class="cache-hit">'+pct(cache.hit_rate||0)+'</div><div class="cache-hit-sub">hit rate</div></div><div><div class="cache-savings">'+fmtCost(cache.savings_usd||0)+'</div><div class="cache-savings-sub">saved on Claude cache reads</div></div></div>';
+  html+='<div class="cache-track"><div class="cache-fill" style="width:'+Math.max(2,Math.round((cache.hit_rate||0)*100))+'%;background:'+(tone==='excellent'?'var(--green)':tone==='good'?'var(--cyan)':tone==='fair'?'var(--amber)':tone==='poor'?'var(--red)':'var(--text3)')+'"></div></div>';
+  html+='<div class="cache-detail"><span class="label">Cache Read</span><span class="value">'+fmt(cache.cache_read_tokens)+' / '+fmt(cache.total_input_tokens)+' input</span></div>';
+  html+='<div class="cache-detail"><span class="label">Coverage</span><span class="value">'+pct(cache.hit_rate||0)+'</span></div>';
+  if(byModel.length){
+    html+='<div class="cache-model-title">By Model</div>';
+    html+=byModel.map(([name,rate])=>'<div class="cache-model-row"><div class="cache-model-name" title="'+name+'">'+name+'</div><div class="cache-model-bar"><div class="cache-model-fill" style="width:'+Math.max(2,Math.round(rate*100))+'%;background:'+(tone==='excellent'?'var(--green)':tone==='good'?'var(--cyan)':tone==='fair'?'var(--amber)':'var(--red)')+'"></div></div><div class="cache-model-rate">'+pct(rate)+'</div></div>').join('');
+  }
   el.innerHTML=html;
 }
 
