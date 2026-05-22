@@ -11,6 +11,7 @@ from pathlib import Path
 from .analyzer import SessionStats, TokenUsage, analyze_session, merge_stats
 from .formatter import format_skill_stats, format_stats
 from .parser import (
+    _claude_session_entry_files,
     find_codex_sessions,
     find_codex_sessions_by_keyword,
     find_gemini_sessions,
@@ -92,6 +93,16 @@ def _trim_stats_by_date_range(
 
     stats.token_by_date = trimmed
 
+    had_model_by_date = bool(stats.token_by_model_by_date)
+    trimmed_model_by_date: dict[str, dict[str, TokenUsage]] = {}
+    for date_key, model_map in stats.token_by_model_by_date.items():
+        if since_date and date_key < since_date:
+            continue
+        if until_date and date_key > until_date:
+            continue
+        trimmed_model_by_date[date_key] = model_map
+    stats.token_by_model_by_date = trimmed_model_by_date
+
     # 从裁剪后的 token_by_date 重算 token_usage 总量
     new_usage = TokenUsage()
     for tu in trimmed.values():
@@ -100,6 +111,40 @@ def _trim_stats_by_date_range(
         new_usage.cache_read_input_tokens += tu.cache_read_input_tokens
         new_usage.cache_creation_input_tokens += tu.cache_creation_input_tokens
     stats.token_usage = new_usage
+
+    if stats.coding_rhythm:
+        old_rhythm_tokens = sum(
+            int(data.get("token_count", 0) or 0)
+            for data in stats.coding_rhythm.values()
+        )
+        periods = list(stats.coding_rhythm.items())
+        allocated = 0
+        for idx, (_period, data) in enumerate(periods):
+            if old_rhythm_tokens <= 0:
+                new_count = 0
+            elif idx == len(periods) - 1:
+                new_count = new_usage.total - allocated
+            else:
+                old_count = int(data.get("token_count", 0) or 0)
+                new_count = int(new_usage.total * old_count / old_rhythm_tokens)
+                allocated += new_count
+            data["token_count"] = max(new_count, 0)
+
+    # 同步重算模型拆分，避免日期过滤后总量和费用/模型明细口径不一致。
+    if trimmed_model_by_date:
+        new_by_model: dict[str, TokenUsage] = {}
+        for model_map in trimmed_model_by_date.values():
+            for model, tu in model_map.items():
+                if model not in new_by_model:
+                    new_by_model[model] = TokenUsage()
+                m = new_by_model[model]
+                m.input_tokens += tu.input_tokens
+                m.output_tokens += tu.output_tokens
+                m.cache_read_input_tokens += tu.cache_read_input_tokens
+                m.cache_creation_input_tokens += tu.cache_creation_input_tokens
+        stats.token_by_model = new_by_model
+    elif had_model_by_date:
+        stats.token_by_model = {}
 
 
 def _resolve_project_name(proj_dir: Path, jsonl_files: list[Path]) -> str:
@@ -153,7 +198,7 @@ def _compare_projects(args) -> None:
     for proj in sorted(claude_projects.iterdir()):
         if not proj.is_dir():
             continue
-        jsonl_files = list(proj.glob("*.jsonl"))
+        jsonl_files = _claude_session_entry_files(proj)
         if not jsonl_files:
             continue
 
@@ -262,7 +307,7 @@ def _list_projects() -> None:
         for proj in sorted(claude_projects.iterdir()):
             if not proj.is_dir():
                 continue
-            jsonl_files = list(proj.glob("*.jsonl"))
+            jsonl_files = _claude_session_entry_files(proj)
             if not jsonl_files:
                 continue
             display_name = _resolve_project_name(proj, jsonl_files)

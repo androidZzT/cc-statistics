@@ -168,6 +168,64 @@ class TestTrimStatsByDateRange:
         assert stats.token_usage.cache_read_input_tokens == 2000
         assert stats.token_usage.cache_creation_input_tokens == 400
 
+    def test_token_by_model_trimmed_with_date_range(self):
+        """裁剪日期时模型拆分同步重算，避免费用和总 token 口径不一致"""
+        stats = _make_stats_with_dates({
+            "2026-04-01": (100, 50, 0, 0),
+            "2026-04-02": (200, 100, 20, 0),
+            "2026-04-03": (300, 150, 30, 0),
+        })
+        stats.token_by_model_by_date = {
+            "2026-04-01": {
+                "gpt-5.5": TokenUsage(input_tokens=100, output_tokens=50),
+            },
+            "2026-04-02": {
+                "gpt-5.5": TokenUsage(
+                    input_tokens=120,
+                    output_tokens=60,
+                    cache_read_input_tokens=20,
+                ),
+                "claude-sonnet-4.5": TokenUsage(input_tokens=80, output_tokens=40),
+            },
+            "2026-04-03": {
+                "claude-sonnet-4.5": TokenUsage(
+                    input_tokens=300,
+                    output_tokens=150,
+                    cache_read_input_tokens=30,
+                ),
+            },
+        }
+        stats.token_by_model = {
+            "gpt-5.5": TokenUsage(input_tokens=220, output_tokens=110, cache_read_input_tokens=20),
+            "claude-sonnet-4.5": TokenUsage(input_tokens=380, output_tokens=190, cache_read_input_tokens=30),
+        }
+
+        _trim_stats_by_date_range(stats, "2026-04-02", "2026-04-02")
+
+        assert set(stats.token_by_model) == {"gpt-5.5", "claude-sonnet-4.5"}
+        assert stats.token_by_model["gpt-5.5"].total == 200
+        assert stats.token_by_model["claude-sonnet-4.5"].total == 120
+        assert sum(tu.total for tu in stats.token_by_model.values()) == stats.token_usage.total
+
+    def test_coding_rhythm_token_count_trimmed_with_date_range(self):
+        """裁剪日期时编码节奏里的 token_count 也同步到裁剪后总量"""
+        stats = _make_stats_with_dates({
+            "2026-04-01": (100, 50, 0, 0),
+            "2026-04-02": (200, 100, 0, 0),
+        })
+        stats.coding_rhythm = {
+            "morning": {
+                "session_count": 1,
+                "token_count": stats.token_usage.total,
+                "active_minutes": 5.0,
+            }
+        }
+
+        _trim_stats_by_date_range(stats, "2026-04-02", "2026-04-02")
+
+        assert stats.token_usage.total == 300
+        assert stats.coding_rhythm["morning"]["token_count"] == 300
+
 
 # ── 端到端场景测试 ──────────────────────────────────────────
 

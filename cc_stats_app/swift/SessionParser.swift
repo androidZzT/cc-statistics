@@ -94,21 +94,57 @@ final class SessionParser {
     func parseSessionFile(atPath filePath: String) -> Session? {
         // Derive projectPath from file's parent directory structure
         // filePath is like: ~/.claude/projects/<encoded-project>/<uuid>.jsonl
+        // or ~/.claude/projects/<encoded-project>/<uuid>/subagents/agent-*.jsonl
         let dir = (filePath as NSString).deletingLastPathComponent
+        if (dir as NSString).lastPathComponent == "subagents" {
+            let sessionDir = (dir as NSString).deletingLastPathComponent
+            let projectDir = (sessionDir as NSString).deletingLastPathComponent
+            return parseSessionFile(filePath, projectPath: projectDir)
+        }
         return parseSessionFile(filePath, projectPath: dir)
     }
 
     // MARK: - File Discovery
 
-    /// Find top-level .jsonl files in a directory (non-recursive).
-    /// Subagent .jsonl files in subdirectories are merged during parent session parsing.
+    /// Find top-level .jsonl files plus orphan subagent files in a project directory.
+    /// Normal subagent files are merged during parent session parsing.
     private func findJSONLFiles(in directory: String) -> [String] {
         guard let contents = try? fileManager.contentsOfDirectory(atPath: directory) else {
             return []
         }
-        return contents
-            .filter { $0.hasSuffix(".jsonl") }
+
+        let topLevel = contents
+            .filter { $0.hasSuffix(".jsonl") && !$0.hasPrefix("agent-") }
             .map { (directory as NSString).appendingPathComponent($0) }
+
+        let parentSessionIds = Set(topLevel.map {
+            (($0 as NSString).lastPathComponent as NSString).deletingPathExtension
+        })
+
+        var orphanSubagents: [String] = []
+        for item in contents {
+            let sessionDir = (directory as NSString).appendingPathComponent(item)
+            var isDir: ObjCBool = false
+            guard fileManager.fileExists(atPath: sessionDir, isDirectory: &isDir),
+                  isDir.boolValue,
+                  !parentSessionIds.contains(item) else {
+                continue
+            }
+
+            let subagentsDir = (sessionDir as NSString).appendingPathComponent("subagents")
+            var isSubagentsDir: ObjCBool = false
+            guard fileManager.fileExists(atPath: subagentsDir, isDirectory: &isSubagentsDir),
+                  isSubagentsDir.boolValue,
+                  let agentFiles = try? fileManager.contentsOfDirectory(atPath: subagentsDir) else {
+                continue
+            }
+
+            orphanSubagents.append(contentsOf: agentFiles
+                .filter { $0.hasSuffix(".jsonl") }
+                .map { (subagentsDir as NSString).appendingPathComponent($0) })
+        }
+
+        return (topLevel + orphanSubagents).sorted()
     }
 
     /// List immediate subdirectories of a path.

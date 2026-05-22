@@ -47,69 +47,80 @@ def parse_jsonl(path: Path) -> Session:
     session_id = path.stem
     project_path = ""
 
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+    def read_messages(jsonl_path: Path) -> None:
+        nonlocal project_path
+        with open(jsonl_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
 
-            msg_type = obj.get("type")
-            if msg_type not in ("user", "assistant"):
-                continue
+                msg_type = obj.get("type")
+                if msg_type not in ("user", "assistant"):
+                    continue
 
-            if not project_path:
-                project_path = obj.get("cwd", "")
+                if not project_path:
+                    project_path = obj.get("cwd", "")
 
-            raw_msg = obj.get("message", {})
-            timestamp = obj.get("timestamp", "")
-            content = raw_msg.get("content", "")
+                raw_msg = obj.get("message", {})
+                if not isinstance(raw_msg, dict):
+                    raw_msg = {}
+                timestamp = obj.get("timestamp", "")
+                content = raw_msg.get("content", "")
+                usage = raw_msg.get("usage", {})
+                if not isinstance(usage, dict):
+                    usage = {}
 
-            # 判断是否为 tool_result（工具返回）
-            is_tool_result = False
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_result":
-                        is_tool_result = True
-                        break
+                # 判断是否为 tool_result（工具返回）
+                is_tool_result = False
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_result":
+                            is_tool_result = True
+                            break
 
-            # 提取 tool_use 调用
-            tool_calls: list[ToolCall] = []
-            if msg_type == "assistant" and isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_use":
-                        tool_calls.append(ToolCall(
-                            name=block.get("name", ""),
-                            input=block.get("input", {}),
-                            timestamp=timestamp,
-                            tool_use_id=block.get("id", ""),
-                        ))
+                # 提取 tool_use 调用
+                tool_calls: list[ToolCall] = []
+                if msg_type == "assistant" and isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_use":
+                            tool_calls.append(ToolCall(
+                                name=block.get("name", ""),
+                                input=block.get("input", {}),
+                                timestamp=timestamp,
+                                tool_use_id=block.get("id", ""),
+                            ))
 
-            # 提取 tool_result 的 is_error 信息
-            tool_results: dict[str, bool] = {}
-            if is_tool_result and isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_result":
-                        tid = block.get("tool_use_id", "")
-                        if tid:
-                            tool_results[tid] = bool(block.get("is_error", False))
+                # 提取 tool_result 的 is_error 信息
+                tool_results: dict[str, bool] = {}
+                if is_tool_result and isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_result":
+                            tid = block.get("tool_use_id", "")
+                            if tid:
+                                tool_results[tid] = bool(block.get("is_error", False))
 
-            messages.append(Message(
-                role=msg_type,
-                timestamp=timestamp,
-                content=content,
-                model=raw_msg.get("model"),
-                usage=raw_msg.get("usage", {}),
-                tool_calls=tool_calls,
-                is_tool_result=is_tool_result,
-                is_meta=obj.get("isMeta", False),
-                session_id=obj.get("sessionId", session_id),
-                message_id=raw_msg.get("id", ""),
-                tool_results=tool_results,
-            ))
+                messages.append(Message(
+                    role=msg_type,
+                    timestamp=timestamp,
+                    content=content,
+                    model=raw_msg.get("model"),
+                    usage=usage,
+                    tool_calls=tool_calls,
+                    is_tool_result=is_tool_result,
+                    is_meta=obj.get("isMeta", False),
+                    session_id=obj.get("sessionId", session_id),
+                    message_id=raw_msg.get("id", ""),
+                    tool_results=tool_results,
+                ))
+
+    read_messages(path)
+    for subagent_file in _subagent_files_for_parent(path):
+        read_messages(subagent_file)
 
     # 流式去重：Claude Code 对同一条 API 消息会写多条 JSONL 记录
     # （prefill 记录 output_tokens=1 + 最终记录 output_tokens=实际值）
@@ -156,6 +167,42 @@ def _path_to_dirname(path: Path) -> str:
     return str(path.resolve()).replace("/", "-")
 
 
+def _is_subagent_file(path: Path) -> bool:
+    return path.parent.name == "subagents" and path.name.startswith("agent-")
+
+
+def _subagent_files_for_parent(path: Path) -> list[Path]:
+    """Return subagent JSONL files belonging to a top-level Claude session."""
+    if _is_subagent_file(path):
+        return []
+    subagents_dir = path.parent / path.stem / "subagents"
+    if not subagents_dir.is_dir():
+        return []
+    return sorted(subagents_dir.glob("*.jsonl"))
+
+
+def _claude_session_entry_files(project_path: Path) -> list[Path]:
+    """Return top-level sessions plus orphan subagent sessions for one project.
+
+    Normal subagent files are merged when their parent top-level session is
+    parsed. Some Claude Code runs create only the nested subagent JSONL under a
+    worktree project, so include those orphan files as independent entries.
+    """
+    top_level = [
+        f for f in sorted(project_path.glob("*.jsonl"))
+        if not f.name.startswith("agent-")
+    ]
+    parent_ids = {f.stem for f in top_level}
+
+    orphan_subagents: list[Path] = []
+    for agent_file in sorted(project_path.glob("*/subagents/*.jsonl")):
+        session_dir = agent_file.parent.parent
+        if session_dir.name not in parent_ids:
+            orphan_subagents.append(agent_file)
+
+    return top_level + orphan_subagents
+
+
 def find_sessions(project_dir: Path | None = None) -> list[Path]:
     """查找 ~/.claude/projects/ 下所有 JSONL 会话文件
 
@@ -174,15 +221,7 @@ def find_sessions(project_dir: Path | None = None) -> list[Path]:
         if target_dirname:
             if proj.name != target_dirname:
                 continue
-        for jsonl in sorted(proj.glob("*.jsonl")):
-            # 跳过子代理会话
-            if jsonl.name.startswith("agent-"):
-                continue
-            # 防御性过滤：跳过 subagents/ 子目录下的文件，避免双重计数
-            # 父 session JSONL 已包含 subagents 的所有消息和 token
-            if "subagents" in jsonl.parts:
-                continue
-            results.append(jsonl)
+        results.extend(_claude_session_entry_files(proj))
 
     return results
 
@@ -201,12 +240,7 @@ def find_sessions_by_keyword(keyword: str) -> list[Path]:
     for proj in sorted(claude_projects.iterdir()):
         if not proj.is_dir():
             continue
-        # 防御性过滤：排除 subagents/ 子目录下的文件，避免双重计数
-        # 父 session JSONL 已包含 subagents 的所有消息和 token
-        jsonl_files = [
-            f for f in sorted(proj.glob("*.jsonl"))
-            if "subagents" not in f.parts
-        ]
+        jsonl_files = _claude_session_entry_files(proj)
         if not jsonl_files:
             continue
 
@@ -216,7 +250,7 @@ def find_sessions_by_keyword(keyword: str) -> list[Path]:
             continue
 
         # 再在 JSONL 的 cwd 中搜索
-        for jf in jsonl_files[:1]:
+        for jf in jsonl_files:
             try:
                 with open(jf, encoding="utf-8") as fh:
                     for ln in fh:

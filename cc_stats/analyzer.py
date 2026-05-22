@@ -129,6 +129,20 @@ def _count_lines(text: str) -> int:
     return len(text.rstrip("\n").split("\n"))
 
 
+def _to_int(value: object) -> int:
+    """Best-effort integer conversion for defensive JSONL parsing."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(float(value))
+        except ValueError:
+            return 0
+    return 0
+
+
 @dataclass
 class CodeChange:
     file_path: str
@@ -214,6 +228,10 @@ class SessionStats:
     # 7. 按日期分配的 Token（跨日 session 按消息时间戳归日）
     # key: "YYYY-MM-DD" 本地日期, value: 该日的 TokenUsage
     token_by_date: dict[str, TokenUsage] = field(default_factory=dict)
+
+    # 7b. 按日期 + 模型分配的 Token，用于日期过滤后的模型拆分和费用估算
+    # key: "YYYY-MM-DD" -> model -> TokenUsage
+    token_by_model_by_date: dict[str, dict[str, TokenUsage]] = field(default_factory=dict)
 
     # 8. 按分钟分配的 Token（用于 usage quota 预测）
     # key: "YYYY-MM-DD HH:MM" 本地时间, value: 该分钟的 TokenUsage
@@ -570,10 +588,10 @@ def analyze_session(session: Session) -> SessionStats:
             # -------- 5. Token 消耗 --------
             usage = msg.usage
             if usage:
-                inp = usage.get("input_tokens", 0)
-                out = usage.get("output_tokens", 0)
-                cache_read = usage.get("cache_read_input_tokens", 0)
-                cache_create = usage.get("cache_creation_input_tokens", 0)
+                inp = _to_int(usage.get("input_tokens", 0))
+                out = _to_int(usage.get("output_tokens", 0))
+                cache_read = _to_int(usage.get("cache_read_input_tokens", 0))
+                cache_create = _to_int(usage.get("cache_creation_input_tokens", 0))
 
                 stats.token_usage.input_tokens += inp
                 stats.token_usage.output_tokens += out
@@ -601,6 +619,17 @@ def analyze_session(session: Session) -> SessionStats:
                     d.output_tokens += out
                     d.cache_read_input_tokens += cache_read
                     d.cache_creation_input_tokens += cache_create
+
+                    if local_date not in stats.token_by_model_by_date:
+                        stats.token_by_model_by_date[local_date] = {}
+                    by_model_for_day = stats.token_by_model_by_date[local_date]
+                    if model not in by_model_for_day:
+                        by_model_for_day[model] = TokenUsage()
+                    dm = by_model_for_day[model]
+                    dm.input_tokens += inp
+                    dm.output_tokens += out
+                    dm.cache_read_input_tokens += cache_read
+                    dm.cache_creation_input_tokens += cache_create
 
                 # -------- 8. 按分钟归集 Token（usage quota 用） --------
                 local_minute = _get_local_minute(msg.timestamp)
@@ -804,6 +833,20 @@ def merge_stats(all_stats: list[SessionStats]) -> SessionStats:
             d.output_tokens += tu.output_tokens
             d.cache_read_input_tokens += tu.cache_read_input_tokens
             d.cache_creation_input_tokens += tu.cache_creation_input_tokens
+
+        # token_by_model_by_date 合并
+        for date_key, model_map in s.token_by_model_by_date.items():
+            if date_key not in merged.token_by_model_by_date:
+                merged.token_by_model_by_date[date_key] = {}
+            merged_model_map = merged.token_by_model_by_date[date_key]
+            for model, usage in model_map.items():
+                if model not in merged_model_map:
+                    merged_model_map[model] = TokenUsage()
+                dm = merged_model_map[model]
+                dm.input_tokens += usage.input_tokens
+                dm.output_tokens += usage.output_tokens
+                dm.cache_read_input_tokens += usage.cache_read_input_tokens
+                dm.cache_creation_input_tokens += usage.cache_creation_input_tokens
 
         for model, usage in s.token_by_model.items():
             if model not in merged.token_by_model:
