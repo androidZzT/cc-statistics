@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.2 (2026-05-22)
+
+### Fixes
+- Fix Claude Code subagent token accounting in CLI and macOS app discovery.
+- Keep date-filtered token totals, model breakdown, cost, and rhythm views aligned.
+- Fix update detection for installed packages by reading package metadata when source files are unavailable.
+- Preserve uv tool and pipx installation managers during app-triggered upgrades.
+- Add `cc-stats -v/--version` and `cc-stats-app -v/--version`.
+
 ## v1.0.1 (2026-05-08)
 
 ### Island

@@ -8,6 +8,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from . import __version__
 from .analyzer import SessionStats, TokenUsage, analyze_session, merge_stats
 from .formatter import format_skill_stats, format_stats
 from .parser import (
@@ -482,17 +483,16 @@ def _show_git_integration(args) -> None:
     print(format_git_integration(result))
 
 def main(argv: list[str] | None = None) -> None:
-    # 启动时检查更新提示（仅读缓存，无网络请求）
-    update_hint = _check_update_hint()
-    if update_hint:
-        print(f"\033[33m💡 {update_hint}\033[0m\n")
-
-    # 后台触发版本检查（更新缓存，供下次启动时使用）
-    _trigger_background_check()
-
     parser = argparse.ArgumentParser(
         prog="cc-stats",
         description="AI Coding 会话统计工具 — 支持 Claude Code / Codex / Gemini CLI",
+    )
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"cc-statistics {__version__}",
+        help="显示版本号并退出",
     )
     parser.add_argument(
         "path",
@@ -601,6 +601,15 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     args = parser.parse_args(argv)
+
+    # 启动时检查更新提示（仅读缓存，无网络请求）。放在 parse_args 之后，
+    # 避免 cc-stats --version 这类轻量命令触发后台检查。
+    update_hint = _check_update_hint()
+    if update_hint:
+        print(f"\033[33m💡 {update_hint}\033[0m\n")
+
+    # 后台触发版本检查（更新缓存，供下次启动时使用）
+    _trigger_background_check()
 
     # 手动解析时间参数：since 纯日期补全为 00:00:00，until 纯日期补全为 23:59:59
     if args.since:

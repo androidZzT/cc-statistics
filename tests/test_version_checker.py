@@ -12,10 +12,13 @@ from cc_stats.version_checker import (
     CheckResult,
     VersionCache,
     check_for_update,
+    detect_install_manager,
     fetch_latest_version,
     format_update_message,
+    get_install_info,
     get_cached_update,
     get_check_interval,
+    get_upgrade_command,
     is_auto_check_enabled,
     is_newer,
     parse_version,
@@ -74,6 +77,39 @@ class TestIsNewer(unittest.TestCase):
         self.assertTrue(is_newer("0.10.3", "0.2.0"))
         self.assertTrue(is_newer("0.3.0", "0.2.0"))
         self.assertFalse(is_newer("0.2.0", "0.10.3"))
+
+
+class TestInstallManager(unittest.TestCase):
+    """安装方式检测测试"""
+
+    def test_detects_uv_tool(self) -> None:
+        prefix = "/Users/ken/.local/share/uv/tools/cc-statistics"
+        self.assertEqual(detect_install_manager(prefix), "uv-tool")
+
+    def test_detects_pipx(self) -> None:
+        prefix = "/Users/ken/.local/pipx/venvs/cc-statistics"
+        self.assertEqual(detect_install_manager(prefix), "pipx")
+
+    def test_defaults_to_pip(self) -> None:
+        prefix = "/Users/ken/.local/share/mise/installs/python/3.14.3"
+        self.assertEqual(detect_install_manager(prefix), "pip")
+
+    @patch("cc_stats.version_checker.detect_install_manager")
+    def test_uv_upgrade_command(self, mock_manager: MagicMock) -> None:
+        mock_manager.return_value = "uv-tool"
+        self.assertEqual(get_upgrade_command(), "uv tool upgrade cc-statistics")
+
+    @patch("cc_stats.version_checker.detect_install_manager")
+    def test_pipx_upgrade_command(self, mock_manager: MagicMock) -> None:
+        mock_manager.return_value = "pipx"
+        self.assertEqual(get_upgrade_command(), "pipx upgrade cc-statistics")
+
+    def test_install_info_contains_upgrade_metadata(self) -> None:
+        info = get_install_info()
+        self.assertIn("version", info)
+        self.assertIn("manager", info)
+        self.assertIn("python_executable", info)
+        self.assertIn("upgrade_command", info)
 
 
 class TestVersionCache(unittest.TestCase):

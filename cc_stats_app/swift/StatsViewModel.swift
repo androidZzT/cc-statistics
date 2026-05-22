@@ -1164,29 +1164,98 @@ final class StatsViewModel: ObservableObject {
         }
     }
 
-    /// 执行升级命令，返回 (exitCode, stderr)
-    nonisolated private static func runUpgradeProcess() -> (Int32, String) {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+    private struct InstallInfo: Decodable {
+        let version: String?
+        let manager: String?
+        let pythonExecutable: String?
+        let upgradeCommand: String?
 
-        // 按优先级搜索 pipx
-        let pipxPaths = [
+        private enum CodingKeys: String, CodingKey {
+            case version
+            case manager
+            case pythonExecutable = "python_executable"
+            case upgradeCommand = "upgrade_command"
+        }
+    }
+
+    private struct UpgradeCommand {
+        let executable: String
+        let arguments: [String]
+    }
+
+    nonisolated private static func readInstallInfo() -> InstallInfo? {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cc-stats/install_info.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(InstallInfo.self, from: data)
+    }
+
+    nonisolated private static func firstExecutablePath(_ candidates: [String]) -> String? {
+        candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    nonisolated private static func resolvedUpgradeCommand() -> UpgradeCommand? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let installInfo = readInstallInfo()
+        let manager = installInfo?.manager ?? "pip"
+
+        let uvPath = firstExecutablePath([
+            "\(home)/.local/bin/uv",
+            "\(home)/.local/share/mise/shims/uv",
+            "/opt/homebrew/bin/uv",
+            "/usr/local/bin/uv",
+            "/usr/bin/uv",
+        ])
+        let pipxPath = firstExecutablePath([
             "\(home)/.local/bin/pipx",
+            "\(home)/.local/share/mise/shims/pipx",
             "/opt/homebrew/bin/pipx",
             "/usr/local/bin/pipx",
             "/usr/bin/pipx",
-        ]
+        ])
+
+        switch manager {
+        case "uv-tool":
+            guard let uvPath else { return nil }
+            return UpgradeCommand(
+                executable: uvPath,
+                arguments: ["tool", "upgrade", "cc-statistics"]
+            )
+        case "pipx":
+            guard let pipxPath else { return nil }
+            return UpgradeCommand(
+                executable: pipxPath,
+                arguments: ["upgrade", "cc-statistics"]
+            )
+        default:
+            if let python = installInfo?.pythonExecutable,
+               python.hasPrefix("/"),
+               !python.contains("\n"),
+               FileManager.default.isExecutableFile(atPath: python) {
+                return UpgradeCommand(
+                    executable: python,
+                    arguments: ["-m", "pip", "install", "--upgrade", "cc-statistics"]
+                )
+            }
+            return UpgradeCommand(
+                executable: "/usr/bin/env",
+                arguments: ["python3", "-m", "pip", "install", "--upgrade", "cc-statistics"]
+            )
+        }
+    }
+
+    /// 执行升级命令，返回 (exitCode, stderr)
+    nonisolated private static func runUpgradeProcess() -> (Int32, String) {
+        guard let command = resolvedUpgradeCommand() else {
+            let info = readInstallInfo()
+            let hint = info?.upgradeCommand ?? "uv tool upgrade cc-statistics / pipx upgrade cc-statistics"
+            return (1, "无法找到当前安装方式对应的升级工具，请手动运行：\(hint)")
+        }
 
         let process = Process()
         process.environment = ProcessInfo.processInfo.environment
-
-        if let pipxPath = pipxPaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
-            process.executableURL = URL(fileURLWithPath: pipxPath)
-            process.arguments = ["upgrade", "cc-statistics"]
-        } else {
-            // fallback 到 pip
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = ["pip", "install", "--upgrade", "cc-statistics"]
-        }
+        process.executableURL = URL(fileURLWithPath: command.executable)
+        process.arguments = command.arguments
 
         let stderrPipe = Pipe()
         process.standardOutput = FileHandle.nullDevice
@@ -1238,6 +1307,10 @@ final class StatsViewModel: ObservableObject {
            !version.isEmpty {
             return version
         }
+        if let version = readInstallInfo()?.version?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !version.isEmpty {
+            return version
+        }
         // Fallback: 从 __init__.py 读取 __version__
         let possiblePaths = [
             "/usr/local/lib/python3.12/site-packages/cc_stats/__init__.py",
@@ -1277,8 +1350,8 @@ final class StatsViewModel: ObservableObject {
 
     /// 比较版本号：remote > local ?
     nonisolated private static func isNewer(remote: String, local: String) -> Bool {
-        let remoteParts = remote.split(separator: ".").compactMap { Int($0) }
-        let localParts = local.split(separator: ".").compactMap { Int($0) }
+        let remoteParts = parseVersion(remote)
+        let localParts = parseVersion(local)
         let maxLen = max(remoteParts.count, localParts.count)
         for i in 0..<maxLen {
             let r = i < remoteParts.count ? remoteParts[i] : 0
@@ -1287,5 +1360,13 @@ final class StatsViewModel: ObservableObject {
             if r < l { return false }
         }
         return false
+    }
+
+    nonisolated private static func parseVersion(_ version: String) -> [Int] {
+        version
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"^[vV]"#, with: "", options: .regularExpression)
+            .split(separator: ".")
+            .map { Int($0) ?? 0 }
     }
 }

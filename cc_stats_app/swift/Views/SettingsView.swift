@@ -581,7 +581,7 @@ struct SettingsView: View {
 
     // MARK: - Version
 
-    static let fallbackVersion = "1.0.1"
+    static let fallbackVersion = "1.0.2"
 
     /// 动态读取 Python 层写入的版本号，fallback 到编译时默认值
     static var appVersion: String {
@@ -589,6 +589,13 @@ struct SettingsView: View {
         let versionFile = home.appendingPathComponent(".cc-stats/current_version")
         if let version = try? String(contentsOf: versionFile, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines),
+           !version.isEmpty {
+            return version
+        }
+        let installInfo = home.appendingPathComponent(".cc-stats/install_info.json")
+        if let data = try? Data(contentsOf: installInfo),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let version = (json["version"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
            !version.isEmpty {
             return version
         }

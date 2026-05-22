@@ -257,14 +257,28 @@ def _compile_swift():
 def _write_current_version() -> None:
     """将当前版本写入 ~/.cc-stats/current_version 供 Swift 层读取"""
     try:
-        from cc_stats import __version__
+        version = _get_current_version()
         version_dir = os.path.join(os.path.expanduser("~"), ".cc-stats")
         os.makedirs(version_dir, exist_ok=True)
         version_file = os.path.join(version_dir, "current_version")
         with open(version_file, "w") as f:
-            f.write(__version__)
+            f.write(version)
     except Exception as e:
         print(f"Warning: could not write version file: {e}", file=sys.stderr)
+
+
+def _write_install_info() -> None:
+    """将安装方式写入 ~/.cc-stats/install_info.json，供 Swift 层选择升级命令。"""
+    try:
+        from cc_stats.version_checker import get_install_info
+
+        version_dir = os.path.join(os.path.expanduser("~"), ".cc-stats")
+        os.makedirs(version_dir, exist_ok=True)
+        info_file = os.path.join(version_dir, "install_info.json")
+        with open(info_file, "w", encoding="utf-8") as f:
+            json.dump(get_install_info(), f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Warning: could not write install info: {e}", file=sys.stderr)
 
 
 def _is_bundled_binary() -> bool:
@@ -280,9 +294,15 @@ def _is_development_checkout() -> bool:
     return os.path.exists(os.path.join(repo_root, ".git"))
 
 
-def main():
+def main(argv: list[str] | None = None):
+    args = sys.argv[1:] if argv is None else argv
+    if any(arg in ("-v", "--version") for arg in args):
+        print(f"cc-statistics {_get_current_version()}")
+        return
+
     # 写入当前版本供 Swift 层读取
     _write_current_version()
+    _write_install_info()
 
     # 开发模式：优先按源码变更重编译，确保本地 Swift 修改可立即生效。
     if _is_development_checkout():

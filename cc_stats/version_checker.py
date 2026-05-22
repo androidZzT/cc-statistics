@@ -7,6 +7,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
+import shutil
+import sys
 import time
 import urllib.request
 import urllib.error
@@ -18,13 +22,67 @@ from . import __version__
 
 # ── 常量 ──────────────────────────────────────────────────────────
 
-PYPI_URL = "https://pypi.org/pypi/cc-statistics/json"
+PACKAGE_NAME = "cc-statistics"
+PYPI_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
 CACHE_DIR = Path.home() / ".cc-stats"
 CACHE_FILE = CACHE_DIR / "version_cache.json"
 CONFIG_FILE = CACHE_DIR / "config.json"
 
 DEFAULT_CHECK_INTERVAL = 4 * 3600  # 4 小时（秒）
 REQUEST_TIMEOUT = 5  # 秒
+
+
+# ── 安装方式检测 ─────────────────────────────────────────────────
+
+def _path_contains(path: str, needle: str) -> bool:
+    return needle in path.replace(os.sep, "/")
+
+
+def detect_install_manager(prefix: str | None = None) -> str:
+    """Best-effort 判断当前包由哪种工具安装。
+
+    返回值用于选择升级命令。只基于当前 Python 环境路径推断，不执行外部命令。
+    """
+    install_prefix = os.path.realpath(prefix or sys.prefix)
+
+    if _path_contains(install_prefix, "/uv/tools/") or _path_contains(
+        install_prefix, "/.local/share/uv/tools/"
+    ):
+        return "uv-tool"
+
+    if _path_contains(install_prefix, "/pipx/venvs/"):
+        return "pipx"
+
+    return "pip"
+
+
+def _quote_command(parts: list[str]) -> str:
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def get_upgrade_command() -> str:
+    """返回适合当前安装方式的升级命令文本。
+
+    这是展示给用户看的命令；真正执行升级的地方仍应使用参数数组而不是 shell 字符串。
+    """
+    manager = detect_install_manager()
+    if manager == "uv-tool":
+        return "uv tool upgrade cc-statistics"
+    if manager == "pipx":
+        return "pipx upgrade cc-statistics"
+    return _quote_command([sys.executable, "-m", "pip", "install", "--upgrade", PACKAGE_NAME])
+
+
+def get_install_info() -> dict[str, str]:
+    """导出 App 可读取的安装元信息。"""
+    return {
+        "version": __version__,
+        "manager": detect_install_manager(),
+        "python_executable": sys.executable,
+        "python_prefix": sys.prefix,
+        "entrypoint": shutil.which("cc-stats-app") or "",
+        "upgrade_command": get_upgrade_command(),
+    }
 
 
 # ── 数据结构 ──────────────────────────────────────────────────────
@@ -181,6 +239,7 @@ def check_for_update(force: bool = False) -> Optional[CheckResult]:
                     has_update=True,
                     current_version=current,
                     latest_version=cache.latest_version,
+                    upgrade_command=get_upgrade_command(),
                 )
             return None
 
@@ -198,6 +257,7 @@ def check_for_update(force: bool = False) -> Optional[CheckResult]:
             has_update=True,
             current_version=current,
             latest_version=latest,
+            upgrade_command=get_upgrade_command(),
         )
 
     return None
@@ -218,6 +278,7 @@ def get_cached_update() -> Optional[CheckResult]:
             has_update=True,
             current_version=current,
             latest_version=cache.latest_version,
+            upgrade_command=get_upgrade_command(),
         )
     return None
 
