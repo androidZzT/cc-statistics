@@ -581,7 +581,7 @@ struct SettingsView: View {
 
     // MARK: - Version
 
-    static let fallbackVersion = "1.0.2"
+    static let fallbackVersion = "1.0.3"
 
     /// 动态读取 Python 层写入的版本号，fallback 到编译时默认值
     static var appVersion: String {

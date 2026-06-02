@@ -330,6 +330,29 @@ class TestPermissionRequestHook(unittest.TestCase):
                 assert state["event"] == "PermissionRequest"
                 assert state["approval_id"] == "tool_abc"
 
+    @patch("cc_stats.hooks._publish_bridge_event")
+    @patch("cc_stats.hooks._wait_bridge_approval_decision")
+    def test_bypass_permission_request_allows_without_waiting(self, wait_mock, publish_mock):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("cc_stats.hooks.Path.home", return_value=Path(tmpdir)):
+                event = {
+                    "event": "PermissionRequest",
+                    "session_id": "session_bypass",
+                    "permission_mode": "bypassPermissions",
+                    "tool_name": "Bash",
+                    "tool_use_id": "tool_bypass",
+                    "tool_input": {"command": "git push origin main"},
+                }
+                out = process_hook_event(event)
+
+                assert out is not None
+                assert out["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+                wait_mock.assert_not_called()
+                publish_mock.assert_called_once()
+                state_file = Path(tmpdir) / ".cc-stats" / "activity-state.json"
+                assert not state_file.exists()
+
 
 class TestPreToolUseHook(unittest.TestCase):
     @patch("cc_stats.hooks._publish_bridge_event")

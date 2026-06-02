@@ -57,3 +57,45 @@ def test_collector_approval_event() -> None:
     assert len(pending) == 1
     assert pending[0].approval_id == "apr_123"
     assert pending[0].action == "git push origin main"
+
+
+def test_collector_pre_tool_use_without_approval_is_progress_only() -> None:
+    store = BridgeStateStore()
+    collector = ClaudeStreamJsonCollector(
+        store,
+        StreamCollectorConfig(task_id="task_3", session_id="session_3", title="Bypass work"),
+    )
+
+    emitted = collector.feed_object(
+        {
+            "event": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "permission_mode": "bypassPermissions",
+        }
+    )
+
+    assert [e.type for e in emitted] == [EventType.TASK_STARTED, EventType.TASK_PROGRESS]
+    assert store.pending_approvals() == []
+
+
+def test_collector_bypass_permission_mode_suppresses_approval_flag() -> None:
+    store = BridgeStateStore()
+    collector = ClaudeStreamJsonCollector(
+        store,
+        StreamCollectorConfig(task_id="task_4", session_id="session_4", title="Bypass approval"),
+    )
+
+    emitted = collector.feed_object(
+        {
+            "event": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git push origin main"},
+            "approval_required": True,
+            "approval_id": "apr_should_not_exist",
+            "permission_mode": "bypassPermissions",
+        }
+    )
+
+    assert [e.type for e in emitted] == [EventType.TASK_STARTED, EventType.TASK_PROGRESS]
+    assert store.pending_approvals() == []

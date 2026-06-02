@@ -23,4 +23,4 @@ if __version__ is None:
     try:
         __version__ = version("cc-statistics")
     except PackageNotFoundError:
-        __version__ = "1.0.2"
+        __version__ = "1.0.3"

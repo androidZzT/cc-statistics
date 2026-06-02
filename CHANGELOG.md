@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.0.3 (2026-06-02)
+
+### Fixes
+- Prevent macOS island from showing Permission Request panels when Claude Code runs in bypass permission mode.
+- Treat regular `PreToolUse` events as live progress only; approvals now require an explicit `PermissionRequest` or `approval_required=true`.
+- Auto-allow anomalous bypass-mode `PermissionRequest` hook events without creating pending approvals.
+
 ## v1.0.2 (2026-05-22)
 
 ### Fixes

@@ -140,6 +140,31 @@ def _approval_id_from_event(event: dict[str, Any]) -> str:
     return f"apr_{uuid4().hex}"
 
 
+def _permission_mode_from_event(event: dict[str, Any]) -> str:
+    for key in ("permission_mode", "permissionMode"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    meta = event.get("meta")
+    if isinstance(meta, dict):
+        for key in ("permission_mode", "permissionMode"):
+            value = meta.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    permissions = event.get("permissions")
+    if isinstance(permissions, dict):
+        value = permissions.get("mode")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _is_bypass_permission_mode(event: dict[str, Any]) -> bool:
+    mode = _permission_mode_from_event(event)
+    normalized = mode.replace("_", "").replace("-", "").lower()
+    return normalized.startswith("bypass")
+
+
 def _env_int(name: str, default: int) -> int:
     value = os.environ.get(name)
     if value is None:
@@ -570,6 +595,33 @@ def process_hook_event(event: dict[str, Any]) -> dict[str, Any] | None:
     event_type = _event_name(mutable_event)
     if event_type == "PermissionRequest" and not str(mutable_event.get("approval_id") or "").strip():
         mutable_event["approval_id"] = _approval_id_from_event(mutable_event)
+
+    if event_type == "PermissionRequest" and _is_bypass_permission_mode(mutable_event):
+        tool_name = str(mutable_event.get("tool_name") or "")
+        tool_input = mutable_event.get("tool_input", {})
+        description = _extract_action_description(tool_input)
+        _publish_bridge_event(
+            raw_event=mutable_event,
+            event_type="task_progress",
+            payload={
+                "phase": "permission_bypassed",
+                "summary": description or f"Bypassed permission for {tool_name or 'tool'}",
+                "duration_sec": 0,
+                "usage": {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+                "last_tool": {
+                    "name": tool_name or "Unknown",
+                    "command_preview": description,
+                    "status": "running",
+                },
+            },
+        )
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {"behavior": "allow"},
+            }
+        }
+
     if event_type:
         _write_activity_state(mutable_event, event_type)
 

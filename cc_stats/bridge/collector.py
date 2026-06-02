@@ -199,12 +199,24 @@ def _extract_permission_mode(payload: Mapping[str, Any]) -> str:
     mode = payload.get("permission_mode")
     if isinstance(mode, str):
         return mode
+    mode = payload.get("permissionMode")
+    if isinstance(mode, str):
+        return mode
     meta = payload.get("meta")
     if isinstance(meta, Mapping):
         mode = meta.get("permission_mode")
         if isinstance(mode, str):
             return mode
+        mode = meta.get("permissionMode")
+        if isinstance(mode, str):
+            return mode
     return ""
+
+
+def _is_bypass_permission_mode(payload: Mapping[str, Any]) -> bool:
+    mode = _extract_permission_mode(payload)
+    normalized = mode.replace("_", "").replace("-", "").lower()
+    return normalized.startswith("bypass")
 
 
 def _extract_usage(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -289,9 +301,14 @@ def _extract_last_tool(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _extract_approval(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    if _is_bypass_permission_mode(payload):
+        return None
     raw_type = str(payload.get("type", "")).lower()
     raw_event = str(payload.get("event", "")).lower()
-    if payload.get("approval_required") is not True and "pretooluse" not in raw_event and "approval" not in raw_type:
+    raw_hook_event = str(payload.get("hook_event_name", "")).lower()
+    is_permission_request = raw_event == "permissionrequest" or raw_hook_event == "permissionrequest"
+    is_approval_type = raw_type in {"approval_required", "permission_request", "permissionrequest"}
+    if payload.get("approval_required") is not True and not is_permission_request and not is_approval_type:
         return None
     tool_name = str(payload.get("tool_name") or "")
     tool_input = payload.get("tool_input")
