@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -164,7 +165,15 @@ def _path_to_dirname(path: Path) -> str:
 
     例如 /Users/foo/bar → -Users-foo-bar
     """
-    return str(path.resolve()).replace("/", "-")
+    return str(path.resolve()).replace("\\", "-").replace("/", "-")
+
+
+def _normalized_project_path(path: Path | str) -> str:
+    try:
+        resolved = str(Path(path).expanduser().resolve())
+    except OSError:
+        resolved = str(Path(path).expanduser())
+    return os.path.normcase(resolved)
 
 
 def _is_subagent_file(path: Path) -> bool:
@@ -203,12 +212,16 @@ def _claude_session_entry_files(project_path: Path) -> list[Path]:
     return top_level + orphan_subagents
 
 
-def find_sessions(project_dir: Path | None = None) -> list[Path]:
+def find_sessions(
+    project_dir: Path | None = None,
+    *,
+    projects_dir: Path | None = None,
+) -> list[Path]:
     """查找 ~/.claude/projects/ 下所有 JSONL 会话文件
 
     如果指定 project_dir，只返回匹配的项目。
     """
-    claude_projects = Path.home() / ".claude" / "projects"
+    claude_projects = projects_dir or Path.home() / ".claude" / "projects"
     if not claude_projects.exists():
         return []
 
@@ -226,11 +239,15 @@ def find_sessions(project_dir: Path | None = None) -> list[Path]:
     return results
 
 
-def find_sessions_by_keyword(keyword: str) -> list[Path]:
+def find_sessions_by_keyword(
+    keyword: str,
+    *,
+    projects_dir: Path | None = None,
+) -> list[Path]:
     """按关键词模糊匹配项目，在目录名和 JSONL 中的 cwd 中搜索"""
     import json
 
-    claude_projects = Path.home() / ".claude" / "projects"
+    claude_projects = projects_dir or Path.home() / ".claude" / "projects"
     if not claude_projects.exists():
         return []
 
@@ -683,9 +700,14 @@ def _read_codex_session_meta(path: Path) -> dict[str, Any]:
     return {}
 
 
-def find_codex_sessions(project_dir: Path | None = None) -> list[Path]:
+def find_codex_sessions(
+    project_dir: Path | None = None,
+    *,
+    codex_home_dir: Path | None = None,
+) -> list[Path]:
     """查找 ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl 会话文件"""
-    base = Path.home() / ".codex" / "sessions"
+    codex_home = codex_home_dir or Path.home() / ".codex"
+    base = codex_home / "sessions"
     if not base.exists():
         return []
 
@@ -693,10 +715,7 @@ def find_codex_sessions(project_dir: Path | None = None) -> list[Path]:
     if project_dir is None:
         return all_files
 
-    try:
-        target = str(project_dir.expanduser().resolve())
-    except OSError:
-        target = str(project_dir)
+    target = _normalized_project_path(project_dir)
 
     results: list[Path] = []
     for path in all_files:
@@ -704,21 +723,22 @@ def find_codex_sessions(project_dir: Path | None = None) -> list[Path]:
         cwd = meta.get("cwd", "")
         if not isinstance(cwd, str) or not cwd:
             continue
-        try:
-            normalized = str(Path(cwd).expanduser().resolve())
-        except OSError:
-            normalized = cwd
+        normalized = _normalized_project_path(cwd)
         if normalized == target:
             results.append(path)
     return results
 
 
-def find_codex_sessions_by_keyword(keyword: str) -> list[Path]:
+def find_codex_sessions_by_keyword(
+    keyword: str,
+    *,
+    codex_home_dir: Path | None = None,
+) -> list[Path]:
     """按关键词搜索 Codex 会话（路径/cwd/用户消息内容）"""
     keyword_lower = keyword.lower()
     results: list[Path] = []
 
-    for path in find_codex_sessions():
+    for path in find_codex_sessions(codex_home_dir=codex_home_dir):
         if keyword_lower in str(path).lower():
             results.append(path)
             continue
@@ -858,9 +878,13 @@ def _extract_gemini_content(raw: Any) -> Any:
     return raw or ""
 
 
-def find_gemini_sessions() -> list[Path]:
+def find_gemini_sessions(
+    *,
+    gemini_home_dir: Path | None = None,
+) -> list[Path]:
     """查找 ~/.gemini/tmp/*/chats/*.json 会话文件"""
-    gemini_dir = Path.home() / ".gemini" / "tmp"
+    gemini_home = gemini_home_dir or Path.home() / ".gemini"
+    gemini_dir = gemini_home / "tmp"
     if not gemini_dir.exists():
         return []
 
@@ -874,9 +898,13 @@ def find_gemini_sessions() -> list[Path]:
     return results
 
 
-def find_gemini_sessions_by_keyword(keyword: str) -> list[Path]:
+def find_gemini_sessions_by_keyword(
+    keyword: str,
+    *,
+    gemini_home_dir: Path | None = None,
+) -> list[Path]:
     """按关键词搜索 Gemini 会话（在 directories 和内容中搜索）"""
-    all_sessions = find_gemini_sessions()
+    all_sessions = find_gemini_sessions(gemini_home_dir=gemini_home_dir)
     if not all_sessions:
         return []
 

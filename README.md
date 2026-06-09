@@ -244,6 +244,16 @@ All data is read from local files. Nothing is sent over the network.
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | Git Changes | `git log --numstat` in project directory |
 
+### Path Overrides (Cross-Platform / Testing)
+
+Set these environment variables to read source data from custom locations. Use paths visible to the shell or environment where `cc-stats` runs.
+
+| Variable | Purpose |
+|----------|---------|
+| `CC_STATS_CLAUDE_PROJECTS_DIR` | Claude Code project log directory |
+| `CC_STATS_CODEX_HOME` | Codex home; `sessions/` is read below it |
+| `CC_STATS_GEMINI_HOME` | Gemini home; `tmp/*/chats/` is read below it |
+
 ---
 
 ## Acknowledgments

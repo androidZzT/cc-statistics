@@ -5,14 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .parser import (
-    Message,
-    Session,
-    find_codex_sessions,
-    find_gemini_sessions,
-    find_sessions,
-    parse_session_file,
-)
+from .parser import Message, Session
+from .sources import collect_session_files, parse_file
 
 
 def _extract_text(content) -> str:
@@ -121,9 +115,7 @@ def find_and_export(keyword: str, output: str | None = None,
         include_tools: 是否包含工具调用
     """
     # 搜索所有会话（Claude + Codex + Gemini）
-    all_files: list[Path] = list(find_sessions())
-    all_files.extend(find_codex_sessions())
-    all_files.extend(find_gemini_sessions())
+    all_files: list[Path] = collect_session_files()
 
     # 先按 session ID 前缀匹配
     matched = None
@@ -136,7 +128,7 @@ def find_and_export(keyword: str, output: str | None = None,
     if not matched:
         for f in sorted(all_files, key=lambda p: p.stat().st_mtime, reverse=True):
             try:
-                session = parse_session_file(f)
+                session = parse_file(f)
                 for msg in session.messages:
                     text = _extract_text(msg.content)
                     if keyword.lower() in text.lower():
@@ -150,7 +142,7 @@ def find_and_export(keyword: str, output: str | None = None,
     if not matched:
         return None
 
-    session = parse_session_file(matched)
+    session = parse_file(matched)
     md = export_session(session, include_tools=include_tools)
 
     if output:

@@ -244,6 +244,16 @@ cc-stats-app                  # 启动 macOS 状态栏应用
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | Git 变更 | 项目目录的 `git log --numstat` |
 
+### 路径覆盖（跨平台 / 测试）
+
+设置以下环境变量可从自定义位置读取源数据。请使用运行 `cc-stats` 的 shell 或环境可访问的路径。
+
+| 变量 | 作用 |
+|------|------|
+| `CC_STATS_CLAUDE_PROJECTS_DIR` | Claude Code 项目日志目录 |
+| `CC_STATS_CODEX_HOME` | Codex home；读取其下的 `sessions/` |
+| `CC_STATS_GEMINI_HOME` | Gemini home；读取其下的 `tmp/*/chats/` |
+
 ---
 
 ## 致谢
