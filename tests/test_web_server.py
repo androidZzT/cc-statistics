@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -149,6 +150,43 @@ def test_health_endpoint_returns_ok() -> None:
         thread.join(timeout=2)
 
     assert payload == {"status": "ok"}
+
+
+def test_health_endpoint_responds_while_stats_request_is_busy(monkeypatch) -> None:
+    def slow_stats(*args, **kwargs):
+        time.sleep(0.4)
+        return {"ok": True}
+
+    monkeypatch.setattr("cc_stats_web.server._get_stats", slow_stats)
+    server, port = start_server()
+    thread = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.1},
+        daemon=True,
+    )
+    thread.start()
+    stats_thread = threading.Thread(
+        target=lambda: urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/stats", timeout=2
+        ).read(),
+        daemon=True,
+    )
+
+    try:
+        stats_thread.start()
+        time.sleep(0.05)
+        start = time.monotonic()
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        elapsed = time.monotonic() - start
+    finally:
+        stats_thread.join(timeout=2)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert payload == {"status": "ok"}
+    assert elapsed < 0.3
 
 
 def test_collect_session_files_source_codex_returns_codex_file(

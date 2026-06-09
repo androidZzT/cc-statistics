@@ -6,6 +6,8 @@ use std::{
 
 use serde::Serialize;
 
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ApiState {
@@ -20,24 +22,23 @@ pub fn is_api_healthy(api_url: &str) -> bool {
         return false;
     };
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) else {
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, HEALTH_TIMEOUT) else {
         return false;
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(800)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(800)));
+    let _ = stream.set_read_timeout(Some(HEALTH_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(HEALTH_TIMEOUT));
 
     let request =
-        format!("GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+        format!("GET /api/health HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     if stream.write_all(request.as_bytes()).is_err() {
         return false;
     }
 
-    let mut response = [0; 64];
-    let Ok(read) = stream.read(&mut response) else {
+    let mut response = String::new();
+    if stream.read_to_string(&mut response).is_err() {
         return false;
-    };
-    let status = String::from_utf8_lossy(&response[..read]);
-    status.starts_with("HTTP/1.0 200") || status.starts_with("HTTP/1.1 200")
+    }
+    response.starts_with("HTTP/1.0 200") || response.starts_with("HTTP/1.1 200")
 }
 
 fn parse_local_api_port(api_url: &str) -> Option<u16> {
@@ -85,10 +86,31 @@ mod tests {
             let mut request = [0; 512];
             let read = std::io::Read::read(&mut stream, &mut request).unwrap();
             let request = String::from_utf8_lossy(&request[..read]);
-            assert!(request.starts_with("GET /api/health HTTP/1.1"));
+            assert!(request.starts_with("GET /api/health HTTP/1.0"));
             std::io::Write::write_all(
                 &mut stream,
                 b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}",
+            )
+            .unwrap();
+        });
+
+        assert!(super::is_api_healthy(&format!("http://127.0.0.1:{port}/")));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn api_health_probe_reads_split_status_response() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 512];
+            let _ = std::io::Read::read(&mut stream, &mut request).unwrap();
+            std::io::Write::write_all(&mut stream, b"HTTP/1.1 ").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(75));
+            std::io::Write::write_all(
+                &mut stream,
+                b"200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}",
             )
             .unwrap();
         });

@@ -7,7 +7,7 @@ import os
 import socket
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from cc_stats.analyzer import (
@@ -349,13 +349,17 @@ class ApiHandler(SimpleHTTPRequestHandler):
         pass
 
 
+class CcStatsHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+
 def find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
 
-def start_server() -> tuple[HTTPServer, int]:
+def start_server() -> tuple[CcStatsHTTPServer, int]:
     port = find_free_port()
-    server = HTTPServer(("127.0.0.1", port), ApiHandler)
+    server = CcStatsHTTPServer(("127.0.0.1", port), ApiHandler)
     return server, port

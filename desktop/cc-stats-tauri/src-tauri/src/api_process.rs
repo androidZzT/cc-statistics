@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::health::{is_api_healthy, ApiState};
 
+const HEALTH_FAILURE_THRESHOLD: u8 = 3;
+
 #[derive(Clone, Debug, Serialize)]
 pub struct ApiStatus {
     pub state: ApiState,
@@ -19,6 +21,7 @@ pub struct ApiStatus {
 
 pub struct ApiProcessManager {
     child: Option<Child>,
+    health_failures: u8,
     status: ApiStatus,
 }
 
@@ -26,6 +29,7 @@ impl ApiProcessManager {
     pub fn start_default() -> Self {
         let mut manager = Self {
             child: None,
+            health_failures: 0,
             status: ApiStatus {
                 state: ApiState::Starting,
                 url: None,
@@ -49,6 +53,7 @@ impl ApiProcessManager {
     pub fn failed(error: String) -> Self {
         Self {
             child: None,
+            health_failures: 0,
             status: ApiStatus {
                 state: ApiState::Failed,
                 url: None,
@@ -66,6 +71,7 @@ impl ApiProcessManager {
         self.stop();
         let mut next = Self::start_default();
         self.child = next.child.take();
+        self.health_failures = next.health_failures;
         self.status = next.status.clone();
         self.status()
     }
@@ -75,11 +81,12 @@ impl ApiProcessManager {
             let _ = child.kill();
             let _ = child.wait();
         }
+        self.health_failures = 0;
         self.status.state = ApiState::Stopped;
     }
 
     fn refresh_status(&mut self) {
-        if self.status.state != ApiState::Running {
+        if !matches!(self.status.state, ApiState::Running | ApiState::Failed) {
             return;
         }
 
@@ -87,12 +94,14 @@ impl ApiProcessManager {
             match child.try_wait() {
                 Ok(Some(exit_status)) => {
                     self.child = None;
+                    self.health_failures = HEALTH_FAILURE_THRESHOLD;
                     self.status.state = ApiState::Failed;
                     self.status.error = Some(format!("cc_stats_web exited with {exit_status}"));
                     return;
                 }
                 Ok(None) => {}
                 Err(error) => {
+                    self.health_failures = HEALTH_FAILURE_THRESHOLD;
                     self.status.state = ApiState::Failed;
                     self.status.error = Some(format!("failed to inspect cc_stats_web: {error}"));
                     return;
@@ -101,15 +110,26 @@ impl ApiProcessManager {
         }
 
         let Some(url) = self.status.url.as_deref() else {
+            self.health_failures = HEALTH_FAILURE_THRESHOLD;
             self.status.state = ApiState::Failed;
             self.status.error =
                 Some("cc_stats_web health check failed: missing API URL".to_string());
             return;
         };
 
-        if !is_api_healthy(url) {
-            self.status.state = ApiState::Failed;
-            self.status.error = Some(format!("cc_stats_web health check failed for {url}"));
+        if is_api_healthy(url) {
+            self.health_failures = 0;
+            self.status.state = ApiState::Running;
+            self.status.error = None;
+            return;
+        }
+
+        if self.status.state == ApiState::Running {
+            self.health_failures = self.health_failures.saturating_add(1);
+            if self.health_failures >= HEALTH_FAILURE_THRESHOLD {
+                self.status.state = ApiState::Failed;
+                self.status.error = Some(format!("cc_stats_web health check failed for {url}"));
+            }
         }
     }
 
@@ -117,6 +137,7 @@ impl ApiProcessManager {
     fn running_for_test(url: &str) -> Self {
         Self {
             child: None,
+            health_failures: 0,
             status: ApiStatus {
                 state: ApiState::Running,
                 url: Some(url.to_string()),
@@ -254,6 +275,7 @@ struct StartupPayload {
 mod tests {
     use super::{
         build_api_command, candidate_python_commands, parse_startup_url, ApiProcessManager,
+        ApiStatus,
     };
     use crate::health::ApiState;
 
@@ -292,13 +314,59 @@ mod tests {
     }
 
     #[test]
-    fn status_marks_running_manager_failed_when_health_probe_fails() {
+    fn status_tolerates_transient_health_probe_failures() {
         let mut manager = ApiProcessManager::running_for_test("http://localhost:61234/");
 
+        let status = manager.status();
+
+        assert_eq!(status.state, ApiState::Running);
+        assert_eq!(status.url.as_deref(), Some("http://localhost:61234/"));
+        assert_eq!(status.error, None);
+    }
+
+    #[test]
+    fn status_marks_running_manager_failed_after_repeated_health_probe_failures() {
+        let mut manager = ApiProcessManager::running_for_test("http://localhost:61234/");
+
+        manager.status();
+        manager.status();
         let status = manager.status();
 
         assert_eq!(status.state, ApiState::Failed);
         assert_eq!(status.url.as_deref(), Some("http://localhost:61234/"));
         assert!(status.error.unwrap().contains("health check failed"));
+    }
+
+    #[test]
+    fn failed_manager_recovers_when_health_probe_succeeds() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 512];
+            let _ = std::io::Read::read(&mut stream, &mut request).unwrap();
+            std::io::Write::write_all(
+                &mut stream,
+                b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}",
+            )
+            .unwrap();
+        });
+        let url = format!("http://127.0.0.1:{port}/");
+        let mut manager = ApiProcessManager {
+            child: None,
+            health_failures: 3,
+            status: ApiStatus {
+                state: ApiState::Failed,
+                url: Some(url.clone()),
+                error: Some("cc_stats_web health check failed".to_string()),
+            },
+        };
+
+        let status = manager.status();
+
+        assert_eq!(status.state, ApiState::Running);
+        assert_eq!(status.url.as_deref(), Some(url.as_str()));
+        assert_eq!(status.error, None);
+        handle.join().unwrap();
     }
 }
