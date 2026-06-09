@@ -133,10 +133,10 @@ select:hover{border-color:var(--cyan)}
     </div>
   </div>
   <div class="metrics" id="metrics">
-    <div class="metric" data-t="msg"><div class="metric-label">Instructions</div><div class="metric-value" id="v-msg">—</div><div class="metric-sub" id="s-msg"></div></div>
-    <div class="metric" data-t="tool"><div class="metric-label">Tool Calls</div><div class="metric-value" id="v-tool">—</div><div class="metric-sub" id="s-tool"></div></div>
-    <div class="metric" data-t="dur"><div class="metric-label">Active Time</div><div class="metric-value" id="v-dur">—</div><div class="metric-sub" id="s-dur"></div></div>
-    <div class="metric" data-t="cost"><div class="metric-label">Est. Cost</div><div class="metric-value" id="v-cost">—</div><div class="metric-sub" id="s-cost"></div></div>
+    <div class="metric" data-t="msg"><div class="metric-label">Instructions</div><div class="metric-value" id="v-msg">...</div><div class="metric-sub" id="s-msg"></div></div>
+    <div class="metric" data-t="tool"><div class="metric-label">Tool Calls</div><div class="metric-value" id="v-tool">...</div><div class="metric-sub" id="s-tool"></div></div>
+    <div class="metric" data-t="dur"><div class="metric-label">Active Time</div><div class="metric-value" id="v-dur">...</div><div class="metric-sub" id="s-dur"></div></div>
+    <div class="metric" data-t="cost"><div class="metric-label">Est. Cost</div><div class="metric-value" id="v-cost">...</div><div class="metric-sub" id="s-cost"></div></div>
   </div>
   <div class="trend"><div class="trend-card"><div class="card-title">Daily Trend</div><div class="trend-bars" id="trend"></div></div></div>
   <div class="grid">
@@ -150,7 +150,7 @@ select:hover{border-color:var(--cyan)}
   <div class="info" id="info"></div>
 </div>
 <script>
-let currentProject='',currentProjectSource='',currentDays=1,currentSource='',allProjects=[];
+let currentProject='',currentProjectSource='',currentDays=1,currentSource='',allProjects=[],loadSeq=0;
 const COLORS=['#58a6ff','#bc8cff','#3fb950','#f0883e','#f85149','#f778ba','#39d2c0','#d29922'];
 function fmt(n){if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toLocaleString()}
 function fmtCost(n){return n>=100?'$'+n.toFixed(0):n>=1?'$'+n.toFixed(2):n>=.01?'$'+n.toFixed(3):'$'+n.toFixed(4)}
@@ -159,7 +159,9 @@ function pct(n){return Math.round(n*100)+'%'}
 async function api(path,params){
   const url=new URL(path,location.origin);
   if(params)Object.entries(params).forEach(([k,v])=>{if(v!=null&&v!=='')url.searchParams.set(k,v)});
-  return(await fetch(url)).json();
+  const res=await fetch(url);
+  if(!res.ok)throw new Error(path+' failed with HTTP '+res.status);
+  return res.json();
 }
 
 async function loadProjects(){
@@ -181,24 +183,48 @@ function renderProjectSelect(){
 }
 
 async function loadStats(){
+  const seq=++loadSeq;
   const days=currentDays>0?currentDays:null;
   const source=currentSource||currentProjectSource||null;
-  const [stats,daily,skills]=await Promise.all([
-    api('/api/stats',{project:currentProject||null,days,source}),
-    api('/api/daily_stats',{project:currentProject||null,days:currentDays>0?currentDays:30,source}),
-    api('/api/skills',{project:currentProject||null,days,source}),
-  ]);
-  if(stats.error){document.getElementById('info').textContent=stats.error;return;}
-  updateMetrics(stats);
-  updateTrend(daily);
-  updateTime(stats);
-  updateCode(stats);
-  updateTokens(stats);
-  updateCache(stats);
-  updateTools(stats);
-  updateSkills(skills);
-  const info=document.getElementById('info');
-  info.textContent=stats.session_count+' sessions analyzed';
+  setLoading();
+  const statsPromise=api('/api/stats',{project:currentProject||null,days,source});
+  const dailyPromise=api('/api/daily_stats',{project:currentProject||null,days:currentDays>0?currentDays:30,source});
+  const skillsPromise=api('/api/skills',{project:currentProject||null,days,source});
+  try{
+    const stats=await statsPromise;
+    if(seq!==loadSeq)return;
+    if(stats.error){showError(stats.error);return;}
+    updateMetrics(stats);
+    updateTime(stats);
+    updateCode(stats);
+    updateTokens(stats);
+    updateCache(stats);
+    updateTools(stats);
+    document.getElementById('info').textContent=stats.session_count+' sessions analyzed';
+  }catch(e){
+    if(seq===loadSeq)showError(e.message||String(e));
+    return;
+  }
+  dailyPromise.then(daily=>{if(seq===loadSeq)updateTrend(daily)}).catch(e=>{if(seq===loadSeq)document.getElementById('trend').innerHTML='<div class="empty">'+(e.message||String(e))+'</div>'});
+  skillsPromise.then(skills=>{if(seq===loadSeq)updateSkills(skills)}).catch(()=>{if(seq===loadSeq)updateSkills([])});
+}
+
+function setLoading(){
+  [['v-msg','...'],['v-tool','...'],['v-dur','...'],['v-cost','...'],['s-msg',''],['s-tool',''],['s-dur',''],['s-cost','']].forEach(([id,value])=>{document.getElementById(id).textContent=value});
+  document.getElementById('trend').innerHTML='<div class="loading">Loading daily trend...</div>';
+  document.getElementById('time-section').innerHTML='<div class="loading">Loading time...</div>';
+  document.getElementById('code-section').innerHTML='<div class="loading">Loading code changes...</div>';
+  document.getElementById('token-section').innerHTML='<div class="loading">Loading tokens...</div>';
+  document.getElementById('tools-section').innerHTML='<div class="loading">Loading tools...</div>';
+  document.getElementById('cache-section').innerHTML='<div class="loading">Loading cache...</div>';
+  document.getElementById('skill-section').innerHTML='';
+  document.getElementById('skill-card').style.display='none';
+  document.getElementById('info').textContent='Loading statistics...';
+}
+
+function showError(message){
+  [['v-msg','-'],['v-tool','-'],['v-dur','-'],['v-cost','-'],['s-msg',''],['s-tool',''],['s-dur',''],['s-cost','']].forEach(([id,value])=>{document.getElementById(id).textContent=value});
+  document.getElementById('info').textContent=message;
 }
 
 function updateMetrics(d){
