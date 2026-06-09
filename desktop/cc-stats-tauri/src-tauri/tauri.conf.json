@@ -28,6 +28,10 @@
     "icon": [
       "icons/icon.ico"
     ],
+    "resources": {
+      "../../../cc_stats": "python/cc_stats",
+      "../../../cc_stats_web": "python/cc_stats_web"
+    },
     "targets": "all"
   }
 }

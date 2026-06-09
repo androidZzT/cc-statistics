@@ -789,6 +789,7 @@ button{cursor:pointer}
             <option value="claude">Claude Code</option>
             <option value="codex">Codex</option>
             <option value="gemini">Gemini CLI</option>
+            <option value="cursor">Cursor</option>
           </select>
         </label>
       </div>
@@ -975,7 +976,7 @@ function renderProjectSelect(){
     o.value=p.dir_name;
     o.dataset.source=p.source||'';
     const parts=String(p.display_name||p.dir_name).split(/[\\/]/);
-    const tag=p.source==='gemini'?' · Gemini':p.source==='codex'?' · Codex':p.source==='claude'?' · Claude':'';
+    const tag=p.source==='cursor'?' · Cursor':p.source==='gemini'?' · Gemini':p.source==='codex'?' · Codex':p.source==='claude'?' · Claude':'';
     o.textContent=parts.slice(-1)[0]+tag+' ('+p.session_count+')';
     sel.appendChild(o);
   });
@@ -987,35 +988,28 @@ async function loadStats(){
   const days=currentDays>0?currentDays:null;
   const source=currentSource||currentProjectSource||null;
   setLoading();
-  const statsPromise=api('/api/stats',{project:currentProject||null,days,source});
-  const dailyPromise=api('/api/daily_stats',{project:currentProject||null,days:currentDays>0?currentDays:30,source});
-  const skillsPromise=api('/api/skills',{project:currentProject||null,days,source});
+  const dailyDays=currentDays>0?currentDays:30;
   try{
-    const stats=await statsPromise;
+    const payload=await api('/api/dashboard',{project:currentProject||null,days,daily_days:dailyDays,source});
     if(seq!==loadSeq)return;
+    const stats=payload.stats||{};
     if(stats.error){showError(stats.error);return;}
+    const daily=Array.isArray(payload.daily_stats)?payload.daily_stats:[];
     lastStats=stats;
+    lastDaily=daily;
     updateMetrics(stats);
     updateTime(stats);
     updateCode(stats);
     updateTokens(stats);
     updateCache(stats);
+    renderTrend();
+    updateSkills(payload.skills||[]);
     updateTools(stats);
     updateForecast(lastDaily,stats);
     markUpdated();
   }catch(e){
     if(seq===loadSeq)showError(e.message||String(e));
-    return;
   }
-  dailyPromise.then(daily=>{
-    if(seq!==loadSeq)return;
-    lastDaily=Array.isArray(daily)?daily:[];
-    renderTrend();
-    updateForecast(lastDaily,lastStats);
-  }).catch(e=>{
-    if(seq===loadSeq)document.getElementById('trend').innerHTML='<div class="empty">'+escapeHtml(e.message||String(e))+'</div>';
-  });
-  skillsPromise.then(skills=>{if(seq===loadSeq)updateSkills(skills)}).catch(()=>{if(seq===loadSeq)updateSkills([])});
 }
 
 function setLoading(){

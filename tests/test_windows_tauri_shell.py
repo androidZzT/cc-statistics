@@ -98,6 +98,39 @@ def test_tray_uses_explicit_default_window_icon() -> None:
     assert "default_window_icon" in tray_rs
 
 
+def test_tray_open_dashboard_uses_external_dashboard_command() -> None:
+    tray_rs = (TAURI_DIR / "src" / "tray.rs").read_text(encoding="utf-8")
+
+    assert "open_dashboard_for_app" in tray_rs
+    assert 'event.id.as_ref() {\n            "open_dashboard" => {\n                let _ = window::show_dashboard_window(app);' not in tray_rs
+
+
+def test_tray_quit_stops_api_before_app_exit() -> None:
+    main_rs = (TAURI_DIR / "src" / "main.rs").read_text(encoding="utf-8")
+    tray_rs = (TAURI_DIR / "src" / "tray.rs").read_text(encoding="utf-8")
+
+    assert "pub fn quit_app" in main_rs
+    assert "api.stop();" in main_rs
+    assert "quit_app(app);" in tray_rs
+    assert '"quit" => {\n                app.exit(0);' not in tray_rs
+
+
+def test_python_api_bundles_python_sources_as_tauri_resources() -> None:
+    config = (TAURI_DIR / "tauri.conf.json").read_text(encoding="utf-8")
+
+    assert "../../../cc_stats" in config
+    assert "../../../cc_stats_web" in config
+    assert "python/cc_stats" in config
+    assert "python/cc_stats_web" in config
+
+
+def test_python_api_child_process_uses_bundled_pythonpath() -> None:
+    api_process_rs = (TAURI_DIR / "src" / "api_process.rs").read_text(encoding="utf-8")
+
+    assert "PYTHONPATH" in api_process_rs
+    assert "python_source_dir" in api_process_rs
+
+
 def test_tray_icon_assets_are_multi_size_and_non_monochrome() -> None:
     icon_png = TAURI_DIR / "icons" / "icon.png"
     icon_ico = TAURI_DIR / "icons" / "icon.ico"

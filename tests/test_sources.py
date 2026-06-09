@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from cc_stats.sources import (
@@ -9,6 +10,7 @@ from cc_stats.sources import (
     collect_session_files_by_keyword,
     list_projects,
     parse_file,
+    parse_sessions,
 )
 
 
@@ -119,11 +121,65 @@ def _set_source_homes(monkeypatch, tmp_path: Path) -> tuple[Path, Path, Path]:
     claude_projects = tmp_path / "synthetic-claude" / "projects"
     codex_home = tmp_path / "synthetic-codex"
     gemini_home = tmp_path / "synthetic-gemini"
+    cursor_db = tmp_path / "synthetic-cursor" / "state.vscdb"
     monkeypatch.setenv("CC_STATS_CLAUDE_PROJECTS_DIR", str(claude_projects))
     monkeypatch.setenv("CC_STATS_CODEX_HOME", str(codex_home))
     monkeypatch.setenv("CC_STATS_GEMINI_HOME", str(gemini_home))
+    monkeypatch.setenv("CC_STATS_CURSOR_STATE_DB", str(cursor_db))
     monkeypatch.setenv("HOME", str(tmp_path / "unused-real-home"))
     return claude_projects, codex_home, gemini_home
+
+
+def _write_cursor_state_db(cursor_db: Path, project_dir: Path, composer_id: str = "cursor-a") -> Path:
+    cursor_db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(cursor_db)
+    try:
+        con.execute("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value BLOB)")
+        con.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)")
+        composer = {
+            "composerId": composer_id,
+            "createdAt": 1780963200000,
+            "lastUpdatedAt": 1780963202000,
+            "modelConfig": {"modelName": "claude-4.5-sonnet-thinking"},
+            "unifiedMode": "agent",
+            "totalLinesAdded": 3,
+            "totalLinesRemoved": 1,
+            "fullConversationHeadersOnly": [
+                {"bubbleId": "user-1", "type": 1},
+                {"bubbleId": "assistant-1", "type": 2},
+            ],
+        }
+        user_bubble = {
+            "bubbleId": "user-1",
+            "type": 1,
+            "createdAt": "2026-06-09T00:00:00Z",
+            "text": "build this in Cursor",
+            "workspaceUris": [project_dir.as_uri()],
+            "workspaceProjectDir": str(project_dir),
+        }
+        assistant_bubble = {
+            "bubbleId": "assistant-1",
+            "type": 2,
+            "createdAt": "2026-06-09T00:00:02Z",
+            "text": "done",
+            "modelInfo": {"modelName": "claude-4.5-sonnet-thinking"},
+            "tokenCount": {"inputTokens": 10, "outputTokens": 5},
+            "workspaceUris": [project_dir.as_uri()],
+            "workspaceProjectDir": str(project_dir),
+        }
+        rows = [
+            (f"composerData:{composer_id}", composer),
+            (f"bubbleId:{composer_id}:user-1", user_bubble),
+            (f"bubbleId:{composer_id}:assistant-1", assistant_bubble),
+        ]
+        con.executemany(
+            "INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)",
+            [(key, json.dumps(value).encode("utf-8")) for key, value in rows],
+        )
+        con.commit()
+    finally:
+        con.close()
+    return cursor_db
 
 
 def test_collect_session_files_all_includes_codex_synthetic_sessions(
@@ -150,6 +206,64 @@ def test_collect_session_files_source_gemini_includes_jsonl_sessions(
     files = collect_session_files(source=SourceKind.GEMINI)
 
     assert files == [gemini_file]
+
+
+def test_collect_session_files_source_cursor_includes_state_db(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _set_source_homes(monkeypatch, tmp_path)
+    cursor_db = tmp_path / "synthetic-cursor" / "state.vscdb"
+    _write_cursor_state_db(cursor_db, tmp_path / "demo")
+
+    files = collect_session_files(source=SourceKind.CURSOR)
+
+    assert files == [cursor_db]
+
+
+def test_parse_cursor_state_db_maps_sessions_messages_tokens_and_code_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _set_source_homes(monkeypatch, tmp_path)
+    cursor_db = tmp_path / "synthetic-cursor" / "state.vscdb"
+    project_dir = tmp_path / "demo"
+    _write_cursor_state_db(cursor_db, project_dir)
+
+    sessions = parse_sessions(cursor_db)
+
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session.source == "cursor"
+    assert session.session_id == "cursor-a"
+    assert session.project_path == str(project_dir)
+    assert [message.role for message in session.messages[:2]] == ["user", "assistant"]
+    assert session.messages[1].model == "claude-4.5-sonnet-thinking"
+    assert session.messages[1].usage == {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+    assert session.messages[-1].tool_calls[0].name == "Edit"
+
+
+def test_list_projects_source_cursor_groups_by_workspace_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _set_source_homes(monkeypatch, tmp_path)
+    cursor_db = tmp_path / "synthetic-cursor" / "state.vscdb"
+    project_dir = tmp_path / "demo"
+    _write_cursor_state_db(cursor_db, project_dir)
+
+    projects = list_projects(source=SourceKind.CURSOR)
+
+    assert len(projects) == 1
+    assert projects[0].source == SourceKind.CURSOR
+    assert projects[0].key == str(project_dir)
+    assert projects[0].display_name == str(project_dir)
+    assert projects[0].session_count == 1
 
 
 def test_parse_gemini_jsonl_maps_project_tokens_and_tools(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import threading
 import time
 import urllib.request
@@ -182,11 +183,64 @@ def _set_source_homes(monkeypatch, tmp_path: Path) -> tuple[Path, Path, Path]:
     claude_projects = tmp_path / "synthetic-claude" / "projects"
     codex_home = tmp_path / "synthetic-codex"
     gemini_home = tmp_path / "synthetic-gemini"
+    cursor_db = tmp_path / "synthetic-cursor" / "state.vscdb"
     monkeypatch.setenv("CC_STATS_CLAUDE_PROJECTS_DIR", str(claude_projects))
     monkeypatch.setenv("CC_STATS_CODEX_HOME", str(codex_home))
     monkeypatch.setenv("CC_STATS_GEMINI_HOME", str(gemini_home))
+    monkeypatch.setenv("CC_STATS_CURSOR_STATE_DB", str(cursor_db))
     monkeypatch.setenv("HOME", str(tmp_path / "unused-real-home"))
     return claude_projects, codex_home, gemini_home
+
+
+def _write_cursor_state_db(cursor_db: Path, project_dir: Path, composer_id: str = "cursor-a") -> Path:
+    cursor_db.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(cursor_db)
+    try:
+        con.execute("CREATE TABLE cursorDiskKV (key TEXT PRIMARY KEY, value BLOB)")
+        con.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB)")
+        composer = {
+            "composerId": composer_id,
+            "createdAt": 1780963200000,
+            "lastUpdatedAt": 1780963202000,
+            "modelConfig": {"modelName": "claude-4.5-sonnet-thinking"},
+            "totalLinesAdded": 3,
+            "totalLinesRemoved": 1,
+            "fullConversationHeadersOnly": [
+                {"bubbleId": "user-1", "type": 1},
+                {"bubbleId": "assistant-1", "type": 2},
+            ],
+        }
+        user_bubble = {
+            "bubbleId": "user-1",
+            "type": 1,
+            "createdAt": "2026-06-09T00:00:00Z",
+            "text": "build this in Cursor",
+            "workspaceUris": [project_dir.as_uri()],
+            "workspaceProjectDir": str(project_dir),
+        }
+        assistant_bubble = {
+            "bubbleId": "assistant-1",
+            "type": 2,
+            "createdAt": "2026-06-09T00:00:02Z",
+            "text": "done",
+            "modelInfo": {"modelName": "claude-4.5-sonnet-thinking"},
+            "tokenCount": {"inputTokens": 10, "outputTokens": 5},
+            "workspaceUris": [project_dir.as_uri()],
+            "workspaceProjectDir": str(project_dir),
+        }
+        rows = [
+            (f"composerData:{composer_id}", composer),
+            (f"bubbleId:{composer_id}:user-1", user_bubble),
+            (f"bubbleId:{composer_id}:assistant-1", assistant_bubble),
+        ]
+        con.executemany(
+            "INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)",
+            [(key, json.dumps(value).encode("utf-8")) for key, value in rows],
+        )
+        con.commit()
+    finally:
+        con.close()
+    return cursor_db
 
 
 def test_get_projects_source_codex_includes_codex_project(
@@ -309,6 +363,49 @@ def test_get_stats_source_gemini_parses_windows_jsonl_sessions(
     assert stats["token_usage"]["cache_read"] == 30
     assert stats["token_usage"]["output_tokens"] == 20
     assert stats["token_usage"]["total"] == 150
+
+
+def test_get_stats_source_cursor_parses_state_db(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _set_source_homes(monkeypatch, tmp_path)
+    cursor_db = tmp_path / "synthetic-cursor" / "state.vscdb"
+    _write_cursor_state_db(cursor_db, tmp_path / "demo")
+
+    stats = _get_stats(source="cursor")
+
+    assert stats["session_count"] == 1
+    assert stats["user_message_count"] == 1
+    assert stats["token_usage"]["input_tokens"] == 10
+    assert stats["token_usage"]["output_tokens"] == 5
+    assert stats["token_usage"]["total"] == 15
+    assert stats["total_added"] == 3
+    assert stats["total_removed"] == 1
+
+
+def test_get_dashboard_payload_analyzes_sessions_once_for_summary_daily_and_skills(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, codex_home, _ = _set_source_homes(monkeypatch, tmp_path)
+    _write_codex_session(codex_home, "codex-a", tmp_path / "demo")
+    analyzed: list[str] = []
+
+    def fake_analyze_session(session, *, include_git=True):
+        analyzed.append(session.session_id)
+        stats = SessionStats(session_id=session.session_id, project_path=session.project_path)
+        stats.user_message_count = 1
+        return stats
+
+    monkeypatch.setattr(web_server, "analyze_session", fake_analyze_session)
+
+    payload = web_server._get_dashboard_payload(source="codex", daily_days=30)
+
+    assert analyzed == ["codex-a"]
+    assert payload["stats"]["session_count"] == 1
+    assert isinstance(payload["daily_stats"], list)
+    assert payload["skills"] == []
 
 
 def test_get_stats_prefilters_old_mtime_before_parsing(

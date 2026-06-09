@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 
 @dataclass
@@ -1056,8 +1058,302 @@ def _looks_like_gemini_jsonl(path: Path) -> bool:
     return False
 
 
+# Cursor SQLite parsing
+
+
+def find_cursor_sessions(
+    *,
+    cursor_state_db_path: Path | None = None,
+) -> list[Path]:
+    db_path = cursor_state_db_path or _home_dir() / ".config" / "Cursor" / "User" / "globalStorage" / "state.vscdb"
+    return [db_path] if db_path.exists() else []
+
+
+def parse_cursor_db(path: Path) -> Session:
+    """Parse Cursor's global SQLite state DB as one aggregate session."""
+    sessions = parse_cursor_sessions(path)
+    messages: list[Message] = []
+    project_path = ""
+    for session in sessions:
+        if not project_path and session.project_path:
+            project_path = session.project_path
+        messages.extend(session.messages)
+    return Session(
+        session_id="cursor",
+        project_path=project_path or "Cursor",
+        file_path=path,
+        source="cursor",
+        messages=messages,
+    )
+
+
+def parse_cursor_sessions(path: Path) -> list[Session]:
+    """Parse Cursor composer sessions from User/globalStorage/state.vscdb."""
+    if not path.exists():
+        return []
+
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return []
+
+    try:
+        rows = con.execute(
+            "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'"
+        ).fetchall()
+        bubbles_by_composer = _cursor_bubbles_by_composer(con)
+        sessions: list[Session] = []
+        for key, raw_value in rows:
+            composer = _cursor_json(raw_value)
+            if not isinstance(composer, dict):
+                continue
+            composer_id = str(composer.get("composerId") or str(key).split(":", 1)[-1])
+            session = _parse_cursor_composer(
+                bubbles_by_composer.get(composer_id, {}),
+                path,
+                str(key),
+                composer,
+            )
+            if session is not None:
+                sessions.append(session)
+        return sorted(
+            sessions,
+            key=lambda s: next((m.timestamp for m in s.messages if m.timestamp), ""),
+        )
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+
+
+def _parse_cursor_composer(
+    bubbles: dict[str, dict[str, Any]],
+    db_path: Path,
+    key: str,
+    composer: dict[str, Any],
+) -> Session | None:
+    composer_id = str(composer.get("composerId") or key.split(":", 1)[-1])
+    if not composer_id:
+        return None
+
+    model = _cursor_model(composer)
+    default_ts = _cursor_timestamp(composer.get("createdAt"))
+    messages: list[Message] = []
+    project_path = ""
+
+    headers = composer.get("fullConversationHeadersOnly")
+    if not isinstance(headers, list) or not headers:
+        conversation_map = composer.get("conversationMap")
+        if isinstance(conversation_map, dict):
+            headers = [
+                {"bubbleId": bubble_id}
+                for bubble_id in conversation_map.keys()
+                if isinstance(bubble_id, str)
+            ]
+        else:
+            headers = []
+
+    for header in headers:
+        if not isinstance(header, dict):
+            continue
+        bubble_id = header.get("bubbleId")
+        if not isinstance(bubble_id, str) or not bubble_id:
+            continue
+        bubble = bubbles.get(bubble_id, {})
+        if not isinstance(bubble, dict):
+            bubble = {}
+        bubble_type = bubble.get("type", header.get("type"))
+        role = "user" if bubble_type == 1 else "assistant" if bubble_type == 2 else ""
+        if not role:
+            continue
+
+        if not project_path:
+            project_path = _cursor_project_path(bubble) or _cursor_project_path(composer)
+
+        timestamp = _cursor_timestamp(bubble.get("createdAt")) or default_ts
+        bubble_model = _cursor_model(bubble) or model
+        usage: dict[str, Any] = {}
+        if role == "assistant":
+            usage = _cursor_usage(bubble.get("tokenCount"))
+
+        messages.append(Message(
+            role=role,
+            timestamp=timestamp,
+            content=_cursor_text(bubble),
+            model=bubble_model or None,
+            usage=usage,
+            session_id=composer_id,
+            message_id=bubble_id,
+        ))
+
+    added = _to_int(composer.get("totalLinesAdded", 0))
+    removed = _to_int(composer.get("totalLinesRemoved", 0))
+    if added or removed:
+        timestamp = _cursor_timestamp(composer.get("lastUpdatedAt")) or default_ts
+        messages.append(Message(
+            role="assistant",
+            timestamp=timestamp,
+            content="",
+            model=model or None,
+            tool_calls=[
+                ToolCall(
+                    name="Edit",
+                    input={
+                        "target_file": "cursor://composer",
+                        "old_string": _cursor_line_blob(removed),
+                        "new_string": _cursor_line_blob(added),
+                    },
+                    timestamp=timestamp,
+                )
+            ],
+            is_meta=True,
+            session_id=composer_id,
+        ))
+
+    if not messages:
+        return None
+    if not project_path:
+        project_path = _cursor_project_path(composer) or "Cursor"
+
+    return Session(
+        session_id=composer_id,
+        project_path=project_path,
+        file_path=db_path,
+        source="cursor",
+        messages=messages,
+    )
+
+
+def _cursor_bubbles_by_composer(
+    con: sqlite3.Connection,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    bubbles: dict[str, dict[str, dict[str, Any]]] = {}
+    try:
+        rows = con.execute(
+            "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'",
+        ).fetchall()
+    except sqlite3.Error:
+        return bubbles
+
+    for key, raw_value in rows:
+        parts = str(key).split(":", 2)
+        if len(parts) != 3:
+            continue
+        _, composer_id, bubble_id = parts
+        bubble = _cursor_json(raw_value)
+        if isinstance(bubble, dict):
+            bubbles.setdefault(composer_id, {})[bubble_id] = bubble
+    return bubbles
+
+
+def _cursor_json(value: Any) -> Any:
+    if isinstance(value, bytes):
+        text = value.decode("utf-8", errors="replace")
+    else:
+        text = str(value)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _cursor_model(record: dict[str, Any]) -> str:
+    model_info = record.get("modelInfo")
+    if isinstance(model_info, dict):
+        model_name = model_info.get("modelName")
+        if isinstance(model_name, str) and model_name:
+            return model_name
+    model_config = record.get("modelConfig")
+    if isinstance(model_config, dict):
+        model_name = model_config.get("modelName")
+        if isinstance(model_name, str) and model_name:
+            return model_name
+    return ""
+
+
+def _cursor_usage(token_count: Any) -> dict[str, Any]:
+    if not isinstance(token_count, dict):
+        return {}
+    return {
+        "input_tokens": _to_int(token_count.get("inputTokens", 0)),
+        "output_tokens": _to_int(token_count.get("outputTokens", 0)),
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+
+
+def _cursor_timestamp(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        try:
+            from datetime import datetime, timezone
+
+            return datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat()
+        except (OSError, ValueError):
+            return ""
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def _cursor_text(record: dict[str, Any]) -> str:
+    text = record.get("text")
+    if isinstance(text, str) and text:
+        return text
+    rich = record.get("richText")
+    if isinstance(rich, str) and rich:
+        return rich
+    return ""
+
+
+def _cursor_project_path(record: dict[str, Any]) -> str:
+    uris = record.get("workspaceUris")
+    if isinstance(uris, list):
+        for uri in uris:
+            if not isinstance(uri, str):
+                continue
+            path = _file_uri_to_path(uri)
+            if path:
+                return path
+
+    workspace = record.get("workspaceProjectDir")
+    if isinstance(workspace, str) and workspace:
+        return workspace
+
+    attached = record.get("allAttachedFileCodeChunksUris")
+    if isinstance(attached, list):
+        for uri in attached:
+            if isinstance(uri, str):
+                path = _file_uri_to_path(uri)
+                if path:
+                    return str(Path(path).parent)
+
+    return ""
+
+
+def _file_uri_to_path(uri: str) -> str:
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        return ""
+    raw_path = unquote(parsed.path)
+    if os.name == "nt" and raw_path.startswith("/") and len(raw_path) > 2 and raw_path[2] == ":":
+        raw_path = raw_path[1:]
+    return os.path.normpath(raw_path)
+
+
+def _cursor_line_blob(count: int) -> str:
+    if count <= 0:
+        return ""
+    return "\n".join("x" for _ in range(count))
+
+
+def _looks_like_cursor_db(path: Path) -> bool:
+    return path.name == "state.vscdb"
+
+
 def parse_session_file(path: Path) -> Session:
     """自动识别并解析会话文件（Claude / Codex / Gemini）"""
+    if _looks_like_cursor_db(path):
+        return parse_cursor_db(path)
     if path.suffix == ".json":
         return parse_gemini_json(path)
     if _looks_like_gemini_jsonl(path):

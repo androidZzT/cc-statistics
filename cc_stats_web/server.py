@@ -18,7 +18,7 @@ from cc_stats.analyzer import (
     merge_stats,
 )
 from cc_stats.pricing import match_model_pricing
-from cc_stats.sources import collect_session_files, list_projects, parse_file
+from cc_stats.sources import collect_session_files, list_projects, parse_file, parse_sessions
 
 _web_dir = os.path.join(os.path.dirname(__file__), "web")
 
@@ -142,13 +142,16 @@ def _collect_session_files(project_dir_name=None, source: str | None = None):
     filtered = []
     for f in files:
         try:
-            session = _parse_session_file(f)
+            sessions = _parse_sessions_from_file(f)
         except Exception:
             continue
-        if session.project_path == project_dir_name:
+        if any(session.project_path == project_dir_name for session in sessions):
             filtered.append(f)
             continue
-        if session.source == "claude" and f.parent.name == project_dir_name:
+        if (
+            any(session.source == "claude" for session in sessions)
+            and f.parent.name == project_dir_name
+        ):
             filtered.append(f)
     return filtered
 
@@ -156,6 +159,13 @@ def _collect_session_files(project_dir_name=None, source: str | None = None):
 def _parse_session_file(f):
     """Parse a session file through the shared source parser."""
     return parse_file(f)
+
+
+def _parse_sessions_from_file(f):
+    """Parse one source entry into one or more sessions."""
+    if getattr(f, "name", "") == "state.vscdb":
+        return parse_sessions(f)
+    return [_parse_session_file(f)]
 
 
 def _filter_files_by_mtime(files: list, since_dt: datetime | None):
@@ -171,6 +181,41 @@ def _filter_files_by_mtime(files: list, since_dt: datetime | None):
         except OSError:
             filtered.append(f)
     return filtered
+
+
+def _session_matches_project(session, path, project_dir_name) -> bool:
+    if not project_dir_name:
+        return True
+    if session.project_path == project_dir_name:
+        return True
+    return session.source == "claude" and path.parent.name == project_dir_name
+
+
+def _analyze_session_files(
+    files: list,
+    since_dt: datetime | None = None,
+    project_dir_name=None,
+) -> list[SessionStats]:
+    all_stats = []
+    for f in files:
+        try:
+            sessions = _parse_sessions_from_file(f)
+            for session in sessions:
+                if not _session_matches_project(session, f, project_dir_name):
+                    continue
+                stats = analyze_session(session, include_git=False)
+                if since_dt and stats.end_time and stats.end_time < since_dt:
+                    continue
+                all_stats.append(stats)
+        except Exception:
+            continue
+    return all_stats
+
+
+def _merged_stats(all_stats: list[SessionStats]) -> SessionStats | None:
+    if not all_stats:
+        return None
+    return all_stats[0] if len(all_stats) == 1 else merge_stats(all_stats)
 
 
 def _daily_date_keys(
@@ -209,21 +254,14 @@ def _get_stats(project_dir_name=None, since_days=None, source: str | None = None
     files = _filter_files_by_mtime(files, since_dt)
     files.sort(key=lambda f: f.stat().st_mtime)
 
-    all_stats = []
-    for f in files:
-        try:
-            session = _parse_session_file(f)
-            stats = analyze_session(session, include_git=False)
-            if since_dt and stats.end_time and stats.end_time < since_dt:
-                continue
-            all_stats.append(stats)
-        except Exception:
-            continue
+    all_stats = _analyze_session_files(files, since_dt, project_dir_name)
 
     if not all_stats:
         return {"error": "No valid sessions"}
 
-    result = all_stats[0] if len(all_stats) == 1 else merge_stats(all_stats)
+    result = _merged_stats(all_stats)
+    if result is None:
+        return {"error": "No valid sessions"}
     return _stats_to_dict(
         result,
         session_count=len(all_stats),
@@ -238,18 +276,50 @@ def _get_daily_stats(project_dir_name=None, days=14, source: str | None = None):
     files = _filter_files_by_mtime(files, since_dt)
     daily: dict[str, list] = defaultdict(list)
 
-    for f in files:
-        try:
-            session = _parse_session_file(f)
-            stats = analyze_session(session, include_git=False)
-            if stats.end_time and stats.end_time < since_dt:
-                continue
-            if not stats.start_time:
-                continue
-            day_key = stats.start_time.astimezone().strftime("%Y-%m-%d")
-            daily[day_key].append(stats)
-        except Exception:
+    for stats in _analyze_session_files(files, since_dt, project_dir_name):
+        if not stats.start_time:
             continue
+        day_key = stats.start_time.astimezone().strftime("%Y-%m-%d")
+        daily[day_key].append(stats)
+
+    result = []
+    for day_key in _daily_date_keys(since_dt, days):
+        day_stats = daily.get(day_key, [])
+        if day_stats:
+            merged = merge_stats(day_stats) if len(day_stats) > 1 else day_stats[0]
+            cost = sum(_estimate_cost(u, m) for m, u in merged.token_by_model.items())
+            result.append({
+                "date": day_key,
+                "sessions": len(day_stats),
+                "messages": merged.user_message_count,
+                "tool_calls": merged.tool_call_total,
+                "active_minutes": round(merged.active_duration.total_seconds() / 60, 1),
+                "lines_added": merged.total_added,
+                "lines_removed": merged.total_removed,
+                "tokens": merged.token_usage.total,
+                "cost": round(cost, 2),
+            })
+        else:
+            result.append({
+                "date": day_key, "sessions": 0, "messages": 0, "tool_calls": 0,
+                "active_minutes": 0, "lines_added": 0, "lines_removed": 0, "tokens": 0, "cost": 0,
+            })
+    return result
+
+
+def _daily_stats_from_analyzed(
+    all_stats: list[SessionStats],
+    since_dt: datetime,
+    days: int,
+) -> list[dict]:
+    daily: dict[str, list] = defaultdict(list)
+    for stats in all_stats:
+        if stats.end_time and stats.end_time < since_dt:
+            continue
+        if not stats.start_time:
+            continue
+        day_key = stats.start_time.astimezone().strftime("%Y-%m-%d")
+        daily[day_key].append(stats)
 
     result = []
     for day_key in _daily_date_keys(since_dt, days):
@@ -288,19 +358,14 @@ def _get_skill_stats(project_dir_name=None, since_days=None, source: str | None 
 
     files.sort(key=lambda f: f.stat().st_mtime)
 
-    all_stats = []
-    for f in files:
-        try:
-            session = _parse_session_file(f)
-            stats = analyze_session(session, include_git=False)
-            all_stats.append(stats)
-        except Exception:
-            continue
+    all_stats = _analyze_session_files(files, project_dir_name=project_dir_name)
 
     if not all_stats:
         return []
 
-    result = all_stats[0] if len(all_stats) == 1 else merge_stats(all_stats)
+    result = _merged_stats(all_stats)
+    if result is None:
+        return []
 
     skills = []
     for name, su in sorted(
@@ -319,6 +384,78 @@ def _get_skill_stats(project_dir_name=None, since_days=None, source: str | None 
             "success_rate": success_rate,
         })
     return skills
+
+
+def _skill_stats_from_analyzed(all_stats: list[SessionStats]) -> list[dict]:
+    result = _merged_stats(all_stats)
+    if result is None:
+        return []
+
+    skills = []
+    for name, su in sorted(
+        result.skill_stats.items(), key=lambda x: x[1].call_count, reverse=True
+    ):
+        resolved = su.success_count + su.error_count
+        success_rate = (
+            round(su.success_count / resolved * 100) if resolved > 0 else None
+        )
+        skills.append({
+            "name": name,
+            "call_count": su.call_count,
+            "success_count": su.success_count,
+            "error_count": su.error_count,
+            "unknown_count": su.unknown_count,
+            "success_rate": success_rate,
+        })
+    return skills
+
+
+def _get_dashboard_payload(
+    project_dir_name=None,
+    since_days=None,
+    daily_days=30,
+    source: str | None = None,
+):
+    files = _collect_session_files(project_dir_name, source=source)
+    if not files:
+        return {
+            "stats": {"error": "No sessions found"},
+            "daily_stats": [],
+            "skills": [],
+        }
+
+    files.sort(key=lambda f: f.stat().st_mtime)
+    all_stats = _analyze_session_files(files, project_dir_name=project_dir_name)
+    if not all_stats:
+        return {
+            "stats": {"error": "No valid sessions"},
+            "daily_stats": [],
+            "skills": [],
+        }
+
+    since_dt = None
+    if since_days:
+        since_dt = datetime.now(tz=timezone.utc) - timedelta(days=since_days)
+    stats_for_range = [
+        stats for stats in all_stats
+        if not since_dt or not stats.end_time or stats.end_time >= since_dt
+    ]
+    merged = _merged_stats(stats_for_range)
+    if merged is None:
+        stats_payload = {"error": "No valid sessions"}
+    else:
+        stats_payload = _stats_to_dict(
+            merged,
+            session_count=len(stats_for_range),
+            git_scan_skipped=True,
+        )
+
+    daily_since = datetime.now(tz=timezone.utc) - timedelta(days=daily_days)
+    return {
+        "stats": stats_payload,
+        "daily_stats": _daily_stats_from_analyzed(all_stats, daily_since, daily_days),
+        "skills": _skill_stats_from_analyzed(all_stats),
+    }
 
 
 def _get_version_update():
@@ -359,6 +496,16 @@ class ApiHandler(SimpleHTTPRequestHandler):
                 self._json(_get_stats(
                     project_dir_name=project or None,
                     since_days=int(days) if days and days != "0" else None,
+                    source=source,
+                ))
+            elif path == "/api/dashboard":
+                project = params.get("project", [None])[0]
+                days = params.get("days", [None])[0]
+                daily_days = params.get("daily_days", ["30"])[0]
+                self._json(_get_dashboard_payload(
+                    project_dir_name=project or None,
+                    since_days=int(days) if days and days != "0" else None,
+                    daily_days=int(daily_days),
                     source=source,
                 ))
             elif path == "/api/daily_stats":

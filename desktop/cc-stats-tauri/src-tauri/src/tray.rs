@@ -4,7 +4,7 @@ use tauri::{
     AppHandle, Manager,
 };
 
-use crate::{restart_api, window};
+use crate::{open_dashboard_for_app, quit_app, restart_api};
 
 pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open_i = MenuItem::with_id(app, "open_dashboard", "Open Dashboard", true, None::<&str>)?;
@@ -23,13 +23,13 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     builder
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open_dashboard" => {
-                let _ = window::show_dashboard_window(app);
+                let _ = open_dashboard_for_app(app);
             }
             "restart_api" => {
                 let _ = restart_api(app.clone(), app.state());
             }
             "quit" => {
-                app.exit(0);
+                quit_app(app);
             }
             _ => {}
         })
@@ -40,7 +40,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                let _ = window::show_dashboard_window(tray.app_handle());
+                let _ = open_dashboard_for_app(tray.app_handle());
             }
         })
         .build(app)?;

@@ -6,7 +6,7 @@ use std::{
 
 use serde::Serialize;
 
-const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
+const HEALTH_TIMEOUT: Duration = Duration::from_millis(800);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -38,7 +38,9 @@ pub fn is_api_healthy(api_url: &str) -> bool {
     if stream.read_to_string(&mut response).is_err() {
         return false;
     }
-    response.starts_with("HTTP/1.0 200") || response.starts_with("HTTP/1.1 200")
+    let compact = response.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    (response.starts_with("HTTP/1.0 200") || response.starts_with("HTTP/1.1 200"))
+        && compact.contains("\"status\":\"ok\"")
 }
 
 fn parse_local_api_port(api_url: &str) -> Option<u16> {
@@ -116,6 +118,25 @@ mod tests {
         });
 
         assert!(super::is_api_healthy(&format!("http://127.0.0.1:{port}/")));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn api_health_probe_rejects_unrelated_local_200_response() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 512];
+            let _ = std::io::Read::read(&mut stream, &mut request).unwrap();
+            std::io::Write::write_all(
+                &mut stream,
+                b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello world",
+            )
+            .unwrap();
+        });
+
+        assert!(!super::is_api_healthy(&format!("http://127.0.0.1:{port}/")));
         handle.join().unwrap();
     }
 

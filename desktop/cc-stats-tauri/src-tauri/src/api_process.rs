@@ -1,5 +1,7 @@
 use std::{
+    env,
     io::{self, BufRead, BufReader},
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::mpsc,
     thread,
@@ -28,21 +30,23 @@ pub struct ApiStatus {
 pub struct ApiProcessManager {
     child: Option<Child>,
     health_failures: u8,
+    python_source_dir: Option<PathBuf>,
     status: ApiStatus,
 }
 
 impl ApiProcessManager {
-    pub fn start_default() -> Self {
+    pub fn start_default_with_python_source(python_source_dir: Option<PathBuf>) -> Self {
         let mut manager = Self {
             child: None,
             health_failures: 0,
+            python_source_dir,
             status: ApiStatus {
                 state: ApiState::Starting,
                 url: None,
                 error: None,
             },
         };
-        match start_python_api() {
+        match start_python_api(manager.python_source_dir.as_deref()) {
             Ok((child, url)) => {
                 manager.child = Some(child);
                 manager.status = ApiStatus {
@@ -52,14 +56,17 @@ impl ApiProcessManager {
                 };
                 manager
             }
-            Err(error) => Self::failed(error),
+            Err(error) => {
+                Self::failed_with_python_source(error, manager.python_source_dir.clone())
+            }
         }
     }
 
-    pub fn failed(error: String) -> Self {
+    fn failed_with_python_source(error: String, python_source_dir: Option<PathBuf>) -> Self {
         Self {
             child: None,
             health_failures: 0,
+            python_source_dir,
             status: ApiStatus {
                 state: ApiState::Failed,
                 url: None,
@@ -69,13 +76,48 @@ impl ApiProcessManager {
     }
 
     pub fn status(&mut self) -> ApiStatus {
-        self.refresh_status();
+        self.refresh_child_status();
+        self.status.clone()
+    }
+
+    pub fn health_probe_url(&mut self) -> Option<String> {
+        self.refresh_child_status();
+        if self.child.is_none() {
+            return None;
+        }
+        if !matches!(self.status.state, ApiState::Running | ApiState::Failed) {
+            return None;
+        }
+        self.status.url.clone()
+    }
+
+    pub fn apply_health_probe(&mut self, url: &str, healthy: bool) -> ApiStatus {
+        self.refresh_child_status();
+        if self.child.is_none() || self.status.url.as_deref() != Some(url) {
+            return self.status.clone();
+        }
+
+        if healthy {
+            self.health_failures = 0;
+            self.status.state = ApiState::Running;
+            self.status.error = None;
+            return self.status.clone();
+        }
+
+        if self.status.state == ApiState::Running {
+            self.health_failures = self.health_failures.saturating_add(1);
+            if self.health_failures >= HEALTH_FAILURE_THRESHOLD {
+                self.status.state = ApiState::Failed;
+                self.status.error = Some(format!("cc_stats_web health check failed for {url}"));
+            }
+        }
+
         self.status.clone()
     }
 
     pub fn restart(&mut self) -> ApiStatus {
         self.stop();
-        let mut next = Self::start_default();
+        let mut next = Self::start_default_with_python_source(self.python_source_dir.clone());
         self.child = next.child.take();
         self.health_failures = next.health_failures;
         self.status = next.status.clone();
@@ -91,8 +133,11 @@ impl ApiProcessManager {
         self.status.state = ApiState::Stopped;
     }
 
-    fn refresh_status(&mut self) {
-        if !matches!(self.status.state, ApiState::Running | ApiState::Failed) {
+    fn refresh_child_status(&mut self) {
+        if !matches!(
+            self.status.state,
+            ApiState::Running | ApiState::Failed | ApiState::Starting
+        ) {
             return;
         }
 
@@ -115,27 +160,21 @@ impl ApiProcessManager {
             }
         }
 
-        let Some(url) = self.status.url.as_deref() else {
+        if self.child.is_none() {
+            if self.status.state == ApiState::Running {
+                self.health_failures = HEALTH_FAILURE_THRESHOLD;
+                self.status.state = ApiState::Failed;
+                self.status.error =
+                    Some("cc_stats_web process is not running".to_string());
+            }
+            return;
+        }
+
+        if self.status.url.is_none() {
             self.health_failures = HEALTH_FAILURE_THRESHOLD;
             self.status.state = ApiState::Failed;
             self.status.error =
                 Some("cc_stats_web health check failed: missing API URL".to_string());
-            return;
-        };
-
-        if is_api_healthy(url) {
-            self.health_failures = 0;
-            self.status.state = ApiState::Running;
-            self.status.error = None;
-            return;
-        }
-
-        if self.status.state == ApiState::Running {
-            self.health_failures = self.health_failures.saturating_add(1);
-            if self.health_failures >= HEALTH_FAILURE_THRESHOLD {
-                self.status.state = ApiState::Failed;
-                self.status.error = Some(format!("cc_stats_web health check failed for {url}"));
-            }
         }
     }
 
@@ -144,6 +183,21 @@ impl ApiProcessManager {
         Self {
             child: None,
             health_failures: 0,
+            python_source_dir: None,
+            status: ApiStatus {
+                state: ApiState::Running,
+                url: Some(url.to_string()),
+                error: None,
+            },
+        }
+    }
+
+    #[cfg(test)]
+    fn running_with_child_for_test(url: &str, child: Child) -> Self {
+        Self {
+            child: Some(child),
+            health_failures: 0,
+            python_source_dir: None,
             status: ApiStatus {
                 state: ApiState::Running,
                 url: Some(url.to_string()),
@@ -162,8 +216,9 @@ impl Drop for ApiProcessManager {
 pub fn candidate_python_commands() -> Vec<Vec<String>> {
     if cfg!(windows) {
         vec![
-            vec!["py".to_string(), "-3".to_string()],
+            vec!["pythonw".to_string()],
             vec!["python".to_string()],
+            vec!["py".to_string(), "-3".to_string()],
             vec!["python3".to_string()],
         ]
     } else {
@@ -171,15 +226,37 @@ pub fn candidate_python_commands() -> Vec<Vec<String>> {
     }
 }
 
+#[cfg(test)]
 pub fn build_api_command(python_command: &[String]) -> Command {
+    build_api_command_with_python_source(python_command, None)
+}
+
+pub fn build_api_command_with_python_source(
+    python_command: &[String],
+    python_source_dir: Option<&Path>,
+) -> Command {
     let mut command = Command::new(&python_command[0]);
     for arg in &python_command[1..] {
         command.arg(arg);
     }
     command.args(["-m", "cc_stats_web", "--no-browser", "--json"]);
+    apply_python_source_dir(&mut command, python_source_dir);
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
     command
+}
+
+fn apply_python_source_dir(command: &mut Command, python_source_dir: Option<&Path>) {
+    let Some(source_dir) = python_source_dir else {
+        return;
+    };
+    let mut paths = vec![source_dir.to_path_buf()];
+    if let Some(existing) = env::var_os("PYTHONPATH") {
+        paths.extend(env::split_paths(&existing));
+    }
+    if let Ok(value) = env::join_paths(paths) {
+        command.env("PYTHONPATH", value);
+    }
 }
 
 pub fn parse_startup_url(line: &str) -> Option<String> {
@@ -198,18 +275,21 @@ pub fn parse_startup_url(line: &str) -> Option<String> {
     None
 }
 
-fn start_python_api() -> Result<(Child, String), String> {
+fn start_python_api(python_source_dir: Option<&Path>) -> Result<(Child, String), String> {
     for python in candidate_python_commands() {
-        match spawn_with_python(&python) {
+        match spawn_with_python(&python, python_source_dir) {
             Ok(started) => return Ok(started),
             Err(_) => continue,
         }
     }
-    Err("Unable to start cc_stats_web with python, python3, or py -3".to_string())
+    Err("Unable to start cc_stats_web with pythonw, python, py -3, or python3".to_string())
 }
 
-fn spawn_with_python(python: &[String]) -> Result<(Child, String), String> {
-    let mut command = build_api_command(python);
+fn spawn_with_python(
+    python: &[String],
+    python_source_dir: Option<&Path>,
+) -> Result<(Child, String), String> {
+    let mut command = build_api_command_with_python_source(python, python_source_dir);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command
         .spawn()
@@ -294,11 +374,14 @@ struct StartupPayload {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_api_command, candidate_python_commands, drain_stderr, parse_startup_url,
-        ApiProcessManager, ApiStatus,
+        build_api_command, build_api_command_with_python_source, candidate_python_commands,
+        drain_stderr, parse_startup_url, ApiProcessManager, ApiStatus,
     };
     use crate::health::ApiState;
-    use std::process::{Command, Stdio};
+    use std::{
+        path::PathBuf,
+        process::{Child, Command, Stdio},
+    };
 
     #[test]
     fn parses_structured_startup_json() {
@@ -330,6 +413,17 @@ mod tests {
     }
 
     #[test]
+    fn api_command_sets_pythonpath_to_bundled_source_dir() {
+        let python = vec!["python3".to_string()];
+        let source_dir = PathBuf::from("C:/cc-statistics/resources/python");
+        let command = build_api_command_with_python_source(&python, Some(&source_dir));
+
+        assert!(command
+            .get_envs()
+            .any(|(key, value)| key == "PYTHONPATH" && value.is_some()));
+    }
+
+    #[test]
     fn drain_stderr_takes_child_pipe_to_prevent_blocking_api() {
         let mut command = if cfg!(windows) {
             let mut command = Command::new("cmd");
@@ -355,23 +449,35 @@ mod tests {
     }
 
     #[test]
-    fn status_tolerates_transient_health_probe_failures() {
+    fn windows_prefers_pythonw_to_avoid_console_window() {
+        if cfg!(windows) {
+            assert_eq!(candidate_python_commands()[0], ["pythonw"]);
+        }
+    }
+
+    #[test]
+    fn status_marks_running_without_owned_child_failed() {
         let mut manager = ApiProcessManager::running_for_test("http://localhost:61234/");
 
         let status = manager.status();
 
-        assert_eq!(status.state, ApiState::Running);
+        assert_eq!(status.state, ApiState::Failed);
         assert_eq!(status.url.as_deref(), Some("http://localhost:61234/"));
-        assert_eq!(status.error, None);
+        assert_eq!(
+            status.error.as_deref(),
+            Some("cc_stats_web process is not running")
+        );
     }
 
     #[test]
     fn status_marks_running_manager_failed_after_repeated_health_probe_failures() {
-        let mut manager = ApiProcessManager::running_for_test("http://localhost:61234/");
+        let child = sleep_child();
+        let mut manager =
+            ApiProcessManager::running_with_child_for_test("http://localhost:61234/", child);
 
-        manager.status();
-        manager.status();
-        let status = manager.status();
+        manager.apply_health_probe("http://localhost:61234/", false);
+        manager.apply_health_probe("http://localhost:61234/", false);
+        let status = manager.apply_health_probe("http://localhost:61234/", false);
 
         assert_eq!(status.state, ApiState::Failed);
         assert_eq!(status.url.as_deref(), Some("http://localhost:61234/"));
@@ -379,23 +485,12 @@ mod tests {
     }
 
     #[test]
-    fn failed_manager_recovers_when_health_probe_succeeds() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0; 512];
-            let _ = std::io::Read::read(&mut stream, &mut request).unwrap();
-            std::io::Write::write_all(
-                &mut stream,
-                b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}",
-            )
-            .unwrap();
-        });
-        let url = format!("http://127.0.0.1:{port}/");
+    fn failed_manager_without_owned_child_does_not_recover_from_reused_port() {
+        let url = "http://127.0.0.1:61234/".to_string();
         let mut manager = ApiProcessManager {
             child: None,
             health_failures: 3,
+            python_source_dir: None,
             status: ApiStatus {
                 state: ApiState::Failed,
                 url: Some(url.clone()),
@@ -403,11 +498,27 @@ mod tests {
             },
         };
 
-        let status = manager.status();
+        let status = manager.apply_health_probe(&url, true);
 
-        assert_eq!(status.state, ApiState::Running);
+        assert_eq!(status.state, ApiState::Failed);
         assert_eq!(status.url.as_deref(), Some(url.as_str()));
-        assert_eq!(status.error, None);
-        handle.join().unwrap();
+        assert_eq!(
+            status.error.as_deref(),
+            Some("cc_stats_web health check failed")
+        );
+    }
+
+    fn sleep_child() -> Child {
+        if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "ping -n 6 127.0.0.1 > nul"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 5"]);
+            command
+        }
+        .spawn()
+        .unwrap()
     }
 }
