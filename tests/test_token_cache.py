@@ -99,6 +99,8 @@ class TestCacheReadWrite(unittest.TestCase):
         self.assertEqual(result.cached_at, 1000.0)
 
     def test_write_sets_permissions(self) -> None:
+        if os.name == "nt":
+            self.skipTest("POSIX file mode bits are not meaningful on Windows")
         td = TokenData(access_token="secret", cached_at=1.0)
         write_cached_token(td)
         mode = self.tmp_file.stat().st_mode & 0o777

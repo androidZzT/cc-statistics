@@ -14,6 +14,7 @@ pub fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
     TrayIconBuilder::new()
         .menu(&menu)
+        .tooltip("CC Statistics")
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open_dashboard" => {

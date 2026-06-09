@@ -5,6 +5,7 @@ import {
   dashboardUrl,
   frameUrlForStatus,
   normalizeApiBaseUrl,
+  STATUS_POLL_INTERVAL_MS,
   statusLabel,
 } from "../src/dashboard.js";
 
@@ -36,4 +37,8 @@ test("frameUrlForStatus clears stale dashboard on api failure", () => {
     frameUrlForStatus({ state: "running", url: "http://127.0.0.1:61234/" }),
     "http://127.0.0.1:61234/",
   );
+});
+
+test("status polling interval is responsive without hammering the api", () => {
+  assert.equal(STATUS_POLL_INTERVAL_MS, 3000);
 });

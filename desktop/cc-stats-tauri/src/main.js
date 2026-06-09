@@ -1,5 +1,5 @@
 import { apiStatus, openDashboard, restartApi } from "./apiClient.js";
-import { frameUrlForStatus, statusLabel } from "./dashboard.js";
+import { frameUrlForStatus, STATUS_POLL_INTERVAL_MS, statusLabel } from "./dashboard.js";
 
 const statusEl = document.querySelector("[data-status]");
 const frameEl = document.querySelector("[data-dashboard-frame]");
@@ -28,3 +28,9 @@ restartBtn?.addEventListener("click", () => {
 refreshStatus().catch((error) => {
   statusEl.textContent = `Status unavailable: ${error}`;
 });
+
+setInterval(() => {
+  refreshStatus().catch((error) => {
+    statusEl.textContent = `Status unavailable: ${error}`;
+  });
+}, STATUS_POLL_INTERVAL_MS);

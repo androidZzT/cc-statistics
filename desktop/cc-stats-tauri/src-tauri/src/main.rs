@@ -1,4 +1,8 @@
-use std::sync::Mutex;
+use std::{
+    sync::Mutex,
+    thread,
+    time::Duration,
+};
 
 use api_process::{ApiProcessManager, ApiStatus};
 use health::ApiState;
@@ -45,6 +49,27 @@ fn open_dashboard(app: AppHandle) -> Result<(), String> {
     window::show_dashboard_window(&app)
 }
 
+fn start_api_health_monitor(app: AppHandle, initial_state: ApiState) {
+    thread::spawn(move || {
+        let mut last_state = initial_state;
+        loop {
+            thread::sleep(Duration::from_secs(3));
+            let status = {
+                let state = app.state::<AppState>();
+                let mut api = state.api.lock().expect("api state poisoned");
+                api.status()
+            };
+
+            if status.state == ApiState::Failed && last_state != ApiState::Failed {
+                if let Some(error) = status.error.as_deref() {
+                    notifications::api_start_failed(&app, error);
+                }
+            }
+            last_state = status.state;
+        }
+    });
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
@@ -57,6 +82,7 @@ fn main() {
             app.manage(AppState {
                 api: Mutex::new(api),
             });
+            start_api_health_monitor(app.handle().clone(), initial_status.state);
             tray::build_tray(app.handle())?;
             Ok(())
         })

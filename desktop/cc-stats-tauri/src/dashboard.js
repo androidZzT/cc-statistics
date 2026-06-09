@@ -1,3 +1,5 @@
+export const STATUS_POLL_INTERVAL_MS = 3000;
+
 export function normalizeApiBaseUrl(url) {
   return String(url || "").replace(/\/+$/, "");
 }

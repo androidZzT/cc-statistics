@@ -176,6 +176,13 @@ def _normalized_project_path(path: Path | str) -> str:
     return os.path.normcase(resolved)
 
 
+def _home_dir() -> Path:
+    home = os.environ.get("HOME")
+    if home:
+        return Path(home).expanduser()
+    return Path.home()
+
+
 def _is_subagent_file(path: Path) -> bool:
     return path.parent.name == "subagents" and path.name.startswith("agent-")
 
@@ -221,7 +228,7 @@ def find_sessions(
 
     如果指定 project_dir，只返回匹配的项目。
     """
-    claude_projects = projects_dir or Path.home() / ".claude" / "projects"
+    claude_projects = projects_dir or _home_dir() / ".claude" / "projects"
     if not claude_projects.exists():
         return []
 
@@ -247,7 +254,7 @@ def find_sessions_by_keyword(
     """按关键词模糊匹配项目，在目录名和 JSONL 中的 cwd 中搜索"""
     import json
 
-    claude_projects = projects_dir or Path.home() / ".claude" / "projects"
+    claude_projects = projects_dir or _home_dir() / ".claude" / "projects"
     if not claude_projects.exists():
         return []
 
@@ -706,7 +713,7 @@ def find_codex_sessions(
     codex_home_dir: Path | None = None,
 ) -> list[Path]:
     """查找 ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl 会话文件"""
-    codex_home = codex_home_dir or Path.home() / ".codex"
+    codex_home = codex_home_dir or _home_dir() / ".codex"
     base = codex_home / "sessions"
     if not base.exists():
         return []
@@ -883,7 +890,7 @@ def find_gemini_sessions(
     gemini_home_dir: Path | None = None,
 ) -> list[Path]:
     """查找 ~/.gemini/tmp/*/chats/*.json 会话文件"""
-    gemini_home = gemini_home_dir or Path.home() / ".gemini"
+    gemini_home = gemini_home_dir or _home_dir() / ".gemini"
     gemini_dir = gemini_home / "tmp"
     if not gemini_dir.exists():
         return []
