@@ -302,7 +302,9 @@ class ApiHandler(SimpleHTTPRequestHandler):
         source = params.get("source", [None])[0]
 
         try:
-            if path == "/api/projects":
+            if path == "/api/health":
+                self._json({"status": "ok"})
+            elif path == "/api/projects":
                 self._json(_get_projects(source=source))
             elif path == "/api/stats":
                 project = params.get("project", [None])[0]

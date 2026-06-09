@@ -1,5 +1,5 @@
 import { apiStatus, openDashboard, restartApi } from "./apiClient.js";
-import { dashboardUrl, statusLabel } from "./dashboard.js";
+import { frameUrlForStatus, statusLabel } from "./dashboard.js";
 
 const statusEl = document.querySelector("[data-status]");
 const frameEl = document.querySelector("[data-dashboard-frame]");
@@ -8,11 +8,8 @@ const restartBtn = document.querySelector("[data-restart-api]");
 
 async function refreshStatus() {
   const status = await apiStatus();
-  statusEl.textContent = statusLabel(status.state);
-
-  if (status.url) {
-    frameEl.src = dashboardUrl(status.url);
-  }
+  statusEl.textContent = statusLabel(status.state, status.error);
+  frameEl.src = frameUrlForStatus(status);
 }
 
 openBtn?.addEventListener("click", () => {

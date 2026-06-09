@@ -212,6 +212,23 @@ pipx install cc-statistics
 brew install androidZzT/tap/cc-statistics
 ```
 
+### Windows 托盘开发预览
+
+Windows 托盘 MVP 位于 `desktop/cc-stats-tauri/`。它是一个 Tauri 平台壳，启动 `python -m cc_stats_web --no-browser --json`，提供托盘菜单，并打开现有 Web 仪表盘。统计、数据源发现、解析、定价和 API 响应仍然由 Python 负责。
+
+这个预览面向开发构建，不替代现有 macOS Swift 应用，也暂不包含 Python 打包、签名、自动更新或安装器打磨。
+
+```bash
+cd desktop/cc-stats-tauri
+npm install
+npm test
+npm run build:web
+
+cd src-tauri
+cargo test
+cargo check
+```
+
 ---
 
 ## 📖 CLI 参考

@@ -212,6 +212,23 @@ pipx install cc-statistics
 brew install androidZzT/tap/cc-statistics
 ```
 
+### Windows Tray Development Preview
+
+A Windows tray MVP lives in `desktop/cc-stats-tauri/`. It is a Tauri shell that starts the Python web dashboard with `python -m cc_stats_web --no-browser --json`, shows a tray menu, and opens the existing dashboard UI. Statistics, source discovery, parsing, pricing, and API responses stay in Python.
+
+This preview is for development builds. It does not replace the macOS Swift app, and it does not bundle Python, signing, automatic updates, or installer polish yet.
+
+```bash
+cd desktop/cc-stats-tauri
+npm install
+npm test
+npm run build:web
+
+cd src-tauri
+cargo test
+cargo check
+```
+
 ---
 
 ## 📖 CLI Reference

@@ -3,12 +3,12 @@ use std::{
     process::{Child, Command, Stdio},
     sync::mpsc,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
 
-use crate::health::ApiState;
+use crate::health::{is_api_healthy, ApiState};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ApiStatus {
@@ -57,7 +57,8 @@ impl ApiProcessManager {
         }
     }
 
-    pub fn status(&self) -> ApiStatus {
+    pub fn status(&mut self) -> ApiStatus {
+        self.refresh_status();
         self.status.clone()
     }
 
@@ -75,6 +76,53 @@ impl ApiProcessManager {
             let _ = child.wait();
         }
         self.status.state = ApiState::Stopped;
+    }
+
+    fn refresh_status(&mut self) {
+        if self.status.state != ApiState::Running {
+            return;
+        }
+
+        if let Some(child) = self.child.as_mut() {
+            match child.try_wait() {
+                Ok(Some(exit_status)) => {
+                    self.child = None;
+                    self.status.state = ApiState::Failed;
+                    self.status.error = Some(format!("cc_stats_web exited with {exit_status}"));
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.status.state = ApiState::Failed;
+                    self.status.error = Some(format!("failed to inspect cc_stats_web: {error}"));
+                    return;
+                }
+            }
+        }
+
+        let Some(url) = self.status.url.as_deref() else {
+            self.status.state = ApiState::Failed;
+            self.status.error =
+                Some("cc_stats_web health check failed: missing API URL".to_string());
+            return;
+        };
+
+        if !is_api_healthy(url) {
+            self.status.state = ApiState::Failed;
+            self.status.error = Some(format!("cc_stats_web health check failed for {url}"));
+        }
+    }
+
+    #[cfg(test)]
+    fn running_for_test(url: &str) -> Self {
+        Self {
+            child: None,
+            status: ApiStatus {
+                state: ApiState::Running,
+                url: Some(url.to_string()),
+                error: None,
+            },
+        }
     }
 }
 
@@ -154,13 +202,46 @@ fn spawn_with_python(python: &[String]) -> Result<(Child, String), String> {
     });
 
     match rx.recv_timeout(Duration::from_secs(8)) {
-        Ok(url) => Ok((child, url)),
+        Ok(url) => match wait_for_api_health(&mut child, &url) {
+            Ok(()) => Ok((child, url)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                Err(error)
+            }
+        },
         Err(err) => {
             let _ = child.kill();
             let _ = child.wait();
             Err(format!("cc_stats_web did not report a startup URL: {err}"))
         }
     }
+}
+
+fn wait_for_api_health(child: &mut Child, url: &str) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(exit_status)) => {
+                return Err(format!(
+                    "cc_stats_web exited before becoming healthy: {exit_status}"
+                ));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return Err(format!(
+                    "failed to inspect cc_stats_web during startup: {error}"
+                ));
+            }
+        }
+
+        if is_api_healthy(url) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+
+    Err(format!("cc_stats_web did not become healthy at {url}"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,7 +252,10 @@ struct StartupPayload {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_api_command, candidate_python_commands, parse_startup_url};
+    use super::{
+        build_api_command, candidate_python_commands, parse_startup_url, ApiProcessManager,
+    };
+    use crate::health::ApiState;
 
     #[test]
     fn parses_structured_startup_json() {
@@ -205,5 +289,16 @@ mod tests {
     #[test]
     fn candidate_python_commands_are_not_empty() {
         assert!(!candidate_python_commands().is_empty());
+    }
+
+    #[test]
+    fn status_marks_running_manager_failed_when_health_probe_fails() {
+        let mut manager = ApiProcessManager::running_for_test("http://localhost:61234/");
+
+        let status = manager.status();
+
+        assert_eq!(status.state, ApiState::Failed);
+        assert_eq!(status.url.as_deref(), Some("http://localhost:61234/"));
+        assert!(status.error.unwrap().contains("health check failed"));
     }
 }

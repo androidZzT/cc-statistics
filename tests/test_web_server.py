@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import urllib.request
 from pathlib import Path
 
 from cc_stats.analyzer import SessionStats, TokenUsage
@@ -8,6 +10,7 @@ from cc_stats_web.server import (
     _collect_session_files,
     _get_projects,
     _get_stats,
+    start_server,
     _stats_to_dict,
 )
 
@@ -126,6 +129,26 @@ def test_get_projects_source_codex_includes_codex_project(
         "session_count": 1,
         "source": "codex",
     }]
+
+
+def test_health_endpoint_returns_ok() -> None:
+    server, port = start_server()
+    thread = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.1},
+        daemon=True,
+    )
+    thread.start()
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert payload == {"status": "ok"}
 
 
 def test_collect_session_files_source_codex_returns_codex_file(
