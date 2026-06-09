@@ -8,13 +8,8 @@ import urllib.error
 from datetime import datetime, timezone
 
 from .analyzer import SessionStats, analyze_session, merge_stats
-from .parser import (
-    find_codex_sessions,
-    find_gemini_sessions,
-    find_sessions,
-    parse_session_file,
-)
 from .pricing import estimate_cost_from_token_by_model
+from .sources import collect_session_files, parse_file
 
 
 def _collect_today_stats() -> SessionStats | None:
@@ -24,14 +19,12 @@ def _collect_today_stats() -> SessionStats | None:
     落在今天，该 session 就会被纳入统计。
     """
     today_key = datetime.now().strftime("%Y-%m-%d")
-    all_files: list = list(find_sessions())
-    all_files.extend(find_codex_sessions())
-    all_files.extend(find_gemini_sessions())
+    all_files = collect_session_files()
     today_stats = []
 
     for f in all_files:
         try:
-            session = parse_session_file(f)
+            session = parse_file(f)
             stats = analyze_session(session)
             # 按消息时间戳归日：token_by_date 包含今天的 key
             has_today_tokens = today_key in stats.token_by_date

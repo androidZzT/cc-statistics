@@ -17,67 +17,20 @@ from cc_stats.analyzer import (
     compute_cache_stats,
     merge_stats,
 )
-from cc_stats.parser import (
-    find_gemini_sessions,
-    find_sessions,
-    parse_gemini_json,
-    parse_jsonl,
-)
+from cc_stats.pricing import match_model_pricing
+from cc_stats.sources import collect_session_files, list_projects, parse_file
 
 _web_dir = os.path.join(os.path.dirname(__file__), "web")
 
-# Model pricing ($/M tokens)
-_PRICING = {
-    "opus": {"input": 15, "output": 75, "cache_read": 1.5, "cache_create": 18.75},
-    "sonnet": {"input": 3, "output": 15, "cache_read": 0.3, "cache_create": 3.75},
-    "haiku": {"input": 0.8, "output": 4, "cache_read": 0.08, "cache_create": 1.0},
-    "gpt-4o": {"input": 2.5, "output": 10, "cache_read": 1.25, "cache_create": 2.5},
-    "o1": {"input": 15, "output": 60, "cache_read": 7.5, "cache_create": 15},
-    "o3": {"input": 10, "output": 40, "cache_read": 2.5, "cache_create": 10},
-    "gemini-2.5-pro": {"input": 1.25, "output": 10, "cache_read": 0.31, "cache_create": 1.25},
-    "gemini-2.5-flash": {"input": 0.15, "output": 0.60, "cache_read": 0.04, "cache_create": 0.15},
-    "gemini-2.0-flash": {"input": 0.10, "output": 0.40, "cache_read": 0.025, "cache_create": 0.10},
-}
-
-
-def _match_pricing(model: str) -> dict:
-    lower = model.lower()
-    # Gemini models (exact match first)
-    for key in ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"):
-        if key in lower:
-            return _PRICING[key]
-    if "gemini" in lower:
-        return _PRICING["gemini-2.5-flash"]
-    for key in ["opus", "haiku", "sonnet", "gpt-4o", "o1", "o3"]:
-        if key in lower:
-            return _PRICING[key]
-    return _PRICING["sonnet"]
-
 
 def _estimate_cost(tu: TokenUsage, model: str = "") -> float:
-    p = _match_pricing(model)
+    p = match_model_pricing(model)
     cost = 0.0
     cost += tu.input_tokens / 1e6 * p["input"]
     cost += tu.output_tokens / 1e6 * p["output"]
     cost += tu.cache_read_input_tokens / 1e6 * p["cache_read"]
     cost += tu.cache_creation_input_tokens / 1e6 * p["cache_create"]
     return cost
-
-
-def _resolve_project_name(proj_dir, jsonl_files):
-    for jf in jsonl_files:
-        try:
-            with open(jf, encoding="utf-8") as fh:
-                for ln in fh:
-                    try:
-                        obj = json.loads(ln)
-                        if obj.get("cwd"):
-                            return obj["cwd"]
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        continue
-        except OSError:
-            continue
-    return proj_dir.name
 
 
 def _stats_to_dict(stats: SessionStats, session_count: int = 1) -> dict:
@@ -161,87 +114,47 @@ def _stats_to_dict(stats: SessionStats, session_count: int = 1) -> dict:
     }
 
 
-def _get_projects():
-    from pathlib import Path
-    projects = []
-
-    # Claude projects
-    claude_projects = Path.home() / ".claude" / "projects"
-    if claude_projects.exists():
-        for proj in sorted(claude_projects.iterdir()):
-            if not proj.is_dir():
-                continue
-            jsonl_files = [f for f in proj.glob("*.jsonl") if not f.name.startswith("agent-")]
-            if not jsonl_files:
-                continue
-            display_name = _resolve_project_name(proj, jsonl_files)
-            projects.append({
-                "dir_name": proj.name,
-                "display_name": display_name,
-                "session_count": len(jsonl_files),
-                "source": "claude",
-            })
-
-    # Gemini projects
-    gemini_files = find_gemini_sessions()
-    if gemini_files:
-        gemini_by_dir: dict[str, list] = {}
-        for gf in gemini_files:
-            dir_key = gf.parent.parent.name  # project hash
-            gemini_by_dir.setdefault(dir_key, []).append(gf)
-        for dir_key, files in gemini_by_dir.items():
-            # Try to get project path from first session
-            display_name = dir_key
-            try:
-                session = parse_gemini_json(files[0])
-                if session.project_path:
-                    display_name = session.project_path
-            except Exception:
-                pass
-            projects.append({
-                "dir_name": f"gemini:{dir_key}",
-                "display_name": display_name,
-                "session_count": len(files),
-                "source": "gemini",
-            })
-
+def _get_projects(source: str | None = None):
+    projects = [
+        {
+            "dir_name": project.key,
+            "display_name": project.display_name,
+            "session_count": project.session_count,
+            "source": project.source.value,
+        }
+        for project in list_projects(source=source)
+    ]
     projects.sort(key=lambda x: x["session_count"], reverse=True)
     return projects
 
 
-def _collect_session_files(project_dir_name=None):
-    """Collect session files (Claude JSONL + Gemini JSON)"""
-    from pathlib import Path
-    files = []
+def _collect_session_files(project_dir_name=None, source: str | None = None):
+    """Collect session files from the shared source registry."""
+    files = collect_session_files(source=source)
+    if not project_dir_name:
+        return files
 
-    if project_dir_name and project_dir_name.startswith("gemini:"):
-        # Gemini project
-        dir_key = project_dir_name[7:]
-        for gf in find_gemini_sessions():
-            if gf.parent.parent.name == dir_key:
-                files.append(gf)
-    elif project_dir_name:
-        # Claude project
-        claude_projects = Path.home() / ".claude" / "projects"
-        proj_dir = claude_projects / project_dir_name
-        files = sorted(f for f in proj_dir.glob("*.jsonl") if not f.name.startswith("agent-"))
-    else:
-        # All sources
-        files = [f for f in find_sessions() if not f.name.startswith("agent-")]
-        files.extend(find_gemini_sessions())
-
-    return files
+    filtered = []
+    for f in files:
+        try:
+            session = _parse_session_file(f)
+        except Exception:
+            continue
+        if session.project_path == project_dir_name:
+            filtered.append(f)
+            continue
+        if session.source == "claude" and f.parent.name == project_dir_name:
+            filtered.append(f)
+    return filtered
 
 
 def _parse_session_file(f):
-    """Parse a session file based on its extension"""
-    if f.suffix == ".json":
-        return parse_gemini_json(f)
-    return parse_jsonl(f)
+    """Parse a session file through the shared source parser."""
+    return parse_file(f)
 
 
-def _get_stats(project_dir_name=None, since_days=None):
-    files = _collect_session_files(project_dir_name)
+def _get_stats(project_dir_name=None, since_days=None, source: str | None = None):
+    files = _collect_session_files(project_dir_name, source=source)
     if not files:
         return {"error": "No sessions found"}
 
@@ -269,8 +182,8 @@ def _get_stats(project_dir_name=None, since_days=None):
     return _stats_to_dict(result, session_count=len(all_stats))
 
 
-def _get_daily_stats(project_dir_name=None, days=14):
-    files = _collect_session_files(project_dir_name)
+def _get_daily_stats(project_dir_name=None, days=14, source: str | None = None):
+    files = _collect_session_files(project_dir_name, source=source)
 
     since_dt = datetime.now(tz=timezone.utc) - timedelta(days=days)
     daily: dict[str, list] = defaultdict(list)
@@ -316,13 +229,13 @@ def _get_daily_stats(project_dir_name=None, days=14):
     return result
 
 
-def _get_skill_stats(project_dir_name=None, since_days=None):
+def _get_skill_stats(project_dir_name=None, since_days=None, source: str | None = None):
     """Return skill usage statistics as a list sorted by call_count.
 
     Skill stats always cover ALL sessions (ignoring since_days) because
     skill usage patterns are more meaningful at the all-time level.
     """
-    files = _collect_session_files(project_dir_name)
+    files = _collect_session_files(project_dir_name, source=source)
     if not files:
         return []
 
@@ -386,34 +299,43 @@ class ApiHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
+        source = params.get("source", [None])[0]
 
-        if path == "/api/projects":
-            self._json(_get_projects())
-        elif path == "/api/stats":
-            project = params.get("project", [None])[0]
-            days = params.get("days", [None])[0]
-            self._json(_get_stats(
-                project_dir_name=project or None,
-                since_days=int(days) if days and days != "0" else None,
-            ))
-        elif path == "/api/daily_stats":
-            project = params.get("project", [None])[0]
-            days = params.get("days", ["14"])[0]
-            self._json(_get_daily_stats(
-                project_dir_name=project or None,
-                days=int(days),
-            ))
-        elif path == "/api/skills":
-            project = params.get("project", [None])[0]
-            days = params.get("days", [None])[0]
-            self._json(_get_skill_stats(
-                project_dir_name=project or None,
-                since_days=int(days) if days and days != "0" else None,
-            ))
-        elif path == "/api/version_check":
-            self._json(_get_version_update())
-        else:
-            super().do_GET()
+        try:
+            if path == "/api/health":
+                self._json({"status": "ok"})
+            elif path == "/api/projects":
+                self._json(_get_projects(source=source))
+            elif path == "/api/stats":
+                project = params.get("project", [None])[0]
+                days = params.get("days", [None])[0]
+                self._json(_get_stats(
+                    project_dir_name=project or None,
+                    since_days=int(days) if days and days != "0" else None,
+                    source=source,
+                ))
+            elif path == "/api/daily_stats":
+                project = params.get("project", [None])[0]
+                days = params.get("days", ["14"])[0]
+                self._json(_get_daily_stats(
+                    project_dir_name=project or None,
+                    days=int(days),
+                    source=source,
+                ))
+            elif path == "/api/skills":
+                project = params.get("project", [None])[0]
+                days = params.get("days", [None])[0]
+                self._json(_get_skill_stats(
+                    project_dir_name=project or None,
+                    since_days=int(days) if days and days != "0" else None,
+                    source=source,
+                ))
+            elif path == "/api/version_check":
+                self._json(_get_version_update())
+            else:
+                super().do_GET()
+        except ValueError as exc:
+            self._json({"error": str(exc)})
 
     def _json(self, data):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")

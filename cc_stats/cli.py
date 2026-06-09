@@ -11,21 +11,19 @@ from pathlib import Path
 from . import __version__
 from .analyzer import SessionStats, TokenUsage, analyze_session, merge_stats
 from .formatter import format_skill_stats, format_stats
-from .parser import (
-    _claude_session_entry_files,
-    find_codex_sessions,
-    find_codex_sessions_by_keyword,
-    find_gemini_sessions,
-    find_gemini_sessions_by_keyword,
-    find_sessions,
-    find_sessions_by_keyword,
-    parse_session_file,
+from .parser import _claude_session_entry_files
+from .sources import (
+    SourceKind,
+    collect_session_files,
+    collect_session_files_by_keyword,
+    list_projects,
+    parse_file,
 )
 
 
 def _parse_session(path: Path):
     """根据文件类型选择解析器"""
-    return parse_session_file(path)
+    return parse_file(path)
 
 
 def _parse_time_arg(value: str, *, as_end_of_day: bool = False) -> datetime:
@@ -298,66 +296,31 @@ def _compare_projects(args) -> None:
 
 def _list_projects() -> None:
     """列出所有已知项目（Claude + Codex + Gemini）"""
-    has_any = False
-
-    # Claude 项目
-    claude_projects = Path.home() / ".claude" / "projects"
-    if claude_projects.exists():
-        print("\n可用项目 (Claude Code):")
-        print("─" * 60)
-        for proj in sorted(claude_projects.iterdir()):
-            if not proj.is_dir():
-                continue
-            jsonl_files = _claude_session_entry_files(proj)
-            if not jsonl_files:
-                continue
-            display_name = _resolve_project_name(proj, jsonl_files)
-            print(f"  {display_name}  ({len(jsonl_files)} 个会话)")
-            has_any = True
-
-    # Codex 项目
-    codex_sessions = find_codex_sessions()
-    if codex_sessions:
-        from collections import defaultdict
-        codex_by_dir: dict[str, list[Path]] = defaultdict(list)
-        for cf in codex_sessions:
-            try:
-                session = _parse_session(cf)
-                key = session.project_path or "Unknown"
-            except Exception:
-                key = "Unknown"
-            codex_by_dir[key].append(cf)
-
-        print("\n可用项目 (Codex):")
-        print("─" * 60)
-        for name, files in sorted(codex_by_dir.items()):
-            display = Path(name).name if "/" in name else name
-            print(f"  {display}  ({len(files)} 个会话)")
-            has_any = True
-
-    # Gemini 项目
-    gemini_sessions = find_gemini_sessions()
-    if gemini_sessions:
-        # 按项目目录分组
-        from collections import defaultdict
-        gemini_by_dir: dict[str, list[Path]] = defaultdict(list)
-        for gf in gemini_sessions:
-            try:
-                session = _parse_session(gf)
-                key = session.project_path or gf.parent.parent.name
-            except Exception:
-                key = gf.parent.parent.name
-            gemini_by_dir[key].append(gf)
-
-        print("\n可用项目 (Gemini CLI):")
-        print("─" * 60)
-        for name, files in sorted(gemini_by_dir.items()):
-            display = Path(name).name if "/" in name else name
-            print(f"  {display}  ({len(files)} 个会话)")
-            has_any = True
-
-    if not has_any:
+    projects = list_projects()
+    if not projects:
         print("未找到项目数据")
+        print()
+        return
+
+    labels = {
+        SourceKind.CLAUDE: "Claude Code",
+        SourceKind.CODEX: "Codex",
+        SourceKind.GEMINI: "Gemini CLI",
+    }
+    by_source: dict[SourceKind, list] = {}
+    for project in projects:
+        by_source.setdefault(project.source, []).append(project)
+
+    for source in (SourceKind.CLAUDE, SourceKind.CODEX, SourceKind.GEMINI):
+        items = by_source.get(source, [])
+        if not items:
+            continue
+        print(f"\n可用项目 ({labels[source]}):")
+        print("─" * 60)
+        for project in items:
+            display_name = project.display_name
+            display = Path(display_name).name if "/" in display_name or "\\" in display_name else display_name
+            print(f"  {display}  ({project.session_count} 个会话)")
     print()
 
 
@@ -394,9 +357,7 @@ def _show_rate_limit(args) -> None:
     from .rate_limiter import analyze_rate_limit
 
     # 收集所有会话文件（Claude + Codex + Gemini）
-    session_files: list[Path] = find_sessions()
-    session_files.extend(find_codex_sessions())
-    session_files.extend(find_gemini_sessions())
+    session_files: list[Path] = collect_session_files()
 
     if not session_files:
         print("未找到会话文件。", file=sys.stderr)
@@ -446,9 +407,7 @@ def _show_git_integration(args) -> None:
         sys.exit(1)
 
     # 收集所有会话文件
-    session_files: list[Path] = find_sessions()
-    session_files.extend(find_codex_sessions())
-    session_files.extend(find_gemini_sessions())
+    session_files: list[Path] = collect_session_files()
 
     if not session_files:
         import sys
@@ -702,24 +661,18 @@ def main(argv: list[str] | None = None) -> None:
         if p.is_file() and p.suffix in (".jsonl", ".json"):
             session_files = [p]
         elif p.is_dir():
-            session_files = find_sessions(p)
-            session_files.extend(find_codex_sessions(p))
+            session_files = collect_session_files(project_dir=p)
         if not session_files:
             # 作为关键词模糊搜索（Claude + Codex + Gemini）
-            session_files = find_sessions_by_keyword(args.path)
-            session_files.extend(find_codex_sessions_by_keyword(args.path))
-            session_files.extend(find_gemini_sessions_by_keyword(args.path))
+            session_files = collect_session_files_by_keyword(args.path)
         if not session_files:
             print(f"找不到: {args.path}", file=sys.stderr)
             sys.exit(1)
     elif args.all:
-        session_files = find_sessions()
-        session_files.extend(find_codex_sessions())
-        session_files.extend(find_gemini_sessions())
+        session_files = collect_session_files()
     else:
         # 默认：当前目录
-        session_files = find_sessions(Path.cwd())
-        session_files.extend(find_codex_sessions(Path.cwd()))
+        session_files = collect_session_files(project_dir=Path.cwd())
 
     # 去重（保留原顺序）
     session_files = list(dict.fromkeys(session_files))

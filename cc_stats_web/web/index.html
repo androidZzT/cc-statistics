@@ -150,7 +150,7 @@ select:hover{border-color:var(--cyan)}
   <div class="info" id="info"></div>
 </div>
 <script>
-let currentProject='',currentDays=1,currentSource='',allProjects=[];
+let currentProject='',currentProjectSource='',currentDays=1,currentSource='',allProjects=[];
 const COLORS=['#58a6ff','#bc8cff','#3fb950','#f0883e','#f85149','#f778ba','#39d2c0','#d29922'];
 function fmt(n){if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toLocaleString()}
 function fmtCost(n){return n>=100?'$'+n.toFixed(0):n>=1?'$'+n.toFixed(2):n>=.01?'$'+n.toFixed(3):'$'+n.toFixed(4)}
@@ -163,17 +163,18 @@ async function api(path,params){
 }
 
 async function loadProjects(){
-  allProjects=await api('/api/projects');
+  allProjects=await api('/api/projects',{source:currentSource||null});
   renderProjectSelect();
 }
 function renderProjectSelect(){
   const sel=document.getElementById('project-select');
-  const filtered=currentSource?allProjects.filter(p=>(p.source||'claude')===currentSource):allProjects;
+  const filtered=allProjects;
   sel.innerHTML='<option value="">All Projects</option>';
   filtered.forEach(p=>{
     const o=document.createElement('option');o.value=p.dir_name;
-    const parts=p.display_name.split('/');
-    const tag=p.source==='gemini'?' [G]':'';
+    o.dataset.source=p.source||'';
+    const parts=p.display_name.split(/[\\/]/);
+    const tag=p.source==='gemini'?' [G]':p.source==='codex'?' [C]':p.source==='claude'?' [Claude]':'';
     o.textContent=parts.slice(-1)[0]+tag+' ('+p.session_count+')';
     sel.appendChild(o);
   });
@@ -181,10 +182,11 @@ function renderProjectSelect(){
 
 async function loadStats(){
   const days=currentDays>0?currentDays:null;
+  const source=currentSource||currentProjectSource||null;
   const [stats,daily,skills]=await Promise.all([
-    api('/api/stats',{project:currentProject||null,days}),
-    api('/api/daily_stats',{project:currentProject||null,days:currentDays>0?currentDays:30}),
-    api('/api/skills',{project:currentProject||null,days}),
+    api('/api/stats',{project:currentProject||null,days,source}),
+    api('/api/daily_stats',{project:currentProject||null,days:currentDays>0?currentDays:30,source}),
+    api('/api/skills',{project:currentProject||null,days,source}),
   ]);
   if(stats.error){document.getElementById('info').textContent=stats.error;return;}
   updateMetrics(stats);
@@ -301,9 +303,13 @@ function updateSkills(skills){
   }).join('');
 }
 
-document.getElementById('project-select').addEventListener('change',e=>{currentProject=e.target.value;loadStats()});
-document.getElementById('source-select').addEventListener('change',e=>{
-  currentSource=e.target.value;currentProject='';renderProjectSelect();loadStats();
+document.getElementById('project-select').addEventListener('change',e=>{
+  currentProject=e.target.value;
+  currentProjectSource=e.target.selectedOptions[0]?.dataset.source||'';
+  loadStats();
+});
+document.getElementById('source-select').addEventListener('change',async e=>{
+  currentSource=e.target.value;currentProject='';currentProjectSource='';await loadProjects();loadStats();
 });
 document.querySelectorAll('.time-btn').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('.time-btn').forEach(x=>x.classList.remove('active'));

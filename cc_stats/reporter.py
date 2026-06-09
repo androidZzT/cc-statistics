@@ -7,17 +7,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .analyzer import SessionStats, TokenUsage, analyze_session, merge_stats
-from .parser import (
-    find_codex_sessions,
-    find_gemini_sessions,
-    find_sessions,
-    parse_session_file,
-)
 from .pricing import (
     Pricing,
     estimate_cost_from_token_by_model,
     match_model_pricing,
 )
+from .sources import collect_session_files, parse_file
 
 
 def _match_pricing(model: str) -> Pricing:
@@ -109,11 +104,7 @@ def generate_report(period: str = "week") -> str:
     end_str = now.astimezone().strftime("%Y-%m-%d")
 
     # 收集所有会话（Claude + Codex + Gemini）
-    session_files: list[Path] = [
-        f for f in find_sessions() if not f.name.startswith("agent-")
-    ]
-    session_files.extend(find_codex_sessions())
-    session_files.extend(find_gemini_sessions())
+    session_files: list[Path] = collect_session_files()
     session_files.sort(key=lambda f: f.stat().st_mtime)
 
     all_stats: list[SessionStats] = []
@@ -121,7 +112,7 @@ def generate_report(period: str = "week") -> str:
 
     for f in session_files:
         try:
-            session = parse_session_file(f)
+            session = parse_file(f)
             stats = analyze_session(session)
             if stats.end_time and stats.end_time < since:
                 continue
@@ -268,7 +259,7 @@ def generate_report(period: str = "week") -> str:
     prev_stats: list[SessionStats] = []
     for f in session_files:
         try:
-            session = parse_session_file(f)
+            session = parse_file(f)
             stats_item = analyze_session(session)
             if stats_item.end_time and prev_since <= stats_item.end_time < since:
                 prev_stats.append(stats_item)
