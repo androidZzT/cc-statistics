@@ -11,6 +11,7 @@ use health::ApiState;
 use tauri::{AppHandle, Manager, State};
 
 mod api_process;
+mod external_browser;
 mod health;
 mod notifications;
 mod tray;
@@ -47,8 +48,13 @@ fn restart_api(app: AppHandle, state: State<'_, AppState>) -> Result<ApiStatus, 
 }
 
 #[tauri::command]
-fn open_dashboard(app: AppHandle) -> Result<(), String> {
-    window::show_dashboard_window(&app)
+fn open_dashboard(state: State<'_, AppState>) -> Result<(), String> {
+    let status = {
+        let mut api = state.api.lock().expect("api state poisoned");
+        api.status()
+    };
+    let url = external_browser::dashboard_url_for_open(&status)?;
+    external_browser::open_dashboard_url(&url)
 }
 
 fn start_api_health_monitor(app: AppHandle, initial_state: ApiState) {
