@@ -33,7 +33,11 @@ def _estimate_cost(tu: TokenUsage, model: str = "") -> float:
     return cost
 
 
-def _stats_to_dict(stats: SessionStats, session_count: int = 1) -> dict:
+def _stats_to_dict(
+    stats: SessionStats,
+    session_count: int = 1,
+    git_scan_skipped: bool = False,
+) -> dict:
     def _td_seconds(td):
         return td.total_seconds()
 
@@ -99,6 +103,7 @@ def _stats_to_dict(stats: SessionStats, session_count: int = 1) -> dict:
         "git_total_added": stats.git_total_added,
         "git_total_removed": stats.git_total_removed,
         "git_commit_count": stats.git_commit_count,
+        "git_scan_skipped": git_scan_skipped,
         "token_usage": _token_dict(stats.token_usage),
         "token_by_model": model_tokens,
         "estimated_cost": round(total_cost, 2),
@@ -168,6 +173,30 @@ def _filter_files_by_mtime(files: list, since_dt: datetime | None):
     return filtered
 
 
+def _daily_date_keys(
+    since_dt: datetime,
+    days: int,
+    now: datetime | None = None,
+) -> list[str]:
+    now_dt = now or datetime.now(tz=timezone.utc)
+    if days <= 1:
+        start_date = since_dt.astimezone().date()
+        end_date = now_dt.astimezone().date()
+        if start_date > end_date:
+            start_date = end_date
+        span = (end_date - start_date).days
+        return [
+            (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
+            for i in range(span + 1)
+        ]
+
+    today = now_dt.astimezone().date()
+    return [
+        (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        for i in range(days - 1, -1, -1)
+    ]
+
+
 def _get_stats(project_dir_name=None, since_days=None, source: str | None = None):
     files = _collect_session_files(project_dir_name, source=source)
     if not files:
@@ -195,7 +224,11 @@ def _get_stats(project_dir_name=None, since_days=None, source: str | None = None
         return {"error": "No valid sessions"}
 
     result = all_stats[0] if len(all_stats) == 1 else merge_stats(all_stats)
-    return _stats_to_dict(result, session_count=len(all_stats))
+    return _stats_to_dict(
+        result,
+        session_count=len(all_stats),
+        git_scan_skipped=True,
+    )
 
 
 def _get_daily_stats(project_dir_name=None, days=14, source: str | None = None):
@@ -219,10 +252,7 @@ def _get_daily_stats(project_dir_name=None, days=14, source: str | None = None):
             continue
 
     result = []
-    today = datetime.now().date()
-    for i in range(days - 1, -1, -1):
-        d = today - timedelta(days=i)
-        day_key = d.strftime("%Y-%m-%d")
+    for day_key in _daily_date_keys(since_dt, days):
         day_stats = daily.get(day_key, [])
         if day_stats:
             merged = merge_stats(day_stats) if len(day_stats) > 1 else day_stats[0]

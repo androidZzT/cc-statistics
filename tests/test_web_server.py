@@ -12,6 +12,7 @@ from cc_stats.analyzer import SessionStats, TokenUsage
 from cc_stats_web import server as web_server
 from cc_stats_web.server import (
     _collect_session_files,
+    _daily_date_keys,
     _get_projects,
     _get_stats,
     start_server,
@@ -311,6 +312,16 @@ def test_get_stats_disables_git_collection_for_web_requests(
     assert include_git_values == [False]
 
 
+def test_daily_date_keys_for_today_cover_rolling_window_across_midnight() -> None:
+    since_dt = datetime(2026, 6, 9, 15, 30, tzinfo=timezone.utc)
+    now_dt = datetime(2026, 6, 9, 17, 0, tzinfo=timezone.utc)
+
+    assert _daily_date_keys(since_dt, days=1, now=now_dt) == [
+        "2026-06-09",
+        "2026-06-10",
+    ]
+
+
 def test_source_filter_excludes_other_sources_for_web_helpers(
     tmp_path: Path,
     monkeypatch,
@@ -365,7 +376,7 @@ def test_collect_session_files_filters_claude_by_project_directory_key(
     assert stats["user_message_count"] == 1
 
 
-def test_stats_to_dict_includes_cache_grade_and_claude_only_savings():
+def test_stats_to_dict_includes_cache_grade_and_model_savings():
     stats = SessionStats(session_id="s1", project_path="/tmp/demo")
     stats.token_usage = TokenUsage(
         input_tokens=300_000,
@@ -392,9 +403,17 @@ def test_stats_to_dict_includes_cache_grade_and_claude_only_savings():
     assert cache["cache_read_tokens"] == 700_000
     assert cache["total_input_tokens"] == 1_000_000
     assert cache["hit_rate"] == 0.7
-    assert cache["savings_usd"] == 1.62
+    assert cache["savings_usd"] == 1.845
     assert cache["by_model"]["claude-sonnet-4.5"] == 0.8571428571428571
     assert cache["by_model"]["gpt-5.4"] == 0.3333333333333333
+
+
+def test_stats_to_dict_marks_skipped_git_scan():
+    stats = SessionStats(session_id="s3", project_path="/tmp/demo")
+
+    result = _stats_to_dict(stats, git_scan_skipped=True)
+
+    assert result["git_scan_skipped"] is True
 
 
 def test_stats_to_dict_returns_na_when_no_cache_reads():

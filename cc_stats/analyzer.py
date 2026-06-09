@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .parser import Message, Session, ToolCall
-from .pricing import is_claude_model, match_model_pricing
+from .pricing import match_model_pricing
 
 # 文件扩展名 → 语言映射
 EXT_TO_LANG: dict[str, str] = {
@@ -291,10 +291,8 @@ def compute_cache_stats(
     # savings = cache_read_tokens * (input_price - cache_read_price) / 1M
     savings_usd = 0.0
     for model, usage in token_by_model.items():
-        if not is_claude_model(model):
-            continue
         pricing = match_model_pricing(model)
-        savings_per_million = pricing["input"] - pricing["cache_read"]
+        savings_per_million = max(pricing["input"] - pricing["cache_read"], 0.0)
         savings_usd += usage.cache_read_input_tokens * savings_per_million / 1_000_000
 
     # 按模型拆分命中率

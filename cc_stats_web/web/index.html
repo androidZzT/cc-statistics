@@ -269,7 +269,9 @@ function updateCode(d){
   d.lines_by_lang.slice(0,8).forEach((l,i)=>{
     html+='<div class="lang-row"><div class="lang-dot" style="background:'+COLORS[i%8]+'"></div><div class="lang-name">'+l.lang+'</div><div class="lang-add">+'+l.added+'</div><div class="lang-del">-'+l.removed+'</div></div>';
   });
-  if(!d.lines_by_lang.length)html+='<div style="color:var(--text3);font-size:11px">No code changes</div>';
+  if(!d.lines_by_lang.length){
+    html+='<div style="color:var(--text3);font-size:11px">'+(d.git_scan_skipped?'Git scan skipped for fast dashboard':'No code changes')+'</div>';
+  }
   el.innerHTML=html;
 }
 
@@ -297,7 +299,7 @@ function updateCache(d){
     el.innerHTML='<div class="cache-hero"><div><div class="cache-badge na">'+(cache.grade_label||'N/A')+'</div><div class="cache-hit">—</div><div class="cache-hit-sub">No cache reuse yet</div></div><div class="cache-savings">'+fmtCost(cache.savings_usd||0)+'</div></div><div class="cache-empty">Cache writes may exist, but there are no cache-read tokens yet.</div>';
     return;
   }
-  let html='<div class="cache-hero"><div><div class="cache-badge '+tone+'">'+cache.grade_label+'</div><div class="cache-hit">'+pct(cache.hit_rate||0)+'</div><div class="cache-hit-sub">hit rate</div></div><div><div class="cache-savings">'+fmtCost(cache.savings_usd||0)+'</div><div class="cache-savings-sub">saved on Claude cache reads</div></div></div>';
+  let html='<div class="cache-hero"><div><div class="cache-badge '+tone+'">'+cache.grade_label+'</div><div class="cache-hit">'+pct(cache.hit_rate||0)+'</div><div class="cache-hit-sub">hit rate</div></div><div><div class="cache-savings">'+fmtCost(cache.savings_usd||0)+'</div><div class="cache-savings-sub">estimated cache savings</div></div></div>';
   html+='<div class="cache-track"><div class="cache-fill" style="width:'+Math.max(2,Math.round((cache.hit_rate||0)*100))+'%;background:'+(tone==='excellent'?'var(--green)':tone==='good'?'var(--cyan)':tone==='fair'?'var(--amber)':tone==='poor'?'var(--red)':'var(--text3)')+'"></div></div>';
   html+='<div class="cache-detail"><span class="label">Cache Read</span><span class="value">'+fmt(cache.cache_read_tokens)+' / '+fmt(cache.total_input_tokens)+' input</span></div>';
   html+='<div class="cache-detail"><span class="label">Coverage</span><span class="value">'+pct(cache.hit_rate||0)+'</span></div>';
