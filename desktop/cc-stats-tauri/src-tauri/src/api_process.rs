@@ -6,11 +6,17 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use serde::{Deserialize, Serialize};
 
 use crate::health::{is_api_healthy, ApiState};
 
 const HEALTH_FAILURE_THRESHOLD: u8 = 3;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ApiStatus {
@@ -171,6 +177,8 @@ pub fn build_api_command(python_command: &[String]) -> Command {
         command.arg(arg);
     }
     command.args(["-m", "cc_stats_web", "--no-browser", "--json"]);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
     command
 }
 
