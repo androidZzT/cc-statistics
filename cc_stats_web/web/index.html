@@ -1,160 +1,959 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CC Statistics</title>
 <style>
-:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#6e7681;--cyan:#58a6ff;--purple:#bc8cff;--green:#3fb950;--amber:#f0883e;--red:#f85149;--pink:#f778ba}
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
-.app{max-width:900px;margin:0 auto;padding:20px}
-.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px}
-.header h1{font-size:22px;font-weight:700;background:linear-gradient(135deg,var(--cyan),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.controls{display:flex;gap:8px;align-items:center}
-select{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer}
-select:hover{border-color:var(--cyan)}
-.time-btns{display:flex;gap:2px;background:var(--card);border-radius:6px;padding:2px;border:1px solid var(--border)}
-.time-btn{background:none;border:none;color:var(--text2);padding:5px 14px;border-radius:5px;font-size:12px;font-weight:500;cursor:pointer}
-.time-btn:hover{color:var(--text);background:rgba(255,255,255,.05)}
-.time-btn.active{background:var(--cyan);color:#fff}
-.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
-.metric{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;transition:.2s}
-.metric:hover{border-color:rgba(255,255,255,.12);transform:translateY(-1px)}
-.metric-label{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
-.metric-value{font-size:26px;font-weight:700;letter-spacing:-1px}
-.metric-sub{font-size:11px;color:var(--text3);margin-top:2px}
-.metric[data-t="msg"] .metric-value{color:var(--cyan)}
-.metric[data-t="tool"] .metric-value{color:var(--purple)}
-.metric[data-t="dur"] .metric-value{color:var(--green)}
-.metric[data-t="cost"] .metric-value{color:var(--amber)}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
-.card-title{font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px}
-.bar-row{display:flex;align-items:center;gap:8px;margin-bottom:4px}
-.bar-label{font-size:11px;color:var(--text2);width:70px;text-align:right;flex-shrink:0}
-.bar-track{flex:1;height:16px;background:rgba(255,255,255,.03);border-radius:3px;overflow:hidden}
-.bar-fill{height:100%;border-radius:3px;transition:width .5s ease}
-.bar-count{font-size:11px;color:var(--text3);width:30px;text-align:right}
-.trend{margin-bottom:16px}
-.trend-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
-.trend-bars{display:flex;align-items:flex-end;gap:4px;height:120px}
-.trend-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px}
-.trend-bar{width:100%;border-radius:3px 3px 0 0;background:linear-gradient(to top,rgba(88,166,255,.6),rgba(188,140,255,.6));transition:height .5s ease;min-height:2px}
-.trend-label{font-size:8px;color:var(--text3)}
-.trend-val{font-size:8px;color:var(--amber);font-weight:500}
-.ring-section{display:flex;gap:20px;align-items:center}
-.ring-wrap{position:relative;width:100px;height:100px;flex-shrink:0}
-.ring-wrap svg{transform:rotate(-90deg)}
-.ring-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
-.ring-pct{font-size:18px;font-weight:700;color:var(--cyan)}
-.ring-lbl{font-size:9px;color:var(--text3)}
-.time-rows{flex:1}
-.time-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)}
-.time-row:last-child{border:none}
-.time-row .label{font-size:12px;color:var(--text2)}
-.time-row .value{font-size:12px;font-weight:600;color:var(--text)}
-.lang-row{display:flex;align-items:center;gap:8px;padding:4px 0}
-.lang-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.lang-name{font-size:11px;color:var(--text2);flex:1}
-.lang-add{font-size:11px;color:var(--green);font-weight:500}
-.lang-del{font-size:11px;color:var(--red);font-weight:500}
-.model-row{padding:8px 0;border-bottom:1px solid var(--border)}
-.model-row:last-child{border:none}
-.model-header{display:flex;justify-content:space-between;margin-bottom:4px}
-.model-name{font-size:11px;font-weight:600;color:var(--text);font-family:monospace}
-.model-cost{font-size:11px;font-weight:700;color:var(--amber);font-family:monospace}
-.model-tokens{font-size:10px;color:var(--text3);font-family:monospace}
-.stacked-bar{height:8px;border-radius:4px;display:flex;overflow:hidden;margin-top:4px}
-.stacked-seg{height:100%;transition:width .5s ease}
-.cache-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}
-.cache-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;border:1px solid transparent}
-.cache-badge.excellent{color:var(--green);background:rgba(63,185,80,.12);border-color:rgba(63,185,80,.2)}
-.cache-badge.good{color:var(--cyan);background:rgba(88,166,255,.12);border-color:rgba(88,166,255,.2)}
-.cache-badge.fair{color:var(--amber);background:rgba(240,136,62,.12);border-color:rgba(240,136,62,.2)}
-.cache-badge.poor{color:var(--red);background:rgba(248,81,73,.12);border-color:rgba(248,81,73,.2)}
-.cache-badge.na{color:var(--text2);background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.08)}
-.cache-hit{font-size:28px;font-weight:800;letter-spacing:-1px;margin-top:6px}
-.cache-hit-sub{font-size:11px;color:var(--text3)}
-.cache-savings{font-size:18px;font-weight:700;color:var(--amber);text-align:right}
-.cache-savings-sub{font-size:10px;color:var(--text3);text-align:right}
-.cache-track{height:10px;background:rgba(255,255,255,.04);border-radius:999px;overflow:hidden;margin-bottom:10px}
-.cache-fill{height:100%;border-radius:999px;transition:width .5s ease}
-.cache-detail{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);font-size:11px}
-.cache-detail:last-of-type{border-bottom:none}
-.cache-detail .label{color:var(--text2)}
-.cache-detail .value{color:var(--text);font-weight:600;font-family:monospace}
-.cache-model-title{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin:10px 0 6px}
-.cache-model-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.cache-model-name{font-size:10px;color:var(--text2);width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace}
-.cache-model-bar{flex:1;height:8px;background:rgba(255,255,255,.04);border-radius:999px;overflow:hidden}
-.cache-model-fill{height:100%;border-radius:999px;transition:width .5s ease}
-.cache-model-rate{font-size:10px;color:var(--text);width:36px;text-align:right;font-weight:700;font-family:monospace}
-.cache-empty{font-size:11px;color:var(--text3);padding:4px 0}
-.skill-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.skill-name{font-size:11px;color:var(--text2);width:90px;text-align:right;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.skill-bar{flex:1;height:16px;background:rgba(255,255,255,.03);border-radius:3px;overflow:hidden}
-.skill-bar-fill{height:100%;border-radius:3px;transition:width .5s ease}
-.skill-count{font-size:11px;color:var(--text3);width:28px;text-align:right}
-.skill-rate{font-size:10px;font-weight:600;width:40px;text-align:right}
-.info{font-size:11px;color:var(--text3);text-align:center;padding-top:10px}
-.empty{text-align:center;padding:60px 20px;color:var(--text3)}
-.loading{display:flex;align-items:center;justify-content:center;padding:40px;color:var(--text3);font-size:13px}
-.update-banner{display:none;background:linear-gradient(135deg,rgba(88,166,255,.15),rgba(188,140,255,.15));border:1px solid var(--cyan);border-radius:8px;padding:10px 16px;margin-bottom:12px;font-size:12px;color:var(--text);align-items:center;justify-content:space-between;gap:8px}
+:root{
+  --page:#30302f;
+  --panel:#252524;
+  --panel-2:#202322;
+  --panel-3:#1c1f20;
+  --line:#414140;
+  --line-strong:#535352;
+  --text:#eeeeec;
+  --muted:#aaa9a5;
+  --subtle:#73716d;
+  --cyan:#1fd8f6;
+  --blue:#4fa3ff;
+  --purple:#8a5cf6;
+  --green:#22c58d;
+  --amber:#f4a218;
+  --red:#ff5f5f;
+  --shadow:0 18px 48px rgba(0,0,0,.22);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:var(--page)}
+body{
+  min-height:100vh;
+  background:var(--page);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  font-size:14px;
+  line-height:1.45;
+  letter-spacing:0;
+}
+button,select{font:inherit;letter-spacing:0}
+button{cursor:pointer}
+.dashboard-shell{
+  max-width:950px;
+  min-height:100vh;
+  margin:0 auto;
+  padding:18px 16px 88px;
+  background:var(--page);
+}
+.update-banner{
+  display:none;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:14px;
+  padding:10px 14px;
+  color:var(--text);
+  background:rgba(31,216,246,.08);
+  border:1px solid rgba(31,216,246,.28);
+  border-radius:12px;
+}
 .update-banner.show{display:flex}
-.update-banner code{background:rgba(255,255,255,.1);padding:2px 6px;border-radius:4px;font-size:11px}
-.update-banner .dismiss{background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;padding:0 4px;line-height:1}
-.update-banner .dismiss:hover{color:var(--text)}
-@media(max-width:700px){.metrics{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}}
+.update-banner code{
+  padding:2px 6px;
+  border-radius:6px;
+  background:rgba(255,255,255,.1);
+}
+.dismiss{
+  width:28px;
+  height:28px;
+  color:var(--muted);
+  background:transparent;
+  border:0;
+  border-radius:8px;
+}
+.dismiss:hover{color:var(--text);background:rgba(255,255,255,.06)}
+.top-toolbar{
+  display:flex;
+  flex-direction:column;
+  gap:16px;
+  margin-bottom:18px;
+}
+.toolbar-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+}
+.filter-group{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:12px;
+  min-width:0;
+}
+.select-control{
+  position:relative;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:168px;
+  max-width:260px;
+  height:38px;
+  padding:0 10px;
+  color:var(--text);
+  background:transparent;
+  border-radius:10px;
+}
+.select-control:hover{background:rgba(255,255,255,.04)}
+.control-icon{
+  position:relative;
+  width:24px;
+  height:24px;
+  flex:0 0 24px;
+  color:var(--text);
+}
+.control-icon.folder::before{
+  content:"";
+  position:absolute;
+  left:2px;
+  top:7px;
+  width:20px;
+  height:13px;
+  border:2px solid currentColor;
+  border-radius:3px;
+}
+.control-icon.folder::after{
+  content:"";
+  position:absolute;
+  left:3px;
+  top:5px;
+  width:9px;
+  height:4px;
+  border:2px solid currentColor;
+  border-bottom:0;
+  border-radius:3px 3px 0 0;
+}
+.control-icon.stack::before,
+.control-icon.stack::after{
+  content:"";
+  position:absolute;
+  left:4px;
+  width:16px;
+  height:16px;
+  border:2px solid currentColor;
+  transform:rotate(45deg);
+  border-radius:2px;
+}
+.control-icon.stack::before{top:2px}
+.control-icon.stack::after{top:8px;opacity:.65}
+.select-control select{
+  min-width:0;
+  width:100%;
+  color:var(--text);
+  background:transparent;
+  border:0;
+  outline:0;
+  font-weight:700;
+  font-size:22px;
+  appearance:auto;
+}
+.select-control select option{background:var(--panel);color:var(--text)}
+.toolbar-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.icon-btn{
+  position:relative;
+  display:grid;
+  place-items:center;
+  width:38px;
+  height:38px;
+  color:var(--muted);
+  background:transparent;
+  border:0;
+  border-radius:10px;
+}
+.icon-btn:hover{color:var(--text);background:rgba(255,255,255,.06)}
+.glyph{position:relative;display:block;width:20px;height:20px}
+.glyph.export::before{
+  content:"";
+  position:absolute;
+  left:4px;
+  right:4px;
+  bottom:2px;
+  height:10px;
+  border:2px solid currentColor;
+  border-top:0;
+  border-radius:0 0 4px 4px;
+}
+.glyph.export::after{
+  content:"";
+  position:absolute;
+  left:9px;
+  top:1px;
+  width:2px;
+  height:12px;
+  background:currentColor;
+  box-shadow:-4px 4px 0 -1px currentColor,4px 4px 0 -1px currentColor;
+}
+.glyph.settings::before{
+  content:"";
+  position:absolute;
+  inset:3px;
+  border:3px solid currentColor;
+  border-radius:50%;
+}
+.glyph.settings::after{
+  content:"";
+  position:absolute;
+  inset:8px;
+  border-radius:50%;
+  background:currentColor;
+  box-shadow:0 -8px 0 -2px currentColor,0 8px 0 -2px currentColor,8px 0 0 -2px currentColor,-8px 0 0 -2px currentColor;
+}
+.period-tabs{
+  display:inline-flex;
+  align-self:flex-start;
+  gap:4px;
+  padding:5px;
+  min-height:52px;
+  background:#242423;
+  border-radius:16px;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.03);
+}
+.period-tabs button{
+  min-width:76px;
+  height:42px;
+  color:var(--muted);
+  background:transparent;
+  border:0;
+  border-radius:11px;
+  font-size:20px;
+  font-weight:800;
+}
+.period-tabs button:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.period-tabs button.active{color:#102326;background:var(--cyan);box-shadow:0 8px 22px rgba(31,216,246,.24)}
+.dashboard-main{display:flex;flex-direction:column;gap:16px}
+.metric-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:16px;
+}
+.metric-card{
+  position:relative;
+  min-height:120px;
+  padding:20px 22px;
+  background:linear-gradient(135deg,rgba(255,255,255,.025),rgba(0,0,0,.08)),var(--panel);
+  border:1px solid var(--line);
+  border-radius:18px;
+  overflow:hidden;
+}
+.metric-card::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  border-radius:18px;
+  pointer-events:none;
+  border:1px solid rgba(255,255,255,.08);
+  opacity:.48;
+}
+.metric-card[data-tone="cyan"]{--accent:var(--cyan)}
+.metric-card[data-tone="purple"]{--accent:var(--purple)}
+.metric-card[data-tone="green"]{--accent:var(--green)}
+.metric-card[data-tone="amber"]{--accent:var(--amber)}
+.metric-card[data-tone="cyan"]::before{border-color:rgba(31,216,246,.38)}
+.metric-card[data-tone="purple"]::before{border-color:rgba(138,92,246,.34)}
+.metric-card[data-tone="green"]::before{border-color:rgba(34,197,141,.34)}
+.metric-card[data-tone="amber"]::before{border-color:rgba(244,162,24,.34)}
+.metric-label{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  color:var(--muted);
+  font-size:21px;
+  font-weight:800;
+  min-width:0;
+}
+.metric-dot{
+  width:22px;
+  height:22px;
+  flex:0 0 22px;
+  border-radius:7px;
+  background:var(--accent);
+  box-shadow:0 0 18px rgba(0,0,0,.22);
+}
+.metric-info{
+  display:inline-grid;
+  place-items:center;
+  width:16px;
+  height:16px;
+  color:var(--subtle);
+  border:1px solid var(--line-strong);
+  border-radius:50%;
+  font-size:11px;
+}
+.metric-value{
+  margin-top:14px;
+  color:var(--text);
+  font-size:32px;
+  font-weight:850;
+  line-height:1.05;
+  overflow-wrap:anywhere;
+}
+.metric-sub{
+  margin-top:8px;
+  color:var(--subtle);
+  font-size:12px;
+  min-height:18px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.card{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:22px;
+  box-shadow:var(--shadow);
+}
+.card-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:18px;
+}
+.card-title{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  color:var(--text);
+  font-size:24px;
+  font-weight:850;
+}
+.title-mark{
+  width:26px;
+  height:26px;
+  border-radius:9px;
+  background:var(--accent,var(--cyan));
+  box-shadow:0 0 18px rgba(0,0,0,.24);
+}
+.card-kicker{
+  color:var(--subtle);
+  font-size:13px;
+  font-weight:700;
+}
+.token-card{
+  padding:28px 22px 24px;
+  --accent:var(--amber);
+}
+.token-main{display:flex;flex-direction:column;gap:18px}
+.token-model-row{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:16px;
+}
+.token-model{
+  min-width:0;
+  color:var(--text);
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-size:23px;
+  font-weight:850;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.token-meta{
+  display:flex;
+  align-items:center;
+  gap:16px;
+  flex:0 0 auto;
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-size:18px;
+  font-weight:850;
+}
+.token-meta .cost{color:var(--amber)}
+.token-meta .total{color:var(--muted)}
+.stacked-bar{
+  display:flex;
+  width:100%;
+  height:20px;
+  overflow:hidden;
+  background:rgba(255,255,255,.06);
+  border-radius:7px;
+}
+.stacked-seg{height:100%;min-width:3px;transition:width .35s ease}
+.seg-input{background:var(--cyan)}
+.seg-output{background:var(--purple)}
+.seg-cache-read{background:var(--green)}
+.seg-cache-write{background:var(--amber)}
+.token-legend{
+  display:flex;
+  justify-content:center;
+  flex-wrap:wrap;
+  gap:20px;
+  color:var(--muted);
+  font-size:17px;
+  font-weight:800;
+}
+.legend-item{display:inline-flex;align-items:center;gap:8px}
+.legend-dot{width:12px;height:12px;border-radius:50%;background:var(--accent)}
+.token-stats{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:12px;
+}
+.stat-chip{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  min-height:52px;
+  padding:0 14px;
+  color:var(--text);
+  background:rgba(255,255,255,.035);
+  border:1px solid var(--line);
+  border-radius:10px;
+}
+.stat-chip span:first-child{color:var(--muted);font-size:18px;font-weight:800}
+.stat-chip span:last-child{
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-size:18px;
+  font-weight:850;
+  white-space:nowrap;
+}
+.section-divider{height:1px;background:var(--line-strong);margin:4px 0 2px}
+.cache-panel{
+  display:grid;
+  grid-template-columns:112px minmax(180px,1fr) 150px;
+  gap:24px;
+  align-items:end;
+}
+.cache-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:138px;
+  height:38px;
+  padding:0 16px;
+  color:var(--green);
+  background:rgba(34,197,141,.12);
+  border:1px solid rgba(34,197,141,.28);
+  border-radius:999px;
+  font-weight:850;
+  font-size:17px;
+}
+.cache-badge.good{color:var(--cyan);background:rgba(31,216,246,.1);border-color:rgba(31,216,246,.25)}
+.cache-badge.fair{color:var(--amber);background:rgba(244,162,24,.1);border-color:rgba(244,162,24,.25)}
+.cache-badge.poor{color:var(--red);background:rgba(255,95,95,.1);border-color:rgba(255,95,95,.25)}
+.cache-badge.na{color:var(--muted);background:rgba(255,255,255,.05);border-color:var(--line)}
+.cache-rate{
+  color:var(--green);
+  font-size:52px;
+  line-height:.95;
+  font-weight:900;
+}
+.cache-caption{margin-top:8px;color:var(--muted);font-size:19px;font-weight:800}
+.cache-facts{
+  display:grid;
+  gap:8px;
+  color:var(--muted);
+  font-size:19px;
+  font-weight:800;
+}
+.cache-fact{display:grid;grid-template-columns:130px 1fr;gap:18px}
+.cache-fact strong{
+  color:var(--text);
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-size:21px;
+}
+.cache-model{
+  grid-column:2 / 4;
+  display:grid;
+  grid-template-columns:190px 1fr 44px;
+  gap:12px;
+  align-items:center;
+  margin-top:8px;
+}
+.cache-model-name{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:var(--text);
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-size:20px;
+  font-weight:800;
+}
+.mini-track{
+  height:16px;
+  overflow:hidden;
+  background:rgba(255,255,255,.06);
+  border-radius:999px;
+}
+.mini-fill{height:100%;border-radius:999px;background:var(--green)}
+.cache-model-rate{color:var(--green);font-size:18px;font-weight:850;text-align:right}
+.trend-card{
+  padding:28px 22px 26px;
+  --accent:var(--cyan);
+}
+.trend-tabs{
+  display:flex;
+  gap:8px;
+  padding:4px;
+  background:#2a2a29;
+  border-radius:10px;
+}
+.trend-tabs button{
+  min-width:58px;
+  height:34px;
+  color:var(--subtle);
+  background:transparent;
+  border:0;
+  border-radius:8px;
+  font-size:14px;
+  font-weight:850;
+}
+.trend-tabs button.active{color:#211804;background:rgba(244,162,24,.28)}
+.trend-plot{
+  display:flex;
+  align-items:flex-end;
+  gap:8px;
+  height:160px;
+  padding:10px 0 0;
+}
+.trend-col{
+  flex:1;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:flex-end;
+  gap:6px;
+}
+.trend-val{
+  min-height:18px;
+  color:var(--amber);
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-size:13px;
+  font-weight:850;
+  white-space:nowrap;
+}
+.trend-bar{
+  width:100%;
+  max-width:56px;
+  min-height:3px;
+  border-radius:8px 8px 2px 2px;
+  background:linear-gradient(180deg,var(--amber),#bd740d);
+}
+.trend-label{
+  color:var(--subtle);
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-size:14px;
+}
+.detail-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:16px;
+}
+.detail-card{padding:24px 22px;min-height:170px}
+.forecast-card{
+  grid-column:1 / -1;
+  padding:26px 22px;
+  --accent:var(--amber);
+}
+.forecast-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:22px;
+  align-items:center;
+}
+.forecast-item{
+  display:grid;
+  place-items:center;
+  gap:6px;
+  min-height:72px;
+  border-right:1px solid var(--line-strong);
+}
+.forecast-item:last-child{border-right:0}
+.forecast-label{color:var(--muted);font-size:17px;font-weight:800}
+.forecast-value{font-size:32px;font-weight:900;color:var(--text)}
+.forecast-value.money{color:var(--amber)}
+.forecast-value.month{color:var(--green)}
+.ring-section{display:flex;align-items:center;gap:20px}
+.ring-wrap{position:relative;width:104px;height:104px;flex:0 0 104px}
+.ring-wrap svg{transform:rotate(-90deg)}
+.ring-center{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+.ring-pct{color:var(--blue);font-size:22px;font-weight:900}
+.ring-lbl{color:var(--subtle);font-size:11px}
+.time-rows{flex:1;display:grid;gap:8px}
+.time-row{display:flex;justify-content:space-between;gap:14px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.time-row:last-child{border-bottom:0;padding-bottom:0}
+.time-row .label{color:var(--muted)}
+.time-row .value{color:var(--text);font-weight:850}
+.code-summary{
+  display:flex;
+  align-items:baseline;
+  gap:4px;
+  margin-bottom:8px;
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-weight:850;
+}
+.add{color:var(--green)}
+.del{color:var(--red)}
+.net{color:var(--muted)}
+.muted-line{color:var(--subtle);font-size:13px}
+.lang-row,.bar-row,.skill-row{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  padding:5px 0;
+}
+.lang-dot{width:9px;height:9px;border-radius:50%;flex:0 0 9px}
+.lang-name,.bar-label,.skill-name{
+  min-width:0;
+  color:var(--muted);
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.lang-name{flex:1}
+.bar-label,.skill-name{width:118px;text-align:right;font-size:12px}
+.lang-add,.lang-del,.bar-count,.skill-count,.skill-rate{
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-size:12px;
+  font-weight:800;
+}
+.bar-track,.skill-bar{
+  flex:1;
+  height:18px;
+  overflow:hidden;
+  background:rgba(255,255,255,.055);
+  border-radius:5px;
+}
+.bar-fill,.skill-bar-fill{height:100%;border-radius:5px}
+.bar-count,.skill-count{width:38px;text-align:right;color:var(--muted)}
+.skill-rate{width:44px;text-align:right}
+.tools-empty,.loading,.empty{
+  display:grid;
+  place-items:center;
+  min-height:110px;
+  color:var(--subtle);
+}
+.loading::after{
+  content:"";
+  width:30px;
+  height:8px;
+  border-radius:999px;
+  background:linear-gradient(90deg,var(--cyan) 0 25%,transparent 25% 37%,var(--purple) 37% 62%,transparent 62% 74%,var(--green) 74% 100%);
+}
+.model-list{
+  display:grid;
+  gap:8px;
+  margin-top:4px;
+}
+.model-compact{
+  display:grid;
+  grid-template-columns:minmax(80px,1fr) auto auto;
+  align-items:center;
+  gap:10px;
+  color:var(--muted);
+  font-size:12px;
+}
+.model-compact .model-name{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  color:var(--text);
+}
+.model-compact .model-cost{color:var(--amber);font-weight:850}
+.skill-card{padding:24px 22px;display:none}
+.dashboard-footer{
+  position:fixed;
+  left:0;
+  right:0;
+  bottom:0;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  width:min(950px,100vw);
+  margin:0 auto;
+  padding:14px 16px;
+  background:rgba(48,48,47,.92);
+  border-top:1px solid var(--line-strong);
+  backdrop-filter:blur(16px);
+}
+.footer-status{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  color:var(--muted);
+  font-size:18px;
+  font-weight:800;
+}
+.status-clock{
+  position:relative;
+  width:20px;
+  height:20px;
+  border:2px solid var(--subtle);
+  border-radius:50%;
+}
+.status-clock::before{
+  content:"";
+  position:absolute;
+  left:8px;
+  top:4px;
+  width:2px;
+  height:6px;
+  background:var(--subtle);
+  transform-origin:bottom;
+}
+.status-clock::after{
+  content:"";
+  position:absolute;
+  left:8px;
+  top:8px;
+  width:6px;
+  height:2px;
+  background:var(--subtle);
+}
+.footer-actions{display:flex;gap:12px}
+.footer-btn{
+  min-width:108px;
+  height:44px;
+  color:#07313a;
+  background:var(--cyan);
+  border:1px solid rgba(31,216,246,.35);
+  border-radius:11px;
+  font-size:18px;
+  font-weight:850;
+  box-shadow:0 10px 26px rgba(31,216,246,.14);
+}
+.footer-btn:hover{filter:brightness(1.08)}
+.footer-btn.secondary{
+  color:#dbcfff;
+  background:rgba(138,92,246,.18);
+  border-color:rgba(138,92,246,.38);
+  box-shadow:none;
+}
+@media(max-width:860px){
+  .metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .detail-grid{grid-template-columns:1fr}
+  .cache-panel{grid-template-columns:1fr;align-items:start}
+  .cache-model{grid-column:auto;grid-template-columns:minmax(90px,150px) 1fr 44px}
+  .token-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:620px){
+  .dashboard-shell{padding:14px 12px 92px}
+  .toolbar-row{align-items:flex-start}
+  .select-control{min-width:140px;max-width:100%;padding:0 6px}
+  .select-control select{font-size:18px}
+  .period-tabs{width:100%;display:grid;grid-template-columns:repeat(4,1fr)}
+  .period-tabs button{min-width:0;font-size:17px}
+  .metric-grid{grid-template-columns:1fr}
+  .metric-value{font-size:30px}
+  .token-stats,.forecast-grid{grid-template-columns:1fr}
+  .forecast-item{border-right:0;border-bottom:1px solid var(--line-strong)}
+  .forecast-item:last-child{border-bottom:0}
+  .token-model-row{align-items:flex-start;flex-direction:column}
+  .token-meta{width:100%;justify-content:space-between}
+  .trend-plot{gap:4px}
+  .dashboard-footer{align-items:flex-start;flex-direction:column}
+  .footer-actions{width:100%}
+  .footer-btn{flex:1}
+}
 </style>
 </head>
 <body>
-<div class="app">
+<div class="dashboard-shell">
   <div class="update-banner" id="update-banner">
     <span id="update-msg"></span>
-    <button class="dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>
+    <button class="dismiss" onclick="dismissUpdate()" title="关闭" aria-label="关闭更新提示">&times;</button>
   </div>
-  <div class="header">
-    <h1>CC Statistics</h1>
-    <div class="controls">
-      <select id="project-select"><option value="">All Projects</option></select>
-      <select id="source-select">
-        <option value="">All Sources</option>
-        <option value="claude">Claude Code</option>
-        <option value="codex">Codex</option>
-        <option value="gemini">Gemini CLI</option>
-      </select>
-      <div class="time-btns">
-        <button class="time-btn active" data-days="1">Today</button>
-        <button class="time-btn" data-days="7">7d</button>
-        <button class="time-btn" data-days="30">30d</button>
-        <button class="time-btn" data-days="0">All</button>
+
+  <header class="top-toolbar">
+    <div class="toolbar-row">
+      <div class="filter-group">
+        <label class="select-control">
+          <span class="control-icon folder" aria-hidden="true"></span>
+          <select id="project-select" aria-label="项目">
+            <option value="">所有项目</option>
+          </select>
+        </label>
+        <label class="select-control">
+          <span class="control-icon stack" aria-hidden="true"></span>
+          <select id="source-select" aria-label="来源">
+            <option value="">全部来源</option>
+            <option value="claude">Claude Code</option>
+            <option value="codex">Codex</option>
+            <option value="gemini">Gemini CLI</option>
+          </select>
+        </label>
+      </div>
+      <div class="toolbar-actions">
+        <button class="icon-btn" id="export-button" title="导出当前数据" aria-label="导出当前数据"><span class="glyph export" aria-hidden="true"></span></button>
+        <button class="icon-btn" id="settings-button" title="刷新项目列表" aria-label="刷新项目列表"><span class="glyph settings" aria-hidden="true"></span></button>
       </div>
     </div>
-  </div>
-  <div class="metrics" id="metrics">
-    <div class="metric" data-t="msg"><div class="metric-label">Instructions</div><div class="metric-value" id="v-msg">...</div><div class="metric-sub" id="s-msg"></div></div>
-    <div class="metric" data-t="tool"><div class="metric-label">Tool Calls</div><div class="metric-value" id="v-tool">...</div><div class="metric-sub" id="s-tool"></div></div>
-    <div class="metric" data-t="dur"><div class="metric-label">Active Time</div><div class="metric-value" id="v-dur">...</div><div class="metric-sub" id="s-dur"></div></div>
-    <div class="metric" data-t="cost"><div class="metric-label">Est. Cost</div><div class="metric-value" id="v-cost">...</div><div class="metric-sub" id="s-cost"></div></div>
-  </div>
-  <div class="trend"><div class="trend-card"><div class="card-title">Daily Trend</div><div class="trend-bars" id="trend"></div></div></div>
-  <div class="grid">
-    <div class="card"><div class="card-title">Dev Time</div><div id="time-section" class="ring-section"></div></div>
-    <div class="card"><div class="card-title">Code Changes</div><div id="code-section"></div></div>
-    <div class="card"><div class="card-title">Token Usage</div><div id="token-section"></div></div>
-    <div class="card"><div class="card-title">Tool Calls</div><div id="tools-section"></div></div>
-  </div>
-  <div class="card" id="cache-card" style="margin-bottom:16px"><div class="card-title">Cache Grade</div><div id="cache-section"></div></div>
-  <div class="card" id="skill-card" style="display:none;margin-bottom:16px"><div class="card-title">Skill Usage</div><div id="skill-section"></div></div>
-  <div class="info" id="info"></div>
+    <nav class="period-tabs" aria-label="时间范围">
+      <button class="time-btn active" data-days="1">今天</button>
+      <button class="time-btn" data-days="7">本周</button>
+      <button class="time-btn" data-days="30">本月</button>
+      <button class="time-btn" data-days="0">全部</button>
+    </nav>
+  </header>
+
+  <main class="dashboard-main">
+    <section class="metric-grid" id="metrics">
+      <article class="metric-card" data-tone="cyan">
+        <div class="metric-label"><span class="metric-dot"></span><span>会话</span><span class="metric-info">i</span></div>
+        <div class="metric-value" id="v-session">...</div>
+        <div class="metric-sub" id="s-session"></div>
+      </article>
+      <article class="metric-card" data-tone="purple">
+        <div class="metric-label"><span class="metric-dot"></span><span>指令</span><span class="metric-info">i</span></div>
+        <div class="metric-value" id="v-msg">...</div>
+        <div class="metric-sub" id="s-msg"></div>
+      </article>
+      <article class="metric-card" data-tone="green">
+        <div class="metric-label"><span class="metric-dot"></span><span>时长</span><span class="metric-info">i</span></div>
+        <div class="metric-value" id="v-dur">...</div>
+        <div class="metric-sub" id="s-dur"></div>
+      </article>
+      <article class="metric-card" data-tone="amber">
+        <div class="metric-label"><span class="metric-dot"></span><span>预计费用</span><span class="metric-info">i</span></div>
+        <div class="metric-value" id="v-cost">...</div>
+        <div class="metric-sub" id="s-cost"></div>
+      </article>
+    </section>
+
+    <section class="card token-card" id="token-card">
+      <div class="card-header">
+        <h2 class="card-title"><span class="title-mark"></span><span>TOKEN 用量</span><span class="metric-info">i</span></h2>
+        <div class="card-kicker" id="token-kicker"></div>
+      </div>
+      <div id="token-section" class="token-main"></div>
+      <div class="section-divider"></div>
+      <div id="cache-section"></div>
+    </section>
+
+    <section class="card trend-card" id="trend-card">
+      <div class="card-header">
+        <h2 class="card-title"><span class="title-mark"></span><span>每日趋势</span></h2>
+        <div class="trend-tabs" aria-label="趋势指标">
+          <button class="trend-mode active" data-trend="cost">费用</button>
+          <button class="trend-mode" data-trend="tokens">Token</button>
+          <button class="trend-mode" data-trend="sessions">会话</button>
+          <button class="trend-mode" data-trend="time">时长</button>
+        </div>
+      </div>
+      <div class="trend-plot" id="trend"></div>
+    </section>
+
+    <section class="card forecast-card" id="forecast-card">
+      <div class="card-header">
+        <h2 class="card-title"><span class="title-mark"></span><span>成本预测</span><span class="metric-info">i</span></h2>
+      </div>
+      <div class="forecast-grid" id="forecast-section">
+        <div class="loading"></div>
+      </div>
+    </section>
+
+    <section class="detail-grid">
+      <article class="card detail-card">
+        <div class="card-header"><h2 class="card-title"><span class="title-mark" style="--accent:var(--blue)"></span><span>开发时长</span></h2></div>
+        <div id="time-section" class="ring-section"></div>
+      </article>
+      <article class="card detail-card">
+        <div class="card-header"><h2 class="card-title"><span class="title-mark" style="--accent:var(--green)"></span><span>代码变化</span></h2></div>
+        <div id="code-section"></div>
+      </article>
+      <article class="card detail-card">
+        <div class="card-header"><h2 class="card-title"><span class="title-mark" style="--accent:var(--purple)"></span><span>工具调用</span></h2></div>
+        <div id="tools-section"></div>
+      </article>
+      <article class="card detail-card skill-card" id="skill-card">
+        <div class="card-header"><h2 class="card-title"><span class="title-mark" style="--accent:var(--cyan)"></span><span>Skill 使用</span></h2></div>
+        <div id="skill-section"></div>
+      </article>
+    </section>
+  </main>
+
+  <footer class="dashboard-footer" id="dashboard-footer">
+    <div class="footer-status"><span class="status-clock" aria-hidden="true"></span><span id="last-updated">正在更新</span></div>
+    <div class="footer-actions">
+      <button class="footer-btn secondary" id="reload-projects-button" type="button">项目</button>
+      <button class="footer-btn" id="refresh-button" type="button">刷新</button>
+    </div>
+  </footer>
 </div>
+
 <script>
 let currentProject='',currentProjectSource='',currentDays=1,currentSource='',allProjects=[],loadSeq=0;
-const COLORS=['#58a6ff','#bc8cff','#3fb950','#f0883e','#f85149','#f778ba','#39d2c0','#d29922'];
-function fmt(n){if(n>=1e9)return(n/1e9).toFixed(1)+'B';if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toLocaleString()}
-function fmtCost(n){return n>=100?'$'+n.toFixed(0):n>=1?'$'+n.toFixed(2):n>=.01?'$'+n.toFixed(3):'$'+n.toFixed(4)}
-function pct(n){return Math.round(n*100)+'%'}
+let lastStats=null,lastDaily=[],lastUpdatedAt=null,trendMode='cost';
+const COLORS=['#4fa3ff','#8a5cf6','#22c58d','#f4a218','#ff5f5f','#e879f9','#2dd4bf','#facc15'];
+
+function escapeHtml(value){
+  return String(value ?? '').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function fmt(n){
+  const value=Number(n||0);
+  const sign=value<0?'-':'';
+  const abs=Math.abs(value);
+  if(abs>=1e9)return sign+(abs/1e9).toFixed(1)+'B';
+  if(abs>=1e6)return sign+(abs/1e6).toFixed(1)+'M';
+  if(abs>=1e3)return sign+(abs/1e3).toFixed(1)+'K';
+  return value.toLocaleString();
+}
+function fmtCost(n){
+  const value=Number(n||0);
+  if(value>=100)return '$'+value.toFixed(0);
+  if(value>=1)return '$'+value.toFixed(2);
+  if(value>=.01)return '$'+value.toFixed(3);
+  return '$'+value.toFixed(4);
+}
+function pct(n){return Math.round(Number(n||0)*100)+'%'}
+function clampPct(value,total){
+  if(!total||value<=0)return 0;
+  return Math.max(2,Math.round(value/total*100));
+}
+function fmtMinutes(minutes){
+  const value=Math.round(Number(minutes||0));
+  if(value>=60){
+    const h=Math.floor(value/60),m=value%60;
+    return h+'h '+m+'m';
+  }
+  return value+'m';
+}
+function compactDuration(text){
+  return String(text||'0m').replace(/\s+\d+s$/,'');
+}
+function trendValue(row){
+  if(trendMode==='tokens')return Number(row.tokens||0);
+  if(trendMode==='sessions')return Number(row.sessions||0);
+  if(trendMode==='time')return Number(row.active_minutes||0);
+  return Number(row.cost||0);
+}
+function trendRows(){
+  if(currentDays===1&&lastStats){
+    return [{
+      date:'今天',
+      sessions:lastStats.session_count,
+      tokens:(lastStats.token_usage||{}).total,
+      active_minutes:Number(lastStats.active_duration||0)/60,
+      cost:lastStats.estimated_cost,
+    }];
+  }
+  return lastDaily||[];
+}
+function fmtTrendValue(value){
+  if(trendMode==='tokens')return fmt(value);
+  if(trendMode==='sessions')return fmt(value);
+  if(trendMode==='time')return fmtMinutes(value);
+  return fmtCost(value);
+}
 
 async function api(path,params){
   const url=new URL(path,location.origin);
@@ -170,16 +969,17 @@ async function loadProjects(){
 }
 function renderProjectSelect(){
   const sel=document.getElementById('project-select');
-  const filtered=allProjects;
-  sel.innerHTML='<option value="">All Projects</option>';
-  filtered.forEach(p=>{
-    const o=document.createElement('option');o.value=p.dir_name;
+  sel.innerHTML='<option value="">所有项目</option>';
+  allProjects.forEach(p=>{
+    const o=document.createElement('option');
+    o.value=p.dir_name;
     o.dataset.source=p.source||'';
-    const parts=p.display_name.split(/[\\/]/);
-    const tag=p.source==='gemini'?' [G]':p.source==='codex'?' [C]':p.source==='claude'?' [Claude]':'';
+    const parts=String(p.display_name||p.dir_name).split(/[\\/]/);
+    const tag=p.source==='gemini'?' · Gemini':p.source==='codex'?' · Codex':p.source==='claude'?' · Claude':'';
     o.textContent=parts.slice(-1)[0]+tag+' ('+p.session_count+')';
     sel.appendChild(o);
   });
+  sel.value=currentProject;
 }
 
 async function loadStats(){
@@ -194,141 +994,211 @@ async function loadStats(){
     const stats=await statsPromise;
     if(seq!==loadSeq)return;
     if(stats.error){showError(stats.error);return;}
+    lastStats=stats;
     updateMetrics(stats);
     updateTime(stats);
     updateCode(stats);
     updateTokens(stats);
     updateCache(stats);
     updateTools(stats);
-    document.getElementById('info').textContent=stats.session_count+' sessions analyzed';
+    updateForecast(lastDaily,stats);
+    markUpdated();
   }catch(e){
     if(seq===loadSeq)showError(e.message||String(e));
     return;
   }
-  dailyPromise.then(daily=>{if(seq===loadSeq)updateTrend(daily)}).catch(e=>{if(seq===loadSeq)document.getElementById('trend').innerHTML='<div class="empty">'+(e.message||String(e))+'</div>'});
+  dailyPromise.then(daily=>{
+    if(seq!==loadSeq)return;
+    lastDaily=Array.isArray(daily)?daily:[];
+    renderTrend();
+    updateForecast(lastDaily,lastStats);
+  }).catch(e=>{
+    if(seq===loadSeq)document.getElementById('trend').innerHTML='<div class="empty">'+escapeHtml(e.message||String(e))+'</div>';
+  });
   skillsPromise.then(skills=>{if(seq===loadSeq)updateSkills(skills)}).catch(()=>{if(seq===loadSeq)updateSkills([])});
 }
 
 function setLoading(){
-  [['v-msg','...'],['v-tool','...'],['v-dur','...'],['v-cost','...'],['s-msg',''],['s-tool',''],['s-dur',''],['s-cost','']].forEach(([id,value])=>{document.getElementById(id).textContent=value});
-  document.getElementById('trend').innerHTML='<div class="loading">Loading daily trend...</div>';
-  document.getElementById('time-section').innerHTML='<div class="loading">Loading time...</div>';
-  document.getElementById('code-section').innerHTML='<div class="loading">Loading code changes...</div>';
-  document.getElementById('token-section').innerHTML='<div class="loading">Loading tokens...</div>';
-  document.getElementById('tools-section').innerHTML='<div class="loading">Loading tools...</div>';
-  document.getElementById('cache-section').innerHTML='<div class="loading">Loading cache...</div>';
+  [['v-session','...'],['v-msg','...'],['v-dur','...'],['v-cost','...'],['s-session',''],['s-msg',''],['s-dur',''],['s-cost',''],['token-kicker','']].forEach(([id,value])=>{document.getElementById(id).textContent=value});
+  document.getElementById('trend').innerHTML='<div class="loading"></div>';
+  document.getElementById('time-section').innerHTML='<div class="loading"></div>';
+  document.getElementById('code-section').innerHTML='<div class="loading"></div>';
+  document.getElementById('token-section').innerHTML='<div class="loading"></div>';
+  document.getElementById('tools-section').innerHTML='<div class="loading"></div>';
+  document.getElementById('cache-section').innerHTML='<div class="loading"></div>';
+  document.getElementById('forecast-section').innerHTML='<div class="loading"></div>';
   document.getElementById('skill-section').innerHTML='';
   document.getElementById('skill-card').style.display='none';
-  document.getElementById('info').textContent='Loading statistics...';
+  document.getElementById('last-updated').textContent='正在更新';
 }
 
 function showError(message){
-  [['v-msg','-'],['v-tool','-'],['v-dur','-'],['v-cost','-'],['s-msg',''],['s-tool',''],['s-dur',''],['s-cost','']].forEach(([id,value])=>{document.getElementById(id).textContent=value});
-  document.getElementById('info').textContent=message;
+  [['v-session','-'],['v-msg','-'],['v-dur','-'],['v-cost','-'],['s-session',''],['s-msg',''],['s-dur',''],['s-cost','']].forEach(([id,value])=>{document.getElementById(id).textContent=value});
+  const text=escapeHtml(message);
+  document.getElementById('trend').innerHTML='<div class="empty">'+text+'</div>';
+  document.getElementById('time-section').innerHTML='<div class="empty">'+text+'</div>';
+  document.getElementById('code-section').innerHTML='<div class="empty">'+text+'</div>';
+  document.getElementById('token-section').innerHTML='<div class="empty">'+text+'</div>';
+  document.getElementById('tools-section').innerHTML='<div class="empty">'+text+'</div>';
+  document.getElementById('cache-section').innerHTML='<div class="empty">'+text+'</div>';
+  document.getElementById('forecast-section').innerHTML='<div class="empty">'+text+'</div>';
+  document.getElementById('last-updated').textContent='更新失败';
 }
 
 function updateMetrics(d){
+  const tools=(d.tool_calls||[]);
+  document.getElementById('v-session').textContent=fmt(d.session_count);
+  document.getElementById('s-session').textContent=fmt(d.turn_count)+' turns';
   document.getElementById('v-msg').textContent=fmt(d.user_message_count);
-  document.getElementById('s-msg').textContent=d.turn_count+' turns';
-  document.getElementById('v-tool').textContent=fmt(d.tool_call_total);
-  document.getElementById('s-tool').textContent=d.tool_calls.length>0?'Top: '+d.tool_calls[0].name:'';
-  document.getElementById('v-dur').textContent=d.active_duration_fmt;
-  const aiPct=d.active_duration>0?Math.round(d.ai_duration/d.active_duration*100):0;
-  document.getElementById('s-dur').textContent='AI '+aiPct+'% | Total '+d.total_duration_fmt;
+  document.getElementById('s-msg').textContent=tools.length?'Top: '+tools[0].name:fmt(d.tool_call_total)+' tool calls';
+  document.getElementById('v-dur').textContent=compactDuration(d.active_duration_fmt);
+  const active=Number(d.active_duration||0);
+  const aiPct=active>0?Math.round(Number(d.ai_duration||0)/active*100):0;
+  document.getElementById('s-dur').textContent='AI '+aiPct+'% | Total '+(d.total_duration_fmt||'0m');
   document.getElementById('v-cost').textContent=fmtCost(d.estimated_cost);
-  document.getElementById('s-cost').textContent=fmt(d.token_usage.total)+' tokens';
+  document.getElementById('s-cost').textContent=fmt((d.token_usage||{}).total)+' tokens';
 }
 
-function updateTrend(daily){
+function renderTrend(){
   const el=document.getElementById('trend');
-  const data=daily.filter(d=>d.cost>0||d.sessions>0);
-  if(!data.length){el.innerHTML='<div class="empty">No data</div>';return;}
-  const max=Math.max(...daily.map(d=>d.cost),1);
-  el.innerHTML=daily.map(d=>{
-    const h=Math.max(2,d.cost/max*100);
-    const label=d.date.slice(5);
-    return '<div class="trend-col">'+(d.cost>0?'<div class="trend-val">'+fmtCost(d.cost)+'</div>':'')+'<div class="trend-bar" style="height:'+h+'px"></div><div class="trend-label">'+label+'</div></div>';
+  const daily=trendRows();
+  const hasData=daily.some(d=>trendValue(d)>0||Number(d.sessions||0)>0);
+  if(!hasData){el.innerHTML='<div class="empty">暂无数据</div>';return;}
+  const values=daily.map(trendValue);
+  const max=Math.max(...values,1);
+  el.innerHTML=daily.map((d,i)=>{
+    const value=values[i];
+    const h=value>0?Math.max(3,Math.round(value/max*126)):3;
+    const rawLabel=String(d.date||'');
+    const label=escapeHtml(rawLabel.includes('-')?rawLabel.slice(5):rawLabel);
+    const shown=value>0?'<div class="trend-val">'+fmtTrendValue(value)+'</div>':'<div class="trend-val"></div>';
+    return '<div class="trend-col">'+shown+'<div class="trend-bar" style="height:'+h+'px"></div><div class="trend-label">'+label+'</div></div>';
   }).join('');
 }
 
 function updateTime(d){
-  const active=d.ai_duration+d.user_duration;
-  const pct=active>0?Math.round(d.ai_duration/active*100):0;
-  const r=40,c=2*Math.PI*r,off=c*(1-pct/100);
+  const active=Number(d.ai_duration||0)+Number(d.user_duration||0);
+  const aiPct=active>0?Math.round(Number(d.ai_duration||0)/active*100):0;
+  const r=42,c=2*Math.PI*r,off=c*(1-aiPct/100);
   document.getElementById('time-section').innerHTML=
-    '<div class="ring-wrap"><svg width="100" height="100"><circle cx="50" cy="50" r="'+r+'" fill="none" stroke="var(--border)" stroke-width="8"/><circle cx="50" cy="50" r="'+r+'" fill="none" stroke="var(--cyan)" stroke-width="8" stroke-linecap="round" stroke-dasharray="'+c+'" stroke-dashoffset="'+off+'"/></svg><div class="ring-center"><div class="ring-pct">'+pct+'%</div><div class="ring-lbl">AI</div></div></div>'
-    +'<div class="time-rows"><div class="time-row"><span class="label">Total</span><span class="value">'+d.total_duration_fmt+'</span></div><div class="time-row"><span class="label">AI</span><span class="value">'+d.ai_duration_fmt+'</span></div><div class="time-row"><span class="label">User</span><span class="value">'+d.user_duration_fmt+'</span></div></div>';
+    '<div class="ring-wrap"><svg width="104" height="104"><circle cx="52" cy="52" r="'+r+'" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="9"/><circle cx="52" cy="52" r="'+r+'" fill="none" stroke="var(--blue)" stroke-width="9" stroke-linecap="round" stroke-dasharray="'+c+'" stroke-dashoffset="'+off+'"/></svg><div class="ring-center"><div><div class="ring-pct">'+aiPct+'%</div><div class="ring-lbl">AI</div></div></div></div>'
+    +'<div class="time-rows"><div class="time-row"><span class="label">Total</span><span class="value">'+escapeHtml(d.total_duration_fmt||'0m')+'</span></div><div class="time-row"><span class="label">AI</span><span class="value">'+escapeHtml(d.ai_duration_fmt||'0m')+'</span></div><div class="time-row"><span class="label">User</span><span class="value">'+escapeHtml(d.user_duration_fmt||'0m')+'</span></div></div>';
 }
 
 function updateCode(d){
   const el=document.getElementById('code-section');
+  const net=Number(d.total_added||0)-Number(d.total_removed||0);
   let html='';
-  if(d.git_available)html+='<div style="font-size:10px;color:var(--text3);margin-bottom:6px">'+d.git_commit_count+' commits | +'+fmt(d.git_total_added)+' -'+fmt(d.git_total_removed)+'</div>';
-  const net=d.total_added-d.total_removed;
-  html+='<div style="font-size:12px;font-weight:600;margin-bottom:8px"><span style="color:var(--green)">+'+fmt(d.total_added)+'</span> <span style="color:var(--red)">-'+fmt(d.total_removed)+'</span> <span style="color:var(--text2)">net '+(net>=0?'+':'')+fmt(net)+'</span></div>';
-  d.lines_by_lang.slice(0,8).forEach((l,i)=>{
-    html+='<div class="lang-row"><div class="lang-dot" style="background:'+COLORS[i%8]+'"></div><div class="lang-name">'+l.lang+'</div><div class="lang-add">+'+l.added+'</div><div class="lang-del">-'+l.removed+'</div></div>';
+  if(d.git_available){
+    html+='<div class="muted-line">'+fmt(d.git_commit_count)+' commits | +'+fmt(d.git_total_added)+' -'+fmt(d.git_total_removed)+'</div>';
+  }
+  html+='<div class="code-summary"><span class="add">+'+fmt(d.total_added)+'</span><span class="del">-'+fmt(d.total_removed)+'</span><span class="net">net '+(net>=0?'+':'')+fmt(net)+'</span></div>';
+  (d.lines_by_lang||[]).slice(0,8).forEach((l,i)=>{
+    html+='<div class="lang-row"><span class="lang-dot" style="background:'+COLORS[i%COLORS.length]+'"></span><span class="lang-name">'+escapeHtml(l.lang)+'</span><span class="lang-add add">+'+fmt(l.added)+'</span><span class="lang-del del">-'+fmt(l.removed)+'</span></div>';
   });
-  if(!d.lines_by_lang.length){
-    html+='<div style="color:var(--text3);font-size:11px">'+(d.git_scan_skipped?'Git scan skipped for fast dashboard':'No code changes')+'</div>';
+  if(!(d.lines_by_lang||[]).length){
+    html+='<div class="muted-line">'+(d.git_scan_skipped?'Git scan skipped for fast dashboard':'暂无代码变化')+'</div>';
   }
   el.innerHTML=html;
 }
 
 function updateTokens(d){
-  const el=document.getElementById('token-section');
-  let html='';
-  d.token_by_model.forEach(m=>{
-    const total=m.total||1;
-    html+='<div class="model-row"><div class="model-header"><span class="model-name">'+m.model+'</span><span class="model-cost">'+fmtCost(m.cost)+'</span><span class="model-tokens">'+fmt(m.total)+'</span></div>'
-      +'<div class="stacked-bar"><div class="stacked-seg" style="width:'+Math.round(m.input_tokens/total*100)+'%;background:var(--cyan)"></div><div class="stacked-seg" style="width:'+Math.round(m.output_tokens/total*100)+'%;background:var(--purple)"></div><div class="stacked-seg" style="width:'+Math.round(m.cache_read/total*100)+'%;background:var(--green)"></div><div class="stacked-seg" style="width:'+Math.round(m.cache_creation/total*100)+'%;background:var(--amber)"></div></div></div>';
-  });
-  html+='<div style="display:flex;gap:12px;margin-top:8px;font-size:10px"><span style="color:var(--cyan)">In: '+fmt(d.token_usage.input_tokens)+'</span><span style="color:var(--purple)">Out: '+fmt(d.token_usage.output_tokens)+'</span><span style="color:var(--green)">Cache: '+fmt(d.token_usage.cache_read+d.token_usage.cache_creation)+'</span><span style="color:var(--amber);font-weight:700">'+fmtCost(d.estimated_cost)+'</span></div>';
-  el.innerHTML=html;
+  const usage=d.token_usage||{};
+  const models=d.token_by_model||[];
+  const top=models[0]||{model:'-',total:0,input_tokens:0,output_tokens:0,cache_read:0,cache_creation:0,cost:0};
+  const total=Number(top.total||0);
+  document.getElementById('token-kicker').textContent=fmtCost(d.estimated_cost)+'  ·  '+fmt(usage.total)+' tokens';
+  const segments=[
+    ['input_tokens','seg-input'],
+    ['output_tokens','seg-output'],
+    ['cache_read','seg-cache-read'],
+    ['cache_creation','seg-cache-write']
+  ].map(([key,cls])=>'<div class="stacked-seg '+cls+'" style="width:'+clampPct(Number(top[key]||0),total)+'%"></div>').join('');
+  let html='<div class="token-model-row"><div class="token-model" title="'+escapeHtml(top.model)+'">'+escapeHtml(top.model)+'</div><div class="token-meta"><span class="cost">'+fmtCost(top.cost)+'</span><span class="total">'+fmt(total)+'</span></div></div>';
+  html+='<div class="stacked-bar">'+segments+'</div>';
+  html+='<div class="token-legend"><span class="legend-item"><span class="legend-dot" style="--accent:var(--cyan)"></span>输入</span><span class="legend-item"><span class="legend-dot" style="--accent:var(--purple)"></span>输出</span><span class="legend-item"><span class="legend-dot" style="--accent:var(--green)"></span>缓存读</span><span class="legend-item"><span class="legend-dot" style="--accent:var(--amber)"></span>缓存写</span></div>';
+  html+='<div class="token-stats"><div class="stat-chip" style="--accent:var(--cyan)"><span>输入</span><span>'+fmt(usage.input_tokens)+'</span></div><div class="stat-chip" style="--accent:var(--purple)"><span>输出</span><span>'+fmt(usage.output_tokens)+'</span></div><div class="stat-chip" style="--accent:var(--green)"><span>缓存</span><span>'+fmt(Number(usage.cache_read||0)+Number(usage.cache_creation||0))+'</span></div><div class="stat-chip" style="--accent:var(--amber)"><span>费用</span><span>'+fmtCost(d.estimated_cost)+'</span></div></div>';
+  if(models.length>1){
+    html+='<div class="model-list">'+models.slice(1,5).map(m=>'<div class="model-compact"><span class="model-name" title="'+escapeHtml(m.model)+'">'+escapeHtml(m.model)+'</span><span class="model-cost">'+fmtCost(m.cost)+'</span><span>'+fmt(m.total)+'</span></div>').join('')+'</div>';
+  }
+  document.getElementById('token-section').innerHTML=html;
 }
 
 function updateCache(d){
-  const card=document.getElementById('cache-card');
   const el=document.getElementById('cache-section');
   const cache=d.cache_stats;
-  if(!cache){card.style.display='none';return;}
-  card.style.display='';
-  const tone=cache.grade||'na';
-  const byModel=Object.entries(cache.by_model||{}).sort((a,b)=>b[1]-a[1]).slice(0,4);
-  if((cache.cache_read_tokens||0)===0){
-    el.innerHTML='<div class="cache-hero"><div><div class="cache-badge na">'+(cache.grade_label||'N/A')+'</div><div class="cache-hit">—</div><div class="cache-hit-sub">No cache reuse yet</div></div><div class="cache-savings">'+fmtCost(cache.savings_usd||0)+'</div></div><div class="cache-empty">Cache writes may exist, but there are no cache-read tokens yet.</div>';
+  if(!cache){
+    el.innerHTML='<div class="empty">暂无缓存数据</div>';
     return;
   }
-  let html='<div class="cache-hero"><div><div class="cache-badge '+tone+'">'+cache.grade_label+'</div><div class="cache-hit">'+pct(cache.hit_rate||0)+'</div><div class="cache-hit-sub">hit rate</div></div><div><div class="cache-savings">'+fmtCost(cache.savings_usd||0)+'</div><div class="cache-savings-sub">estimated cache savings</div></div></div>';
-  html+='<div class="cache-track"><div class="cache-fill" style="width:'+Math.max(2,Math.round((cache.hit_rate||0)*100))+'%;background:'+(tone==='excellent'?'var(--green)':tone==='good'?'var(--cyan)':tone==='fair'?'var(--amber)':tone==='poor'?'var(--red)':'var(--text3)')+'"></div></div>';
-  html+='<div class="cache-detail"><span class="label">Cache Read</span><span class="value">'+fmt(cache.cache_read_tokens)+' / '+fmt(cache.total_input_tokens)+' input</span></div>';
-  html+='<div class="cache-detail"><span class="label">Coverage</span><span class="value">'+pct(cache.hit_rate||0)+'</span></div>';
-  if(byModel.length){
-    html+='<div class="cache-model-title">By Model</div>';
-    html+=byModel.map(([name,rate])=>'<div class="cache-model-row"><div class="cache-model-name" title="'+name+'">'+name+'</div><div class="cache-model-bar"><div class="cache-model-fill" style="width:'+Math.max(2,Math.round(rate*100))+'%;background:'+(tone==='excellent'?'var(--green)':tone==='good'?'var(--cyan)':tone==='fair'?'var(--amber)':'var(--red)')+'"></div></div><div class="cache-model-rate">'+pct(rate)+'</div></div>').join('');
+  const tone=cache.grade||'na';
+  const byModel=Object.entries(cache.by_model||{}).sort((a,b)=>b[1]-a[1])[0];
+  const rate=Number(cache.hit_rate||0);
+  const badgeClass=tone==='excellent'?'':tone;
+  let html='<div class="cache-panel"><div><div class="cache-rate">'+pct(rate)+'</div><div class="cache-caption">命中率</div></div>';
+  html+='<div class="cache-facts"><div class="cache-fact"><span>缓存读</span><strong>'+fmt(cache.cache_read_tokens)+' / '+fmt(cache.total_input_tokens)+'</strong></div><div class="cache-fact"><span>节省费用</span><strong>'+fmtCost(cache.savings_usd||0)+'</strong></div></div>';
+  html+='<div style="display:grid;justify-items:end;align-self:start"><div class="cache-badge '+badgeClass+'">'+escapeHtml(cache.grade_label||'N/A')+'</div></div>';
+  if(byModel){
+    html+='<div class="cache-model"><div class="cache-model-name" title="'+escapeHtml(byModel[0])+'">'+escapeHtml(byModel[0])+'</div><div class="mini-track"><div class="mini-fill" style="width:'+Math.max(2,Math.round(Number(byModel[1]||0)*100))+'%"></div></div><div class="cache-model-rate">'+pct(byModel[1])+'</div></div>';
   }
+  html+='</div>';
   el.innerHTML=html;
 }
 
 function updateTools(d){
   const el=document.getElementById('tools-section');
-  const items=d.tool_calls.slice(0,10);
+  const items=(d.tool_calls||[]).slice(0,10);
+  if(!items.length){el.innerHTML='<div class="tools-empty">暂无工具调用</div>';return;}
   const max=items[0]?.count||1;
-  el.innerHTML=items.map((t,i)=>'<div class="bar-row"><div class="bar-label">'+t.name+'</div><div class="bar-track"><div class="bar-fill" style="width:'+Math.round(t.count/max*100)+'%;background:'+COLORS[i%8]+'80"></div></div><div class="bar-count">'+t.count+'</div></div>').join('');
+  el.innerHTML=items.map((t,i)=>'<div class="bar-row"><div class="bar-label" title="'+escapeHtml(t.name)+'">'+escapeHtml(t.name)+'</div><div class="bar-track"><div class="bar-fill" style="width:'+Math.max(3,Math.round(t.count/max*100))+'%;background:'+COLORS[i%COLORS.length]+'99"></div></div><div class="bar-count">'+fmt(t.count)+'</div></div>').join('');
 }
 
 function updateSkills(skills){
   const card=document.getElementById('skill-card');
   const el=document.getElementById('skill-section');
   if(!skills||!skills.length){card.style.display='none';return;}
-  card.style.display='';
+  card.style.display='block';
   const max=skills[0].call_count||1;
   el.innerHTML=skills.slice(0,10).map((s,i)=>{
-    const pct=Math.round(s.call_count/max*100);
-    const rateColor=s.success_rate==null?'var(--text3)':s.success_rate>=90?'var(--green)':s.success_rate>=70?'var(--amber)':'var(--red)';
-    const rateText=s.success_rate!=null?s.success_rate+'%':'—';
-    return '<div class="skill-row"><div class="skill-name" title="'+s.name+'">'+s.name+'</div><div class="skill-bar"><div class="skill-bar-fill" style="width:'+pct+'%;background:'+COLORS[i%8]+'80"></div></div><div class="skill-count">'+s.call_count+'</div><div class="skill-rate" style="color:'+rateColor+'">'+rateText+'</div></div>';
+    const bar=Math.max(3,Math.round(s.call_count/max*100));
+    const rateColor=s.success_rate==null?'var(--subtle)':s.success_rate>=90?'var(--green)':s.success_rate>=70?'var(--amber)':'var(--red)';
+    const rateText=s.success_rate!=null?s.success_rate+'%':'-';
+    return '<div class="skill-row"><div class="skill-name" title="'+escapeHtml(s.name)+'">'+escapeHtml(s.name)+'</div><div class="skill-bar"><div class="skill-bar-fill" style="width:'+bar+'%;background:'+COLORS[i%COLORS.length]+'99"></div></div><div class="skill-count">'+fmt(s.call_count)+'</div><div class="skill-rate" style="color:'+rateColor+'">'+rateText+'</div></div>';
   }).join('');
+}
+
+function updateForecast(daily,stats){
+  const el=document.getElementById('forecast-section');
+  const rows=Array.isArray(daily)?daily:[];
+  const activeRows=rows.filter(d=>Number(d.cost||0)>0||Number(d.sessions||0)>0);
+  const fallbackCost=stats?Number(stats.estimated_cost||0):0;
+  const totalCost=rows.reduce((sum,d)=>sum+Number(d.cost||0),0);
+  const basisCost=Math.max(totalCost,fallbackCost);
+  const activeDays=Math.max(activeRows.length,basisCost>0?1:0);
+  const dailyAvg=activeDays?basisCost/activeDays:0;
+  const monthProjection=dailyAvg*30;
+  el.innerHTML='<div class="forecast-item"><div class="forecast-label">日均</div><div class="forecast-value money">'+fmtCost(dailyAvg)+'</div></div><div class="forecast-item"><div class="forecast-label">月度预测</div><div class="forecast-value month">'+fmtCost(monthProjection)+'</div></div><div class="forecast-item"><div class="forecast-label">活跃</div><div class="forecast-value">'+fmt(activeDays)+' 天</div></div>';
+}
+
+function markUpdated(){
+  lastUpdatedAt=new Date();
+  updateFooterElapsed();
+}
+function updateFooterElapsed(){
+  const el=document.getElementById('last-updated');
+  if(!lastUpdatedAt){el.textContent='尚未更新';return;}
+  const seconds=Math.max(0,Math.floor((Date.now()-lastUpdatedAt.getTime())/1000));
+  el.textContent='已更新 '+seconds+'秒';
+}
+function exportSnapshot(){
+  const payload={exported_at:new Date().toISOString(),project:currentProject||null,source:currentSource||currentProjectSource||null,days:currentDays,stats:lastStats,daily:lastDaily};
+  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='cc-statistics-dashboard.json';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 document.getElementById('project-select').addEventListener('change',e=>{
@@ -337,25 +1207,49 @@ document.getElementById('project-select').addEventListener('change',e=>{
   loadStats();
 });
 document.getElementById('source-select').addEventListener('change',async e=>{
-  currentSource=e.target.value;currentProject='';currentProjectSource='';await loadProjects();loadStats();
+  currentSource=e.target.value;
+  currentProject='';
+  currentProjectSource='';
+  await loadProjects();
+  loadStats();
 });
 document.querySelectorAll('.time-btn').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('.time-btn').forEach(x=>x.classList.remove('active'));
-  b.classList.add('active');currentDays=parseInt(b.dataset.days);loadStats();
+  b.classList.add('active');
+  currentDays=parseInt(b.dataset.days,10);
+  loadStats();
 }));
+document.querySelectorAll('.trend-mode').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.trend-mode').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  trendMode=b.dataset.trend;
+  renderTrend();
+}));
+document.getElementById('refresh-button').addEventListener('click',loadStats);
+document.getElementById('reload-projects-button').addEventListener('click',async()=>{await loadProjects();loadStats()});
+document.getElementById('settings-button').addEventListener('click',async()=>{await loadProjects();document.getElementById('project-select').focus()});
+document.getElementById('export-button').addEventListener('click',exportSnapshot);
 
-function dismissUpdate(){document.getElementById('update-banner').classList.remove('show');sessionStorage.setItem('update-dismissed','1')}
+function dismissUpdate(){
+  document.getElementById('update-banner').classList.remove('show');
+  sessionStorage.setItem('update-dismissed','1');
+}
 async function checkVersion(){
   if(sessionStorage.getItem('update-dismissed'))return;
   try{
     const r=await api('/api/version_check');
     if(r.has_update){
-      document.getElementById('update-msg').innerHTML='cc-statistics v'+r.latest_version+' 已发布，运行 <code>'+r.upgrade_command+'</code> 更新';
+      document.getElementById('update-msg').innerHTML='cc-statistics v'+escapeHtml(r.latest_version)+' 已发布，运行 <code>'+escapeHtml(r.upgrade_command)+'</code> 更新';
       document.getElementById('update-banner').classList.add('show');
     }
   }catch(e){}
 }
-loadProjects();loadStats();checkVersion();setInterval(checkVersion,4*3600*1000);
+
+loadProjects().catch(()=>{});
+loadStats();
+checkVersion();
+setInterval(checkVersion,4*3600*1000);
+setInterval(updateFooterElapsed,1000);
 </script>
 </body>
 </html>
