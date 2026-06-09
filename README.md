@@ -184,7 +184,7 @@ Most tools only answer this for Claude Code. cc-statistics answers it for all fo
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.10+
 - At least one of: Claude Code CLI, Gemini CLI, Codex CLI, or Cursor installed and used
 
 ### 3 steps

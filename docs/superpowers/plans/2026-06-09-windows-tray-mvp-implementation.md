@@ -30,36 +30,36 @@
 
 ## Task 1: Python Structured Web Startup
 
-- [ ] Write tests for `_build_startup_payload()` and `_parse_args()`.
-- [ ] Run the new tests and confirm they fail because helpers do not exist.
-- [ ] Add `main(argv=None)`, `--no-browser`, `--json`, `_build_startup_payload()`, `_parse_args()`.
-- [ ] Run `python -m pytest tests/test_web_entrypoint.py tests/test_web_server.py -q`.
+- [x] Write tests for `_build_startup_payload()` and `_parse_args()`.
+- [x] Run the new tests and confirm they fail because helpers do not exist.
+- [x] Add `main(argv=None)`, `--no-browser`, `--json`, `_build_startup_payload()`, `_parse_args()`.
+- [x] Run `python -m pytest tests/test_web_entrypoint.py tests/test_web_server.py -q`.
 
 ## Task 2: Tauri Frontend Shell
 
-- [ ] Create `desktop/cc-stats-tauri/package.json`, Vite config, TypeScript config, and frontend files.
-- [ ] Write Node tests for dashboard URL normalization and status label helpers.
-- [ ] Run `npm test` and confirm helper tests pass.
+- [x] Create `desktop/cc-stats-tauri/package.json`, Vite config, TypeScript config, and frontend files.
+- [x] Write Node tests for dashboard URL normalization and status label helpers.
+- [x] Run `npm test` and confirm helper tests pass.
 
 ## Task 3: Tauri Rust Shell
 
-- [ ] Create `src-tauri/Cargo.toml`, `tauri.conf.json`, `build.rs`, and Rust modules.
-- [ ] Implement:
+- [x] Create `src-tauri/Cargo.toml`, `tauri.conf.json`, `build.rs`, and Rust modules.
+- [x] Implement:
   - API command construction: `python -m cc_stats_web --no-browser --json`.
   - Startup JSON parsing.
   - Health state enum.
   - Dashboard window open/focus command.
   - Tray menu commands: `Open Dashboard`, `Restart API`, `Quit`.
-- [ ] Run `cargo test` if Rust is available.
-- [ ] Run `cargo check` if Rust is available.
+- [x] Run `cargo test` if Rust is available.
+- [x] Run `cargo check` if Rust is available.
 
 ## Task 4: Docs and Verification
 
-- [ ] Add Windows tray development notes to English and Chinese README files.
-- [ ] Run full Python test suite.
-- [ ] Run frontend Node tests.
-- [ ] Run Rust tests/checks if toolchain is available.
-- [ ] Run `git status` and confirm only intended source/docs files changed.
+- [x] Add Windows tray development notes to English and Chinese README files.
+- [x] Run full Python test suite.
+- [x] Run frontend Node tests.
+- [x] Run Rust tests/checks if toolchain is available.
+- [x] Run `git status` and confirm only intended source/docs files changed.
 
 ## Self-Review
 

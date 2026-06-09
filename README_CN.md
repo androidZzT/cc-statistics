@@ -184,7 +184,7 @@
 
 ### 前置条件
 
-- Python 3.8+
+- Python 3.10+
 - 已安装并使用过以下至少一种工具：Claude Code CLI、Gemini CLI、Codex CLI 或 Cursor
 
 ### 3 步搞定
