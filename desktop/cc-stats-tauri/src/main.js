@@ -1,5 +1,5 @@
 import { apiStatus, openDashboard, restartApi } from "./apiClient.js";
-import { frameUrlForStatus, STATUS_POLL_INTERVAL_MS, statusLabel } from "./dashboard.js";
+import { STATUS_POLL_INTERVAL_MS, statusLabel, updateFrameForStatus } from "./dashboard.js";
 
 const statusEl = document.querySelector("[data-status]");
 const frameEl = document.querySelector("[data-dashboard-frame]");
@@ -9,7 +9,7 @@ const restartBtn = document.querySelector("[data-restart-api]");
 async function refreshStatus() {
   const status = await apiStatus();
   statusEl.textContent = statusLabel(status.state, status.error);
-  frameEl.src = frameUrlForStatus(status);
+  updateFrameForStatus(frameEl, status);
 }
 
 openBtn?.addEventListener("click", () => {

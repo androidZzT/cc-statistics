@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cc_stats.analyzer import SessionStats, TokenUsage
+from cc_stats_web import server as web_server
 from cc_stats_web.server import (
     _collect_session_files,
     _get_projects,
@@ -66,6 +69,39 @@ def _write_codex_session(codex_home: Path, name: str, cwd: Path) -> Path:
                     }
                 },
             },
+        },
+    ])
+
+
+def _write_codex_session_at(
+    codex_home: Path,
+    name: str,
+    cwd: Path,
+    timestamp: datetime,
+) -> Path:
+    path = (
+        codex_home
+        / "sessions"
+        / timestamp.strftime("%Y")
+        / timestamp.strftime("%m")
+        / timestamp.strftime("%d")
+        / f"rollout-{timestamp.strftime('%Y-%m-%dT%H-%M-%S')}-{name}.jsonl"
+    )
+    ts = timestamp.isoformat().replace("+00:00", "Z")
+    return _write_jsonl(path, [
+        {
+            "timestamp": ts,
+            "type": "session_meta",
+            "payload": {
+                "id": name,
+                "cwd": str(cwd),
+                "model": "gpt-5.3-codex",
+            },
+        },
+        {
+            "timestamp": ts,
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": "hi"},
         },
     ])
 
@@ -216,6 +252,63 @@ def test_get_stats_source_codex_parses_user_message_and_token_usage(
     assert stats["token_usage"]["cache_read"] == 40
     assert stats["token_usage"]["output_tokens"] == 10
     assert stats["token_usage"]["total"] == 110
+
+
+def test_get_stats_prefilters_old_mtime_before_parsing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, codex_home, _ = _set_source_homes(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    old_ts = now - timedelta(days=7)
+    recent_ts = now - timedelta(hours=1)
+    old_file = _write_codex_session_at(codex_home, "old", tmp_path / "old", old_ts)
+    recent_file = _write_codex_session_at(
+        codex_home,
+        "recent",
+        tmp_path / "recent",
+        recent_ts,
+    )
+    old_epoch = old_ts.timestamp()
+    recent_epoch = recent_ts.timestamp()
+
+    os.utime(old_file, (old_epoch, old_epoch))
+    os.utime(recent_file, (recent_epoch, recent_epoch))
+
+    parsed: list[Path] = []
+    original_parse = web_server._parse_session_file
+
+    def tracking_parse(path: Path):
+        parsed.append(path)
+        return original_parse(path)
+
+    monkeypatch.setattr(web_server, "_parse_session_file", tracking_parse)
+
+    stats = web_server._get_stats(source="codex", since_days=1)
+
+    assert stats["session_count"] == 1
+    assert recent_file in parsed
+    assert old_file not in parsed
+
+
+def test_get_stats_disables_git_collection_for_web_requests(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, codex_home, _ = _set_source_homes(monkeypatch, tmp_path)
+    _write_codex_session(codex_home, "codex-a", tmp_path / "demo")
+    include_git_values: list[bool] = []
+
+    def fake_analyze_session(session, *, include_git=True):
+        include_git_values.append(include_git)
+        return SessionStats(session_id=session.session_id, project_path=session.project_path)
+
+    monkeypatch.setattr(web_server, "analyze_session", fake_analyze_session)
+
+    stats = web_server._get_stats(source="codex")
+
+    assert stats["session_count"] == 1
+    assert include_git_values == [False]
 
 
 def test_source_filter_excludes_other_sources_for_web_helpers(

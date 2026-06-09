@@ -7,6 +7,7 @@ import {
   normalizeApiBaseUrl,
   STATUS_POLL_INTERVAL_MS,
   statusLabel,
+  updateFrameForStatus,
 } from "../src/dashboard.js";
 
 test("normalizeApiBaseUrl trims trailing slash", () => {
@@ -41,4 +42,30 @@ test("frameUrlForStatus clears stale dashboard on api failure", () => {
 
 test("status polling interval is responsive without hammering the api", () => {
   assert.equal(STATUS_POLL_INTERVAL_MS, 3000);
+});
+
+test("updateFrameForStatus does not reload the same dashboard url", () => {
+  let writes = 0;
+  const attrs = new Map([["src", "http://127.0.0.1:61234/"]]);
+  const frame = {
+    getAttribute(name) {
+      return attrs.get(name) || "";
+    },
+    setAttribute(name, value) {
+      writes += 1;
+      attrs.set(name, value);
+    },
+    removeAttribute(name) {
+      writes += 1;
+      attrs.delete(name);
+    },
+  };
+
+  const changed = updateFrameForStatus(frame, {
+    state: "running",
+    url: "http://127.0.0.1:61234/",
+  });
+
+  assert.equal(changed, false);
+  assert.equal(writes, 0);
 });

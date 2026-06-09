@@ -368,6 +368,8 @@ def _collect_git_stats(
             cwd=project_path,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         if result.returncode != 0:
@@ -467,7 +469,7 @@ def classify_work_mode(user_message_count: int, total_added: int, total_removed:
     return "Building"
 
 
-def analyze_session(session: Session) -> SessionStats:
+def analyze_session(session: Session, *, include_git: bool = True) -> SessionStats:
     """分析单个会话，返回统计结果"""
     stats = SessionStats(
         session_id=session.session_id,
@@ -721,7 +723,7 @@ def analyze_session(session: Session) -> SessionStats:
     stats.lines_by_lang = dict(lang_stats)
 
     # -------- 4b. Git 变更统计 --------
-    if stats.start_time and stats.end_time and session.project_path:
+    if include_git and stats.start_time and stats.end_time and session.project_path:
         git = _collect_git_stats(
             session.project_path, stats.start_time, stats.end_time
         )

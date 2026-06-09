@@ -16,6 +16,32 @@ export function frameUrlForStatus(status) {
   return dashboardUrl(status.url);
 }
 
+export function updateFrameForStatus(frameEl, status) {
+  if (!frameEl) {
+    return false;
+  }
+  const nextUrl = frameUrlForStatus(status);
+  const currentUrl =
+    typeof frameEl.getAttribute === "function"
+      ? frameEl.getAttribute("src") || ""
+      : frameEl.src || "";
+  if (currentUrl === nextUrl) {
+    return false;
+  }
+  if (nextUrl) {
+    if (typeof frameEl.setAttribute === "function") {
+      frameEl.setAttribute("src", nextUrl);
+    } else {
+      frameEl.src = nextUrl;
+    }
+  } else if (typeof frameEl.removeAttribute === "function") {
+    frameEl.removeAttribute("src");
+  } else {
+    frameEl.src = "";
+  }
+  return true;
+}
+
 export function statusLabel(status, error = "") {
   switch (status) {
     case "starting":

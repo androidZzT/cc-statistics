@@ -1,5 +1,5 @@
 use std::{
-    io::{BufRead, BufReader},
+    io::{self, BufRead, BufReader},
     process::{Child, Command, Stdio},
     sync::mpsc,
     thread,
@@ -206,6 +206,7 @@ fn spawn_with_python(python: &[String]) -> Result<(Child, String), String> {
     let mut child = command
         .spawn()
         .map_err(|err| format!("failed to spawn {}: {err}", python.join(" ")))?;
+    drain_stderr(&mut child);
 
     let stdout = child
         .stdout
@@ -214,10 +215,13 @@ fn spawn_with_python(python: &[String]) -> Result<(Child, String), String> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
+        let mut sent_url = false;
         for line in reader.lines().map_while(Result::ok) {
-            if let Some(url) = parse_startup_url(&line) {
-                let _ = tx.send(url);
-                return;
+            if !sent_url {
+                if let Some(url) = parse_startup_url(&line) {
+                    let _ = tx.send(url);
+                    sent_url = true;
+                }
             }
         }
     });
@@ -236,6 +240,14 @@ fn spawn_with_python(python: &[String]) -> Result<(Child, String), String> {
             let _ = child.wait();
             Err(format!("cc_stats_web did not report a startup URL: {err}"))
         }
+    }
+}
+
+fn drain_stderr(child: &mut Child) {
+    if let Some(mut stderr) = child.stderr.take() {
+        thread::spawn(move || {
+            let _ = io::copy(&mut stderr, &mut io::sink());
+        });
     }
 }
 
@@ -274,10 +286,11 @@ struct StartupPayload {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_api_command, candidate_python_commands, parse_startup_url, ApiProcessManager,
-        ApiStatus,
+        build_api_command, candidate_python_commands, drain_stderr, parse_startup_url,
+        ApiProcessManager, ApiStatus,
     };
     use crate::health::ApiState;
+    use std::process::{Command, Stdio};
 
     #[test]
     fn parses_structured_startup_json() {
@@ -306,6 +319,26 @@ mod tests {
 
         assert_eq!(command.get_program().to_string_lossy(), "python3");
         assert_eq!(args, ["-m", "cc_stats_web", "--no-browser", "--json"]);
+    }
+
+    #[test]
+    fn drain_stderr_takes_child_pipe_to_prevent_blocking_api() {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("cmd");
+            command.args(["/C", "echo noisy 1>&2"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "echo noisy >&2"]);
+            command
+        };
+        command.stderr(Stdio::piped());
+        let mut child = command.spawn().unwrap();
+
+        drain_stderr(&mut child);
+
+        assert!(child.stderr.is_none());
+        let _ = child.wait();
     }
 
     #[test]

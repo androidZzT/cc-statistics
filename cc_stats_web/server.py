@@ -153,22 +153,38 @@ def _parse_session_file(f):
     return parse_file(f)
 
 
+def _filter_files_by_mtime(files: list, since_dt: datetime | None):
+    if since_dt is None:
+        return files
+
+    threshold = since_dt.timestamp()
+    filtered = []
+    for f in files:
+        try:
+            if f.stat().st_mtime >= threshold:
+                filtered.append(f)
+        except OSError:
+            filtered.append(f)
+    return filtered
+
+
 def _get_stats(project_dir_name=None, since_days=None, source: str | None = None):
     files = _collect_session_files(project_dir_name, source=source)
     if not files:
         return {"error": "No sessions found"}
 
-    files.sort(key=lambda f: f.stat().st_mtime)
-
     since_dt = None
     if since_days:
         since_dt = datetime.now(tz=timezone.utc) - timedelta(days=since_days)
+
+    files = _filter_files_by_mtime(files, since_dt)
+    files.sort(key=lambda f: f.stat().st_mtime)
 
     all_stats = []
     for f in files:
         try:
             session = _parse_session_file(f)
-            stats = analyze_session(session)
+            stats = analyze_session(session, include_git=False)
             if since_dt and stats.end_time and stats.end_time < since_dt:
                 continue
             all_stats.append(stats)
@@ -186,12 +202,13 @@ def _get_daily_stats(project_dir_name=None, days=14, source: str | None = None):
     files = _collect_session_files(project_dir_name, source=source)
 
     since_dt = datetime.now(tz=timezone.utc) - timedelta(days=days)
+    files = _filter_files_by_mtime(files, since_dt)
     daily: dict[str, list] = defaultdict(list)
 
     for f in files:
         try:
             session = _parse_session_file(f)
-            stats = analyze_session(session)
+            stats = analyze_session(session, include_git=False)
             if stats.end_time and stats.end_time < since_dt:
                 continue
             if not stats.start_time:
@@ -245,7 +262,7 @@ def _get_skill_stats(project_dir_name=None, since_days=None, source: str | None 
     for f in files:
         try:
             session = _parse_session_file(f)
-            stats = analyze_session(session)
+            stats = analyze_session(session, include_git=False)
             all_stats.append(stats)
         except Exception:
             continue
