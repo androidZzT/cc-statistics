@@ -872,6 +872,110 @@ def parse_gemini_json(path: Path) -> Session:
     )
 
 
+def parse_gemini_jsonl(path: Path) -> Session:
+    """Parse Gemini CLI JSONL session files written under ~/.gemini/tmp/*/chats."""
+    session_id = path.stem
+    project_path = ""
+    messages: list[Message] = []
+
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if "sessionId" in record:
+                session_id = record.get("sessionId") or session_id
+                if not project_path:
+                    project_path = _gemini_jsonl_project_path(path)
+                continue
+
+            msg_type = record.get("type", "")
+            timestamp = record.get("timestamp", "")
+            if msg_type == "user":
+                messages.append(Message(
+                    role="user",
+                    timestamp=timestamp,
+                    content=_extract_gemini_content(record.get("content")),
+                    session_id=session_id,
+                    message_id=record.get("id", ""),
+                ))
+            elif msg_type == "gemini":
+                tool_calls: list[ToolCall] = []
+                for tc in record.get("toolCalls", []) or []:
+                    if not isinstance(tc, dict):
+                        continue
+                    raw_name = tc.get("name", "")
+                    mapped_name = _GEMINI_TOOL_MAP.get(raw_name, raw_name)
+                    tool_calls.append(ToolCall(
+                        name=mapped_name,
+                        input=tc.get("args", {}),
+                        timestamp=tc.get("timestamp", timestamp),
+                        tool_use_id=tc.get("id", ""),
+                    ))
+
+                usage: dict[str, Any] = {}
+                tokens = record.get("tokens")
+                if isinstance(tokens, dict):
+                    usage = {
+                        "input_tokens": tokens.get("input", 0),
+                        "output_tokens": tokens.get("output", 0),
+                        "cache_read_input_tokens": tokens.get("cached", 0),
+                        "cache_creation_input_tokens": 0,
+                    }
+
+                messages.append(Message(
+                    role="assistant",
+                    timestamp=timestamp,
+                    content=_extract_gemini_content(record.get("content")),
+                    model=record.get("model"),
+                    usage=usage,
+                    tool_calls=tool_calls,
+                    session_id=session_id,
+                    message_id=record.get("id", ""),
+                ))
+
+    if not project_path:
+        project_path = _gemini_jsonl_project_path(path)
+
+    return Session(
+        session_id=session_id,
+        project_path=project_path,
+        file_path=path,
+        source="gemini",
+        messages=messages,
+    )
+
+
+def _gemini_jsonl_project_path(path: Path) -> str:
+    project_root = path.parent.parent / ".project_root"
+    try:
+        value = project_root.read_text(encoding="utf-8").strip()
+        if value:
+            return value
+    except OSError:
+        pass
+
+    project_slug = path.parent.parent.name
+    projects_json = path.parent.parent.parent.parent / "projects.json"
+    try:
+        data = json.loads(projects_json.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+
+    projects = data.get("projects", {})
+    if not isinstance(projects, dict):
+        return ""
+    for project_path, slug in projects.items():
+        if slug == project_slug:
+            return project_path
+    return ""
+
+
 def _extract_gemini_content(raw: Any) -> Any:
     """提取 Gemini 消息内容（可能是字符串或 Part 列表）"""
     if isinstance(raw, str):
@@ -899,8 +1003,8 @@ def find_gemini_sessions(
     for chats_dir in gemini_dir.glob("*/chats"):
         if not chats_dir.is_dir():
             continue
-        for json_file in sorted(chats_dir.glob("*.json")):
-            results.append(json_file)
+        results.extend(sorted(chats_dir.glob("*.json")))
+        results.extend(sorted(chats_dir.glob("*.jsonl")))
 
     return results
 
@@ -920,25 +1024,44 @@ def find_gemini_sessions_by_keyword(
 
     for path in all_sessions:
         try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            dirs = data.get("directories", [])
-            if any(keyword_lower in d.lower() for d in dirs):
+            session = parse_session_file(path)
+            if keyword_lower in session.project_path.lower():
                 results.append(path)
                 continue
-            summary = data.get("summary", "")
-            if summary and keyword_lower in summary.lower():
+            content = "\n".join(
+                str(message.content)
+                for message in session.messages
+                if message.content
+            )
+            if keyword_lower in content.lower():
                 results.append(path)
-        except (json.JSONDecodeError, OSError):
+        except (ValueError, OSError):
             continue
 
     return results
+
+
+def _looks_like_gemini_jsonl(path: Path) -> bool:
+    if path.suffix != ".jsonl" or path.parent.name != "chats":
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                obj = json.loads(line)
+                return "sessionId" in obj and "projectHash" in obj
+    except (json.JSONDecodeError, OSError):
+        return False
+    return False
 
 
 def parse_session_file(path: Path) -> Session:
     """自动识别并解析会话文件（Claude / Codex / Gemini）"""
     if path.suffix == ".json":
         return parse_gemini_json(path)
+    if _looks_like_gemini_jsonl(path):
+        return parse_gemini_jsonl(path)
     if _looks_like_codex_jsonl(path):
         return parse_codex_jsonl(path)
     return parse_jsonl(path)

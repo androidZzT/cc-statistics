@@ -8,6 +8,7 @@ from cc_stats.sources import (
     collect_session_files,
     collect_session_files_by_keyword,
     list_projects,
+    parse_file,
 )
 
 
@@ -62,6 +63,45 @@ def _write_gemini_session(gemini_home: Path, name: str, cwd: Path) -> Path:
     return path
 
 
+def _write_gemini_jsonl_session(gemini_home: Path, name: str, cwd: Path) -> Path:
+    project_dir = gemini_home / "tmp" / "demo-project"
+    (project_dir / "chats").mkdir(parents=True, exist_ok=True)
+    (project_dir / ".project_root").write_text(str(cwd), encoding="utf-8")
+    path = project_dir / "chats" / f"session-2026-06-09T17-21-{name}.jsonl"
+    return _write_jsonl(path, [
+        {
+            "sessionId": name,
+            "projectHash": "project-hash",
+            "startTime": "2026-06-09T17:21:00Z",
+            "lastUpdated": "2026-06-09T17:22:00Z",
+            "kind": "main",
+        },
+        {"$set": {"summary": "needle summary"}},
+        {
+            "id": "user-1",
+            "timestamp": "2026-06-09T17:21:01Z",
+            "type": "user",
+            "content": [{"text": "hello from gemini"}],
+        },
+        {
+            "id": "gemini-1",
+            "timestamp": "2026-06-09T17:21:02Z",
+            "type": "gemini",
+            "content": "done",
+            "model": "gemini-2.5-pro",
+            "tokens": {"input": 100, "output": 20, "cached": 30, "tool": 5},
+            "toolCalls": [
+                {
+                    "id": "tool-1",
+                    "name": "read_file",
+                    "args": {"path": "README.md"},
+                    "timestamp": "2026-06-09T17:21:02Z",
+                }
+            ],
+        },
+    ])
+
+
 def _write_claude_session(claude_projects: Path, project_name: str, cwd: Path) -> Path:
     path = claude_projects / project_name / "session-a.jsonl"
     return _write_jsonl(path, [
@@ -98,6 +138,42 @@ def test_collect_session_files_all_includes_codex_synthetic_sessions(
 
     assert codex_file in files
     assert gemini_file in files
+
+
+def test_collect_session_files_source_gemini_includes_jsonl_sessions(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, _, gemini_home = _set_source_homes(monkeypatch, tmp_path)
+    gemini_file = _write_gemini_jsonl_session(gemini_home, "gemini-jsonl", tmp_path / "demo")
+
+    files = collect_session_files(source=SourceKind.GEMINI)
+
+    assert files == [gemini_file]
+
+
+def test_parse_gemini_jsonl_maps_project_tokens_and_tools(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, _, gemini_home = _set_source_homes(monkeypatch, tmp_path)
+    project_dir = tmp_path / "demo"
+    gemini_file = _write_gemini_jsonl_session(gemini_home, "gemini-jsonl", project_dir)
+
+    session = parse_file(gemini_file)
+
+    assert session.source == "gemini"
+    assert session.session_id == "gemini-jsonl"
+    assert session.project_path == str(project_dir)
+    assert [message.role for message in session.messages] == ["user", "assistant"]
+    assert session.messages[1].model == "gemini-2.5-pro"
+    assert session.messages[1].usage == {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "cache_read_input_tokens": 30,
+        "cache_creation_input_tokens": 0,
+    }
+    assert session.messages[1].tool_calls[0].name == "Read"
 
 
 def test_list_projects_source_codex_groups_by_cwd(tmp_path: Path, monkeypatch) -> None:

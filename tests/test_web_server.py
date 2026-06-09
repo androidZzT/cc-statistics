@@ -127,6 +127,44 @@ def _write_gemini_session(gemini_home: Path, name: str, cwd: Path) -> Path:
     return path
 
 
+def _write_gemini_jsonl_session(gemini_home: Path, name: str, cwd: Path) -> Path:
+    project_dir = gemini_home / "tmp" / "demo-project"
+    (project_dir / "chats").mkdir(parents=True, exist_ok=True)
+    (project_dir / ".project_root").write_text(str(cwd), encoding="utf-8")
+    path = project_dir / "chats" / f"session-2026-06-09T17-21-{name}.jsonl"
+    return _write_jsonl(path, [
+        {
+            "sessionId": name,
+            "projectHash": "project-hash",
+            "startTime": "2026-06-09T17:21:00Z",
+            "lastUpdated": "2026-06-09T17:22:00Z",
+            "kind": "main",
+        },
+        {
+            "id": "user-1",
+            "timestamp": "2026-06-09T17:21:01Z",
+            "type": "user",
+            "content": [{"text": "hello from gemini"}],
+        },
+        {
+            "id": "gemini-1",
+            "timestamp": "2026-06-09T17:21:02Z",
+            "type": "gemini",
+            "content": "done",
+            "model": "gemini-2.5-pro",
+            "tokens": {"input": 100, "output": 20, "cached": 30},
+            "toolCalls": [
+                {
+                    "id": "tool-1",
+                    "name": "read_file",
+                    "args": {"path": "README.md"},
+                    "timestamp": "2026-06-09T17:21:02Z",
+                }
+            ],
+        },
+    ])
+
+
 def _write_claude_session(claude_projects: Path, project_name: str, cwd: Path) -> Path:
     path = claude_projects / project_name / "session-a.jsonl"
     return _write_jsonl(path, [
@@ -253,6 +291,24 @@ def test_get_stats_source_codex_parses_user_message_and_token_usage(
     assert stats["token_usage"]["cache_read"] == 40
     assert stats["token_usage"]["output_tokens"] == 10
     assert stats["token_usage"]["total"] == 110
+
+
+def test_get_stats_source_gemini_parses_windows_jsonl_sessions(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, _, gemini_home = _set_source_homes(monkeypatch, tmp_path)
+    _write_gemini_jsonl_session(gemini_home, "gemini-jsonl", tmp_path / "demo")
+
+    stats = _get_stats(source="gemini")
+
+    assert stats["session_count"] == 1
+    assert stats["user_message_count"] == 1
+    assert stats["tool_calls"] == [{"name": "Read", "count": 1}]
+    assert stats["token_usage"]["input_tokens"] == 100
+    assert stats["token_usage"]["cache_read"] == 30
+    assert stats["token_usage"]["output_tokens"] == 20
+    assert stats["token_usage"]["total"] == 150
 
 
 def test_get_stats_prefilters_old_mtime_before_parsing(
