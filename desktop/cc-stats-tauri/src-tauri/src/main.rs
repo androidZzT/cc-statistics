@@ -115,6 +115,9 @@ fn start_api_health_monitor(app: AppHandle, initial_state: ApiState) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let _ = open_dashboard_for_app(app);
+        }))
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let mut api = ApiProcessManager::start_default_with_python_source(

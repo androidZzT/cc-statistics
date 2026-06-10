@@ -115,6 +115,15 @@ def test_tray_quit_stops_api_before_app_exit() -> None:
     assert '"quit" => {\n                app.exit(0);' not in tray_rs
 
 
+def test_tauri_shell_uses_single_instance_plugin_to_prevent_api_conflicts() -> None:
+    cargo_toml = (TAURI_DIR / "Cargo.toml").read_text(encoding="utf-8")
+    main_rs = (TAURI_DIR / "src" / "main.rs").read_text(encoding="utf-8")
+
+    assert "tauri-plugin-single-instance" in cargo_toml
+    assert "tauri_plugin_single_instance::init" in main_rs
+    assert "open_dashboard_for_app(app);" in main_rs
+
+
 def test_python_api_bundles_python_sources_as_tauri_resources() -> None:
     config = (TAURI_DIR / "tauri.conf.json").read_text(encoding="utf-8")
 
