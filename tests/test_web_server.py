@@ -262,7 +262,7 @@ def test_get_projects_source_codex_includes_codex_project(
 
 
 def test_health_endpoint_returns_ok() -> None:
-    server, port = start_server()
+    server, port = start_server(warm_cache=False)
     thread = threading.Thread(
         target=server.serve_forever,
         kwargs={"poll_interval": 0.1},
@@ -287,7 +287,7 @@ def test_health_endpoint_responds_while_stats_request_is_busy(monkeypatch) -> No
         return {"ok": True}
 
     monkeypatch.setattr("cc_stats_web.server._get_stats", slow_stats)
-    server, port = start_server()
+    server, port = start_server(warm_cache=False)
     thread = threading.Thread(
         target=server.serve_forever,
         kwargs={"poll_interval": 0.1},
@@ -406,6 +406,86 @@ def test_get_dashboard_payload_analyzes_sessions_once_for_summary_daily_and_skil
     assert payload["stats"]["session_count"] == 1
     assert isinstance(payload["daily_stats"], list)
     assert payload["skills"] == []
+
+
+def test_get_dashboard_payload_reuses_analyzed_sessions_between_range_tabs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, codex_home, _ = _set_source_homes(monkeypatch, tmp_path)
+    _write_codex_session(codex_home, "codex-a", tmp_path / "demo")
+    analyzed: list[str] = []
+
+    def fake_analyze_session(session, *, include_git=True):
+        analyzed.append(session.session_id)
+        stats = SessionStats(session_id=session.session_id, project_path=session.project_path)
+        stats.user_message_count = 1
+        return stats
+
+    monkeypatch.setattr(web_server, "analyze_session", fake_analyze_session)
+
+    today = web_server._get_dashboard_payload(source="codex", since_days=1, daily_days=1)
+    week = web_server._get_dashboard_payload(source="codex", since_days=7, daily_days=7)
+
+    assert analyzed == ["codex-a"]
+    assert today["stats"]["session_count"] == 1
+    assert week["stats"]["session_count"] == 1
+
+
+def test_get_dashboard_payload_keeps_short_lived_cache_when_file_mtime_moves(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, codex_home, _ = _set_source_homes(monkeypatch, tmp_path)
+    session_file = _write_codex_session(codex_home, "codex-a", tmp_path / "demo")
+    analyzed: list[str] = []
+
+    def fake_analyze_session(session, *, include_git=True):
+        analyzed.append(session.session_id)
+        return SessionStats(session_id=session.session_id, project_path=session.project_path)
+
+    monkeypatch.setattr(web_server, "analyze_session", fake_analyze_session)
+
+    web_server._get_dashboard_payload(source="codex", since_days=1, daily_days=1)
+    now = time.time() + 10
+    os.utime(session_file, (now, now))
+    web_server._get_dashboard_payload(source="codex", since_days=7, daily_days=7)
+
+    assert analyzed == ["codex-a"]
+
+
+def test_get_dashboard_payload_singleflights_concurrent_cache_fill(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, codex_home, _ = _set_source_homes(monkeypatch, tmp_path)
+    _write_codex_session(codex_home, "codex-a", tmp_path / "demo")
+    started = threading.Event()
+    analyzed: list[str] = []
+
+    def fake_analyze_session(session, *, include_git=True):
+        analyzed.append(session.session_id)
+        started.set()
+        time.sleep(0.05)
+        return SessionStats(session_id=session.session_id, project_path=session.project_path)
+
+    monkeypatch.setattr(web_server, "analyze_session", fake_analyze_session)
+
+    results: list[dict] = []
+    first = threading.Thread(
+        target=lambda: results.append(web_server._get_dashboard_payload(source="codex")),
+    )
+    first.start()
+    assert started.wait(timeout=2)
+    second = threading.Thread(
+        target=lambda: results.append(web_server._get_dashboard_payload(source="codex")),
+    )
+    second.start()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert len(results) == 2
+    assert analyzed == ["codex-a"]
 
 
 def test_get_stats_prefilters_old_mtime_before_parsing(
@@ -586,3 +666,39 @@ def test_stats_to_dict_returns_na_when_no_cache_reads():
     assert cache["hit_rate"] == 0.0
     assert cache["savings_usd"] == 0.0
     assert cache["by_model"] == {}
+
+
+def test_stats_to_dict_omits_zero_token_model_rows():
+    stats = SessionStats(session_id="s4", project_path="/tmp/demo")
+    stats.token_usage = TokenUsage(input_tokens=100, output_tokens=20)
+    stats.token_by_model = {
+        "gpt-5.5": TokenUsage(input_tokens=100, output_tokens=20),
+        "cursor-model-without-token-count": TokenUsage(),
+    }
+
+    result = _stats_to_dict(stats)
+
+    assert [row["model"] for row in result["token_by_model"]] == ["gpt-5.5"]
+
+
+def test_dashboard_html_prefetches_period_payloads():
+    html = (Path(web_server._web_dir) / "index.html").read_text(encoding="utf-8")
+
+    assert "dashboardCache" in html
+    assert "prefetchPeriodPayloads" in html
+    assert "renderDashboardPayload" in html
+
+
+def test_warm_dashboard_cache_primes_projects_and_analyzed_stats(monkeypatch):
+    calls: list[str] = []
+
+    monkeypatch.setattr(web_server, "_get_projects", lambda source=None: calls.append("projects"))
+    monkeypatch.setattr(
+        web_server,
+        "_get_cached_analyzed_stats",
+        lambda project_dir_name=None, source=None: calls.append("stats"),
+    )
+
+    web_server._warm_dashboard_cache()
+
+    assert calls == ["stats", "projects"]

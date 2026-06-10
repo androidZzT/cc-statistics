@@ -5,8 +5,12 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
+import time
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -21,6 +25,58 @@ from cc_stats.pricing import match_model_pricing
 from cc_stats.sources import collect_session_files, list_projects, parse_file, parse_sessions
 
 _web_dir = os.path.join(os.path.dirname(__file__), "web")
+
+
+@dataclass(frozen=True)
+class _AnalyzedCacheEntry:
+    signature: tuple[tuple[str, int | None, int | None], ...]
+    stats: list[SessionStats]
+    created_at: float
+
+
+@dataclass(frozen=True)
+class _ProjectsCacheEntry:
+    signature: tuple[tuple[str, int | None, int | None], ...]
+    projects: list[dict]
+    created_at: float
+
+
+_CACHE_TTL_SECONDS = 45.0
+_ANALYZED_CACHE_LOCK = threading.Lock()
+_PROJECTS_CACHE_LOCK = threading.Lock()
+_ANALYZED_CACHE: dict[tuple[str, str], _AnalyzedCacheEntry] = {}
+_PROJECTS_CACHE: dict[str, _ProjectsCacheEntry] = {}
+
+
+def _session_files_signature(files: list[Path]) -> tuple[tuple[str, int | None, int | None], ...]:
+    signature = []
+    for path in files:
+        try:
+            stat = path.stat()
+            signature.append((str(path), stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            signature.append((str(path), None, None))
+    return tuple(signature)
+
+
+def _cache_source_key(source: str | None) -> str:
+    env_parts = [
+        os.environ.get("CC_STATS_CLAUDE_PROJECTS_DIR", ""),
+        os.environ.get("CC_STATS_CODEX_HOME", ""),
+        os.environ.get("CC_STATS_GEMINI_HOME", ""),
+        os.environ.get("CC_STATS_CURSOR_STATE_DB", ""),
+        os.environ.get("CC_STATS_CURSOR_USER_DIR", ""),
+        os.environ.get("HOME", ""),
+    ]
+    return "\0".join([source or "", *env_parts])
+
+
+def _cache_project_key(project_dir_name) -> str:
+    return str(project_dir_name or "")
+
+
+def _is_cache_fresh(created_at: float) -> bool:
+    return time.monotonic() - created_at <= _CACHE_TTL_SECONDS
 
 
 def _estimate_cost(tu: TokenUsage, model: str = "") -> float:
@@ -72,6 +128,8 @@ def _stats_to_dict(
     total_cost = 0.0
     model_tokens = []
     for model, usage in sorted(stats.token_by_model.items(), key=lambda x: x[1].total, reverse=True):
+        if usage.total <= 0:
+            continue
         cost = _estimate_cost(usage, model)
         total_cost += cost
         model_tokens.append({
@@ -120,17 +178,40 @@ def _stats_to_dict(
 
 
 def _get_projects(source: str | None = None):
-    projects = [
-        {
-            "dir_name": project.key,
-            "display_name": project.display_name,
-            "session_count": project.session_count,
-            "source": project.source.value,
-        }
-        for project in list_projects(source=source)
-    ]
-    projects.sort(key=lambda x: x["session_count"], reverse=True)
-    return projects
+    cache_key = _cache_source_key(source)
+    with _PROJECTS_CACHE_LOCK:
+        cached = _PROJECTS_CACHE.get(cache_key)
+        if cached and _is_cache_fresh(cached.created_at):
+            return cached.projects
+
+        files = collect_session_files(source=source)
+        files.sort(key=lambda path: str(path))
+        signature = _session_files_signature(files)
+        cached = _PROJECTS_CACHE.get(cache_key)
+        if cached and cached.signature == signature:
+            _PROJECTS_CACHE[cache_key] = _ProjectsCacheEntry(
+                signature=cached.signature,
+                projects=cached.projects,
+                created_at=time.monotonic(),
+            )
+            return cached.projects
+
+        projects = [
+            {
+                "dir_name": project.key,
+                "display_name": project.display_name,
+                "session_count": project.session_count,
+                "source": project.source.value,
+            }
+            for project in list_projects(source=source)
+        ]
+        projects.sort(key=lambda x: x["session_count"], reverse=True)
+        _PROJECTS_CACHE[cache_key] = _ProjectsCacheEntry(
+            signature=signature,
+            projects=projects,
+            created_at=time.monotonic(),
+        )
+        return projects
 
 
 def _collect_session_files(project_dir_name=None, source: str | None = None):
@@ -210,6 +291,40 @@ def _analyze_session_files(
         except Exception:
             continue
     return all_stats
+
+
+def _get_cached_analyzed_stats(
+    project_dir_name=None,
+    source: str | None = None,
+) -> list[SessionStats]:
+    cache_key = (_cache_source_key(source), _cache_project_key(project_dir_name))
+    with _ANALYZED_CACHE_LOCK:
+        cached = _ANALYZED_CACHE.get(cache_key)
+        if cached and _is_cache_fresh(cached.created_at):
+            return cached.stats
+
+        files = _collect_session_files(project_dir_name, source=source)
+        if not files:
+            return []
+
+        files.sort(key=lambda f: f.stat().st_mtime)
+        signature = _session_files_signature(files)
+        cached = _ANALYZED_CACHE.get(cache_key)
+        if cached and cached.signature == signature:
+            _ANALYZED_CACHE[cache_key] = _AnalyzedCacheEntry(
+                signature=cached.signature,
+                stats=cached.stats,
+                created_at=time.monotonic(),
+            )
+            return cached.stats
+
+        all_stats = _analyze_session_files(files, project_dir_name=project_dir_name)
+        _ANALYZED_CACHE[cache_key] = _AnalyzedCacheEntry(
+            signature=signature,
+            stats=all_stats,
+            created_at=time.monotonic(),
+        )
+        return all_stats
 
 
 def _merged_stats(all_stats: list[SessionStats]) -> SessionStats | None:
@@ -416,19 +531,10 @@ def _get_dashboard_payload(
     daily_days=30,
     source: str | None = None,
 ):
-    files = _collect_session_files(project_dir_name, source=source)
-    if not files:
-        return {
-            "stats": {"error": "No sessions found"},
-            "daily_stats": [],
-            "skills": [],
-        }
-
-    files.sort(key=lambda f: f.stat().st_mtime)
-    all_stats = _analyze_session_files(files, project_dir_name=project_dir_name)
+    all_stats = _get_cached_analyzed_stats(project_dir_name, source=source)
     if not all_stats:
         return {
-            "stats": {"error": "No valid sessions"},
+            "stats": {"error": "No sessions found"},
             "daily_stats": [],
             "skills": [],
         }
@@ -547,13 +653,23 @@ class CcStatsHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
 
+def _warm_dashboard_cache() -> None:
+    try:
+        _get_cached_analyzed_stats()
+        _get_projects()
+    except Exception:
+        pass
+
+
 def find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
 
-def start_server() -> tuple[CcStatsHTTPServer, int]:
+def start_server(warm_cache: bool = True) -> tuple[CcStatsHTTPServer, int]:
     port = find_free_port()
     server = CcStatsHTTPServer(("127.0.0.1", port), ApiHandler)
+    if warm_cache:
+        threading.Thread(target=_warm_dashboard_cache, daemon=True).start()
     return server, port

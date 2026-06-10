@@ -895,6 +895,10 @@ button{cursor:pointer}
 let currentProject='',currentProjectSource='',currentDays=1,currentSource='',allProjects=[],loadSeq=0;
 let lastStats=null,lastDaily=[],lastUpdatedAt=null,trendMode='cost';
 const COLORS=['#4fa3ff','#8a5cf6','#22c58d','#f4a218','#ff5f5f','#e879f9','#2dd4bf','#facc15'];
+const PERIOD_DAYS=[1,7,30,0];
+const DASHBOARD_CACHE_TTL_MS=45000;
+const dashboardCache=new Map();
+const dashboardInFlight=new Map();
 
 function escapeHtml(value){
   return String(value ?? '').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
@@ -963,6 +967,53 @@ async function api(path,params){
   if(!res.ok)throw new Error(path+' failed with HTTP '+res.status);
   return res.json();
 }
+function dashboardParams(daysValue=currentDays){
+  const days=daysValue>0?daysValue:null;
+  return {
+    project:currentProject||null,
+    days,
+    daily_days:daysValue>0?daysValue:30,
+    source:currentSource||currentProjectSource||null,
+  };
+}
+function dashboardCacheKey(daysValue=currentDays){
+  const p=dashboardParams(daysValue);
+  return [p.project||'',p.source||'',p.days||0,p.daily_days].join('|');
+}
+function clearDashboardCache(){
+  dashboardCache.clear();
+  dashboardInFlight.clear();
+}
+function cachedDashboardPayload(key){
+  const entry=dashboardCache.get(key);
+  if(!entry)return null;
+  if(Date.now()-entry.at>DASHBOARD_CACHE_TTL_MS){
+    dashboardCache.delete(key);
+    return null;
+  }
+  return entry.payload;
+}
+async function fetchDashboardPayload(daysValue=currentDays,force=false){
+  const key=dashboardCacheKey(daysValue);
+  if(force){
+    dashboardCache.delete(key);
+    dashboardInFlight.delete(key);
+  }
+  const cached=force?null:cachedDashboardPayload(key);
+  if(cached)return cached;
+  if(dashboardInFlight.has(key))return dashboardInFlight.get(key);
+  const request=api('/api/dashboard',dashboardParams(daysValue)).then(payload=>{
+    dashboardCache.set(key,{payload,at:Date.now()});
+    return payload;
+  }).finally(()=>dashboardInFlight.delete(key));
+  dashboardInFlight.set(key,request);
+  return request;
+}
+function prefetchPeriodPayloads(seq=loadSeq){
+  PERIOD_DAYS.filter(days=>days!==currentDays).forEach(days=>{
+    fetchDashboardPayload(days).catch(()=>{});
+  });
+}
 
 async function loadProjects(){
   allProjects=await api('/api/projects',{source:currentSource||null});
@@ -983,30 +1034,40 @@ function renderProjectSelect(){
   sel.value=currentProject;
 }
 
-async function loadStats(){
+function renderDashboardPayload(payload){
+  const stats=payload.stats||{};
+  if(stats.error){showError(stats.error);return false;}
+  const daily=Array.isArray(payload.daily_stats)?payload.daily_stats:[];
+  lastStats=stats;
+  lastDaily=daily;
+  updateMetrics(stats);
+  updateTime(stats);
+  updateCode(stats);
+  updateTokens(stats);
+  updateCache(stats);
+  renderTrend();
+  updateSkills(payload.skills||[]);
+  updateTools(stats);
+  updateForecast(lastDaily,stats);
+  markUpdated();
+  return true;
+}
+
+async function loadStats(options={}){
   const seq=++loadSeq;
-  const days=currentDays>0?currentDays:null;
-  const source=currentSource||currentProjectSource||null;
+  const force=Boolean(options.force);
+  const key=dashboardCacheKey(currentDays);
+  const cached=force?null:cachedDashboardPayload(key);
+  if(cached){
+    renderDashboardPayload(cached);
+    prefetchPeriodPayloads(seq);
+    return;
+  }
   setLoading();
-  const dailyDays=currentDays>0?currentDays:30;
   try{
-    const payload=await api('/api/dashboard',{project:currentProject||null,days,daily_days:dailyDays,source});
+    const payload=await fetchDashboardPayload(currentDays,force);
     if(seq!==loadSeq)return;
-    const stats=payload.stats||{};
-    if(stats.error){showError(stats.error);return;}
-    const daily=Array.isArray(payload.daily_stats)?payload.daily_stats:[];
-    lastStats=stats;
-    lastDaily=daily;
-    updateMetrics(stats);
-    updateTime(stats);
-    updateCode(stats);
-    updateTokens(stats);
-    updateCache(stats);
-    renderTrend();
-    updateSkills(payload.skills||[]);
-    updateTools(stats);
-    updateForecast(lastDaily,stats);
-    markUpdated();
+    if(renderDashboardPayload(payload))prefetchPeriodPayloads(seq);
   }catch(e){
     if(seq===loadSeq)showError(e.message||String(e));
   }
@@ -1198,12 +1259,14 @@ function exportSnapshot(){
 document.getElementById('project-select').addEventListener('change',e=>{
   currentProject=e.target.value;
   currentProjectSource=e.target.selectedOptions[0]?.dataset.source||'';
+  clearDashboardCache();
   loadStats();
 });
 document.getElementById('source-select').addEventListener('change',async e=>{
   currentSource=e.target.value;
   currentProject='';
   currentProjectSource='';
+  clearDashboardCache();
   await loadProjects();
   loadStats();
 });
@@ -1219,8 +1282,8 @@ document.querySelectorAll('.trend-mode').forEach(b=>b.addEventListener('click',(
   trendMode=b.dataset.trend;
   renderTrend();
 }));
-document.getElementById('refresh-button').addEventListener('click',loadStats);
-document.getElementById('reload-projects-button').addEventListener('click',async()=>{await loadProjects();loadStats()});
+document.getElementById('refresh-button').addEventListener('click',()=>{clearDashboardCache();loadStats({force:true})});
+document.getElementById('reload-projects-button').addEventListener('click',async()=>{clearDashboardCache();await loadProjects();loadStats({force:true})});
 document.getElementById('settings-button').addEventListener('click',async()=>{await loadProjects();document.getElementById('project-select').focus()});
 document.getElementById('export-button').addEventListener('click',exportSnapshot);
 
