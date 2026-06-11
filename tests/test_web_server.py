@@ -281,6 +281,30 @@ def test_health_endpoint_returns_ok() -> None:
     assert payload == {"status": "ok"}
 
 
+def test_dashboard_root_serves_index_html() -> None:
+    server, port = start_server(warm_cache=False)
+    thread = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.1},
+        daemon=True,
+    )
+    thread.start()
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as resp:
+            status = resp.status
+            content_type = resp.headers.get("Content-Type")
+            body = resp.read().decode("utf-8")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert status == 200
+    assert content_type == "text/html; charset=utf-8"
+    assert "<title>CC Statistics</title>" in body
+
+
 def test_health_endpoint_responds_while_stats_request_is_busy(monkeypatch) -> None:
     def slow_stats(*args, **kwargs):
         time.sleep(0.4)

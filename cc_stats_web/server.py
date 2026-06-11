@@ -592,7 +592,9 @@ class ApiHandler(SimpleHTTPRequestHandler):
         source = params.get("source", [None])[0]
 
         try:
-            if path == "/api/health":
+            if path in {"", "/"}:
+                self._serve_index()
+            elif path == "/api/health":
                 self._json({"status": "ok"})
             elif path == "/api/projects":
                 self._json(_get_projects(source=source))
@@ -641,6 +643,20 @@ class ApiHandler(SimpleHTTPRequestHandler):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_index(self):
+        index_path = Path(_web_dir) / "index.html"
+        try:
+            body = index_path.read_bytes()
+        except OSError:
+            self.send_error(404, "Dashboard index not found")
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
