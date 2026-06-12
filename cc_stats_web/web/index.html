@@ -799,10 +799,10 @@ button{cursor:pointer}
       </div>
     </div>
     <nav class="period-tabs" aria-label="时间范围">
-      <button class="time-btn active" data-days="1">今天</button>
-      <button class="time-btn" data-days="7">本周</button>
-      <button class="time-btn" data-days="30">本月</button>
-      <button class="time-btn" data-days="0">全部</button>
+      <button class="time-btn active" data-period="today">今天</button>
+      <button class="time-btn" data-period="week">本周</button>
+      <button class="time-btn" data-period="month">本月</button>
+      <button class="time-btn" data-period="all">全部</button>
     </nav>
   </header>
 
@@ -892,10 +892,12 @@ button{cursor:pointer}
 </div>
 
 <script>
-let currentProject='',currentProjectSource='',currentDays=1,currentSource='',allProjects=[],loadSeq=0;
+let currentProject='',currentProjectSource='',currentDays=1,currentPeriod='today',currentSource='',allProjects=[],loadSeq=0;
 let lastStats=null,lastDaily=[],lastUpdatedAt=null,trendMode='cost';
 const COLORS=['#4fa3ff','#8a5cf6','#22c58d','#f4a218','#ff5f5f','#e879f9','#2dd4bf','#facc15'];
 const PERIOD_DAYS=[1,7,30,0];
+const PERIOD_BY_DAYS={1:'today',7:'week',30:'month',0:'all'};
+const DAYS_BY_PERIOD={today:1,week:7,month:30,all:0};
 const DASHBOARD_CACHE_TTL_MS=45000;
 const dashboardCache=new Map();
 const dashboardInFlight=new Map();
@@ -942,7 +944,7 @@ function trendValue(row){
   return Number(row.cost||0);
 }
 function trendRows(){
-  if(currentDays===1&&lastStats){
+  if(currentPeriod==='today'&&lastStats){
     return [{
       date:'今天',
       sessions:lastStats.session_count,
@@ -967,18 +969,24 @@ async function api(path,params){
   if(!res.ok)throw new Error(path+' failed with HTTP '+res.status);
   return res.json();
 }
+function periodForDays(daysValue=currentDays){
+  return PERIOD_BY_DAYS[daysValue]||'all';
+}
+function daysForPeriod(period=currentPeriod){
+  return DAYS_BY_PERIOD[period]??1;
+}
 function dashboardParams(daysValue=currentDays){
-  const days=daysValue>0?daysValue:null;
+  const period=daysValue===currentDays?currentPeriod:periodForDays(daysValue);
   return {
     project:currentProject||null,
-    days,
+    period,
     daily_days:daysValue>0?daysValue:30,
     source:currentSource||currentProjectSource||null,
   };
 }
 function dashboardCacheKey(daysValue=currentDays){
   const p=dashboardParams(daysValue);
-  return [p.project||'',p.source||'',p.days||0,p.daily_days].join('|');
+  return [p.project||'',p.source||'',p.period||'',p.daily_days].join('|');
 }
 function clearDashboardCache(){
   dashboardCache.clear();
@@ -1246,7 +1254,7 @@ function updateFooterElapsed(){
   el.textContent='已更新 '+seconds+'秒';
 }
 function exportSnapshot(){
-  const payload={exported_at:new Date().toISOString(),project:currentProject||null,source:currentSource||currentProjectSource||null,days:currentDays,stats:lastStats,daily:lastDaily};
+  const payload={exported_at:new Date().toISOString(),project:currentProject||null,source:currentSource||currentProjectSource||null,period:currentPeriod,stats:lastStats,daily:lastDaily};
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
@@ -1273,7 +1281,8 @@ document.getElementById('source-select').addEventListener('change',async e=>{
 document.querySelectorAll('.time-btn').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('.time-btn').forEach(x=>x.classList.remove('active'));
   b.classList.add('active');
-  currentDays=parseInt(b.dataset.days,10);
+  currentPeriod=b.dataset.period||'today';
+  currentDays=daysForPeriod(currentPeriod);
   loadStats();
 }));
 document.querySelectorAll('.trend-mode').forEach(b=>b.addEventListener('click',()=>{

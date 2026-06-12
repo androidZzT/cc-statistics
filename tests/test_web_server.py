@@ -456,6 +456,179 @@ def test_get_dashboard_payload_reuses_analyzed_sessions_between_range_tabs(
     assert week["stats"]["session_count"] == 1
 
 
+def test_get_dashboard_payload_today_period_uses_local_calendar_day(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, codex_home, _ = _set_source_homes(monkeypatch, tmp_path)
+    _write_codex_session_at(
+        codex_home,
+        "yesterday-local",
+        tmp_path / "demo",
+        datetime(2026, 6, 11, 15, 0, tzinfo=timezone.utc),
+    )
+    _write_codex_session_at(
+        codex_home,
+        "today-local",
+        tmp_path / "demo",
+        datetime(2026, 6, 12, 1, 0, tzinfo=timezone.utc),
+    )
+    fixed_now = datetime(2026, 6, 12, 10, 0, tzinfo=timezone(timedelta(hours=8)))
+    monkeypatch.setattr(web_server, "_now_local", lambda: fixed_now)
+
+    def fake_analyze_session(session, *, include_git=True):
+        stats = SessionStats(session_id=session.session_id, project_path=session.project_path)
+        stats.user_message_count = 1
+        stats.token_usage = TokenUsage(input_tokens=100)
+        stats.token_by_model = {"gpt-5.5": TokenUsage(input_tokens=100)}
+        if session.session_id == "today-local":
+            stats.start_time = datetime(2026, 6, 12, 1, 0, tzinfo=timezone.utc)
+            stats.end_time = datetime(2026, 6, 12, 1, 5, tzinfo=timezone.utc)
+            stats.active_duration = timedelta(minutes=5)
+            stats.token_by_date = {"2026-06-12": TokenUsage(input_tokens=100)}
+            stats.token_by_model_by_date = {
+                "2026-06-12": {"gpt-5.5": TokenUsage(input_tokens=100)}
+            }
+        else:
+            stats.start_time = datetime(2026, 6, 11, 15, 0, tzinfo=timezone.utc)
+            stats.end_time = datetime(2026, 6, 11, 15, 5, tzinfo=timezone.utc)
+            stats.active_duration = timedelta(hours=4)
+            stats.token_by_date = {"2026-06-11": TokenUsage(input_tokens=100)}
+            stats.token_by_model_by_date = {
+                "2026-06-11": {"gpt-5.5": TokenUsage(input_tokens=100)}
+            }
+        return stats
+
+    monkeypatch.setattr(web_server, "analyze_session", fake_analyze_session)
+
+    payload = web_server._get_dashboard_payload(source="codex", period="today")
+
+    assert payload["stats"]["session_count"] == 1
+    assert payload["stats"]["user_message_count"] == 1
+    assert payload["stats"]["active_duration_fmt"] == "5m"
+    assert payload["stats"]["token_usage"]["input_tokens"] == 100
+
+
+def test_get_dashboard_payload_today_period_returns_zero_when_range_is_empty(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, codex_home, _ = _set_source_homes(monkeypatch, tmp_path)
+    _write_codex_session_at(
+        codex_home,
+        "yesterday-local",
+        tmp_path / "demo",
+        datetime(2026, 6, 11, 15, 0, tzinfo=timezone.utc),
+    )
+    fixed_now = datetime(2026, 6, 12, 10, 0, tzinfo=timezone(timedelta(hours=8)))
+    monkeypatch.setattr(web_server, "_now_local", lambda: fixed_now)
+
+    def fake_analyze_session(session, *, include_git=True):
+        stats = SessionStats(session_id=session.session_id, project_path=session.project_path)
+        stats.start_time = datetime(2026, 6, 11, 15, 0, tzinfo=timezone.utc)
+        stats.end_time = datetime(2026, 6, 11, 15, 5, tzinfo=timezone.utc)
+        stats.active_duration = timedelta(hours=4)
+        stats.user_message_count = 1
+        stats.token_usage = TokenUsage(input_tokens=100)
+        stats.token_by_model = {"gpt-5.5": TokenUsage(input_tokens=100)}
+        stats.token_by_date = {"2026-06-11": TokenUsage(input_tokens=100)}
+        stats.token_by_model_by_date = {
+            "2026-06-11": {"gpt-5.5": TokenUsage(input_tokens=100)}
+        }
+        return stats
+
+    monkeypatch.setattr(web_server, "analyze_session", fake_analyze_session)
+
+    payload = web_server._get_dashboard_payload(source="codex", period="today")
+
+    assert payload["stats"]["session_count"] == 0
+    assert payload["stats"]["user_message_count"] == 0
+    assert payload["stats"]["active_duration_fmt"] == "0s"
+    assert payload["stats"]["token_usage"]["total"] == 0
+
+
+def test_get_dashboard_payload_today_period_scales_cross_day_duration_by_tokens(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _, codex_home, _ = _set_source_homes(monkeypatch, tmp_path)
+    _write_codex_session_at(
+        codex_home,
+        "cross-day",
+        tmp_path / "demo",
+        datetime(2026, 6, 11, 15, 0, tzinfo=timezone.utc),
+    )
+    fixed_now = datetime(2026, 6, 12, 10, 0, tzinfo=timezone(timedelta(hours=8)))
+    monkeypatch.setattr(web_server, "_now_local", lambda: fixed_now)
+
+    def fake_analyze_session(session, *, include_git=True):
+        stats = SessionStats(session_id=session.session_id, project_path=session.project_path)
+        stats.start_time = datetime(2026, 6, 11, 15, 0, tzinfo=timezone.utc)
+        stats.end_time = datetime(2026, 6, 12, 1, 0, tzinfo=timezone.utc)
+        stats.ai_duration = timedelta(hours=8)
+        stats.user_duration = timedelta(hours=2)
+        stats.active_duration = timedelta(hours=10)
+        stats.total_duration = timedelta(hours=10)
+        stats.token_usage = TokenUsage(input_tokens=1_000)
+        stats.token_by_model = {"gpt-5.5": TokenUsage(input_tokens=1_000)}
+        stats.token_by_date = {
+            "2026-06-11": TokenUsage(input_tokens=900),
+            "2026-06-12": TokenUsage(input_tokens=100),
+        }
+        stats.token_by_model_by_date = {
+            "2026-06-11": {"gpt-5.5": TokenUsage(input_tokens=900)},
+            "2026-06-12": {"gpt-5.5": TokenUsage(input_tokens=100)},
+        }
+        return stats
+
+    monkeypatch.setattr(web_server, "analyze_session", fake_analyze_session)
+
+    payload = web_server._get_dashboard_payload(source="codex", period="today")
+
+    assert payload["stats"]["active_duration"] == 3600
+    assert payload["stats"]["active_duration_fmt"] == "1h"
+    assert payload["stats"]["ai_duration_fmt"] == "48m"
+    assert payload["stats"]["user_duration_fmt"] == "12m"
+
+
+def test_daily_stats_from_analyzed_uses_token_dates_for_cross_day_sessions() -> None:
+    stats = SessionStats(session_id="cross-day", project_path="/tmp/demo")
+    stats.start_time = datetime(2026, 6, 11, 23, 0, tzinfo=timezone.utc)
+    stats.end_time = datetime(2026, 6, 12, 1, 0, tzinfo=timezone.utc)
+    stats.active_duration = timedelta(minutes=15)
+    stats.user_message_count = 2
+    stats.tool_call_total = 3
+    stats.token_usage = TokenUsage(input_tokens=1_000)
+    stats.token_by_model = {"gpt-5.5": TokenUsage(input_tokens=1_000)}
+    stats.token_by_date = {
+        "2026-06-11": TokenUsage(input_tokens=900),
+        "2026-06-12": TokenUsage(input_tokens=100),
+    }
+    stats.token_by_model_by_date = {
+        "2026-06-11": {"gpt-5.5": TokenUsage(input_tokens=900)},
+        "2026-06-12": {"gpt-5.5": TokenUsage(input_tokens=100)},
+    }
+
+    result = web_server._daily_stats_from_analyzed(
+        [stats],
+        datetime(2026, 6, 12, tzinfo=timezone.utc),
+        1,
+        now=datetime(2026, 6, 12, 12, tzinfo=timezone.utc),
+    )
+
+    assert result == [{
+        "date": "2026-06-12",
+        "sessions": 1,
+        "messages": 2,
+        "tool_calls": 3,
+        "active_minutes": 1.5,
+        "lines_added": 0,
+        "lines_removed": 0,
+        "tokens": 100,
+        "cost": 0.0,
+    }]
+
+
 def test_get_dashboard_payload_keeps_short_lived_cache_when_file_mtime_moves(
     tmp_path: Path,
     monkeypatch,

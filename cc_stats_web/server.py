@@ -8,12 +8,14 @@ import socket
 import threading
 import time
 from collections import defaultdict
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from cc_stats.cli import _trim_stats_by_date_range
 from cc_stats.analyzer import (
     SessionStats,
     TokenUsage,
@@ -39,6 +41,14 @@ class _ProjectsCacheEntry:
     signature: tuple[tuple[str, int | None, int | None], ...]
     projects: list[dict]
     created_at: float
+
+
+@dataclass(frozen=True)
+class _DashboardPeriodRange:
+    since_dt: datetime | None
+    since_date: str | None
+    until_date: str | None
+    daily_days: int
 
 
 _CACHE_TTL_SECONDS = 45.0
@@ -77,6 +87,124 @@ def _cache_project_key(project_dir_name) -> str:
 
 def _is_cache_fresh(created_at: float) -> bool:
     return time.monotonic() - created_at <= _CACHE_TTL_SECONDS
+
+
+def _now_local() -> datetime:
+    return datetime.now().astimezone()
+
+
+def _dashboard_period_range(
+    period: str | None,
+    now: datetime | None = None,
+) -> _DashboardPeriodRange | None:
+    if not period:
+        return None
+
+    normalized = period.strip().lower()
+    local_now = now if now is not None else _now_local()
+    if local_now.tzinfo is None:
+        local_now = local_now.astimezone()
+
+    if normalized == "all":
+        return _DashboardPeriodRange(None, None, None, 30)
+    if normalized == "today":
+        start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif normalized == "week":
+        start = (local_now - timedelta(days=local_now.weekday())).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    elif normalized == "month":
+        start = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        raise ValueError(f"Unsupported dashboard period: {period}")
+
+    since_date = start.date().strftime("%Y-%m-%d")
+    until_date = local_now.date().strftime("%Y-%m-%d")
+    daily_days = max((local_now.date() - start.date()).days + 1, 1)
+    return _DashboardPeriodRange(
+        start.astimezone(timezone.utc),
+        since_date,
+        until_date,
+        daily_days,
+    )
+
+
+def _date_key_in_range(
+    date_key: str,
+    since_date: str | None,
+    until_date: str | None,
+) -> bool:
+    if since_date and date_key < since_date:
+        return False
+    if until_date and date_key > until_date:
+        return False
+    return True
+
+
+def _stats_matches_local_date_range(
+    stats: SessionStats,
+    since_date: str | None,
+    until_date: str | None,
+) -> bool:
+    if not since_date and not until_date:
+        return True
+    if stats.token_by_date:
+        return any(
+            usage.total > 0 and _date_key_in_range(date_key, since_date, until_date)
+            for date_key, usage in stats.token_by_date.items()
+        )
+    if stats.start_time:
+        return _date_key_in_range(
+            stats.start_time.astimezone().strftime("%Y-%m-%d"),
+            since_date,
+            until_date,
+        )
+    if stats.end_time:
+        return _date_key_in_range(
+            stats.end_time.astimezone().strftime("%Y-%m-%d"),
+            since_date,
+            until_date,
+        )
+    return False
+
+
+def _scale_timedelta(value: timedelta, fraction: float) -> timedelta:
+    return timedelta(seconds=value.total_seconds() * fraction)
+
+
+def _scale_stats_durations(stats: SessionStats, fraction: float) -> None:
+    fraction = max(0.0, min(fraction, 1.0))
+    stats.total_duration = _scale_timedelta(stats.total_duration, fraction)
+    stats.ai_duration = _scale_timedelta(stats.ai_duration, fraction)
+    stats.user_duration = _scale_timedelta(stats.user_duration, fraction)
+    stats.active_duration = _scale_timedelta(stats.active_duration, fraction)
+
+
+def _stats_for_local_date_range(
+    all_stats: list[SessionStats],
+    since_date: str | None,
+    until_date: str | None,
+) -> list[SessionStats]:
+    if not since_date and not until_date:
+        return all_stats
+
+    filtered = []
+    for stats in all_stats:
+        if not _stats_matches_local_date_range(stats, since_date, until_date):
+            continue
+        original_token_total = stats.token_usage.total
+        stats_copy = deepcopy(stats)
+        _trim_stats_by_date_range(stats_copy, since_date, until_date)
+        if original_token_total > 0:
+            _scale_stats_durations(
+                stats_copy,
+                stats_copy.token_usage.total / original_token_total,
+            )
+        filtered.append(stats_copy)
+    return filtered
 
 
 def _estimate_cost(tu: TokenUsage, model: str = "") -> float:
@@ -422,35 +550,113 @@ def _get_daily_stats(project_dir_name=None, days=14, source: str | None = None):
     return result
 
 
+def _add_token_usage(target: TokenUsage, source: TokenUsage) -> None:
+    target.input_tokens += source.input_tokens
+    target.output_tokens += source.output_tokens
+    target.cache_read_input_tokens += source.cache_read_input_tokens
+    target.cache_creation_input_tokens += source.cache_creation_input_tokens
+
+
+def _daily_token_usage_and_cost(
+    stats_list: list[SessionStats],
+    day_key: str,
+    fallback_stats: SessionStats,
+) -> tuple[TokenUsage, float]:
+    usage = TokenUsage()
+    cost = 0.0
+    saw_token_dates = False
+
+    for stats in stats_list:
+        day_usage = stats.token_by_date.get(day_key)
+        if day_usage is None:
+            continue
+        saw_token_dates = True
+        _add_token_usage(usage, day_usage)
+
+        model_map = stats.token_by_model_by_date.get(day_key)
+        if model_map:
+            cost += sum(
+                _estimate_cost(model_usage, model)
+                for model, model_usage in model_map.items()
+            )
+        elif stats.token_usage.total > 0:
+            stats_cost = sum(
+                _estimate_cost(model_usage, model)
+                for model, model_usage in stats.token_by_model.items()
+            )
+            cost += stats_cost * day_usage.total / stats.token_usage.total
+
+    if not saw_token_dates:
+        usage = fallback_stats.token_usage
+        cost = sum(
+            _estimate_cost(model_usage, model)
+            for model, model_usage in fallback_stats.token_by_model.items()
+        )
+
+    return usage, cost
+
+
+def _daily_active_minutes(
+    stats_list: list[SessionStats],
+    day_key: str,
+    fallback_stats: SessionStats,
+) -> float:
+    seconds = 0.0
+    saw_token_dates = False
+    for stats in stats_list:
+        day_usage = stats.token_by_date.get(day_key)
+        if day_usage is None:
+            continue
+        saw_token_dates = True
+        if stats.token_usage.total > 0:
+            seconds += (
+                stats.active_duration.total_seconds()
+                * day_usage.total
+                / stats.token_usage.total
+            )
+
+    if not saw_token_dates:
+        seconds = fallback_stats.active_duration.total_seconds()
+
+    return round(seconds / 60, 1)
+
+
 def _daily_stats_from_analyzed(
     all_stats: list[SessionStats],
     since_dt: datetime,
     days: int,
+    now: datetime | None = None,
 ) -> list[dict]:
+    date_keys = _daily_date_keys(since_dt, days, now=now)
+    date_key_set = set(date_keys)
     daily: dict[str, list] = defaultdict(list)
     for stats in all_stats:
-        if stats.end_time and stats.end_time < since_dt:
+        if stats.token_by_date:
+            for day_key, usage in stats.token_by_date.items():
+                if usage.total > 0 and day_key in date_key_set:
+                    daily[day_key].append(stats)
             continue
-        if not stats.start_time:
-            continue
-        day_key = stats.start_time.astimezone().strftime("%Y-%m-%d")
-        daily[day_key].append(stats)
+        if stats.start_time:
+            day_key = stats.start_time.astimezone().strftime("%Y-%m-%d")
+            if day_key in date_key_set:
+                daily[day_key].append(stats)
 
     result = []
-    for day_key in _daily_date_keys(since_dt, days):
+    for day_key in date_keys:
         day_stats = daily.get(day_key, [])
         if day_stats:
             merged = merge_stats(day_stats) if len(day_stats) > 1 else day_stats[0]
-            cost = sum(_estimate_cost(u, m) for m, u in merged.token_by_model.items())
+            usage, cost = _daily_token_usage_and_cost(day_stats, day_key, merged)
+            active_minutes = _daily_active_minutes(day_stats, day_key, merged)
             result.append({
                 "date": day_key,
                 "sessions": len(day_stats),
                 "messages": merged.user_message_count,
                 "tool_calls": merged.tool_call_total,
-                "active_minutes": round(merged.active_duration.total_seconds() / 60, 1),
+                "active_minutes": active_minutes,
                 "lines_added": merged.total_added,
                 "lines_removed": merged.total_removed,
-                "tokens": merged.token_usage.total,
+                "tokens": usage.total,
                 "cost": round(cost, 2),
             })
         else:
@@ -530,6 +736,7 @@ def _get_dashboard_payload(
     since_days=None,
     daily_days=30,
     source: str | None = None,
+    period: str | None = None,
 ):
     all_stats = _get_cached_analyzed_stats(project_dir_name, source=source)
     if not all_stats:
@@ -540,15 +747,37 @@ def _get_dashboard_payload(
         }
 
     since_dt = None
-    if since_days:
+    period_range = _dashboard_period_range(period)
+    if period_range is not None:
+        since_dt = period_range.since_dt
+        stats_for_range = _stats_for_local_date_range(
+            all_stats,
+            period_range.since_date,
+            period_range.until_date,
+        )
+        daily_days = period_range.daily_days
+        daily_source_stats = stats_for_range
+    elif since_days:
         since_dt = datetime.now(tz=timezone.utc) - timedelta(days=since_days)
-    stats_for_range = [
-        stats for stats in all_stats
-        if not since_dt or not stats.end_time or stats.end_time >= since_dt
-    ]
+        stats_for_range = [
+            stats for stats in all_stats
+            if not since_dt or not stats.end_time or stats.end_time >= since_dt
+        ]
+        daily_source_stats = all_stats
+    else:
+        stats_for_range = all_stats
+        daily_source_stats = all_stats
+
     merged = _merged_stats(stats_for_range)
     if merged is None:
-        stats_payload = {"error": "No valid sessions"}
+        if period_range is not None:
+            stats_payload = _stats_to_dict(
+                SessionStats(session_id="", project_path=str(project_dir_name or "")),
+                session_count=0,
+                git_scan_skipped=True,
+            )
+        else:
+            stats_payload = {"error": "No valid sessions"}
     else:
         stats_payload = _stats_to_dict(
             merged,
@@ -556,10 +785,10 @@ def _get_dashboard_payload(
             git_scan_skipped=True,
         )
 
-    daily_since = datetime.now(tz=timezone.utc) - timedelta(days=daily_days)
+    daily_since = since_dt or datetime.now(tz=timezone.utc) - timedelta(days=daily_days)
     return {
         "stats": stats_payload,
-        "daily_stats": _daily_stats_from_analyzed(all_stats, daily_since, daily_days),
+        "daily_stats": _daily_stats_from_analyzed(daily_source_stats, daily_since, daily_days),
         "skills": _skill_stats_from_analyzed(all_stats),
     }
 
@@ -610,11 +839,15 @@ class ApiHandler(SimpleHTTPRequestHandler):
                 project = params.get("project", [None])[0]
                 days = params.get("days", [None])[0]
                 daily_days = params.get("daily_days", ["30"])[0]
+                period = params.get("period", [None])[0]
                 self._json(_get_dashboard_payload(
                     project_dir_name=project or None,
-                    since_days=int(days) if days and days != "0" else None,
+                    since_days=(
+                        int(days) if not period and days and days != "0" else None
+                    ),
                     daily_days=int(daily_days),
                     source=source,
+                    period=period,
                 ))
             elif path == "/api/daily_stats":
                 project = params.get("project", [None])[0]
