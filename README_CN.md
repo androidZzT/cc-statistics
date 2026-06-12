@@ -19,7 +19,7 @@
     <a href="#%EF%B8%8F-截图">截图</a> &bull;
     <a href="#-快速开始">快速开始</a> &bull;
     <a href="#-cli-参考">CLI</a> &bull;
-    <a href="README.md">English</a>
+    <a href="README.md">English</a> | 简体中文 | <a href="README_JA.md">日本語</a> | <a href="README_KO.md">한국어</a>
   </p>
 </div>
 
