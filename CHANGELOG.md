@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.0.4 (2026-06-12)
+
+### Pricing
+- Refresh official model pricing for OpenAI, Claude, and Gemini model families.
+- Add pricing coverage for newer GPT-5.5, Claude Fable/Mythos/Opus, and Gemini 3.x models.
+- Reuse the shared Python pricing matcher in the web API to prevent CLI/Web cost-estimation drift.
+
 ## v1.0.3 (2026-06-02)
 
 ### Fixes

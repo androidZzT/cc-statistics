@@ -23,39 +23,13 @@ from cc_stats.parser import (
     parse_gemini_json,
     parse_jsonl,
 )
+from cc_stats.pricing import match_model_pricing
 
 _web_dir = os.path.join(os.path.dirname(__file__), "web")
 
-# Model pricing ($/M tokens)
-_PRICING = {
-    "opus": {"input": 15, "output": 75, "cache_read": 1.5, "cache_create": 18.75},
-    "sonnet": {"input": 3, "output": 15, "cache_read": 0.3, "cache_create": 3.75},
-    "haiku": {"input": 0.8, "output": 4, "cache_read": 0.08, "cache_create": 1.0},
-    "gpt-4o": {"input": 2.5, "output": 10, "cache_read": 1.25, "cache_create": 2.5},
-    "o1": {"input": 15, "output": 60, "cache_read": 7.5, "cache_create": 15},
-    "o3": {"input": 10, "output": 40, "cache_read": 2.5, "cache_create": 10},
-    "gemini-2.5-pro": {"input": 1.25, "output": 10, "cache_read": 0.31, "cache_create": 1.25},
-    "gemini-2.5-flash": {"input": 0.15, "output": 0.60, "cache_read": 0.04, "cache_create": 0.15},
-    "gemini-2.0-flash": {"input": 0.10, "output": 0.40, "cache_read": 0.025, "cache_create": 0.10},
-}
-
-
-def _match_pricing(model: str) -> dict:
-    lower = model.lower()
-    # Gemini models (exact match first)
-    for key in ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"):
-        if key in lower:
-            return _PRICING[key]
-    if "gemini" in lower:
-        return _PRICING["gemini-2.5-flash"]
-    for key in ["opus", "haiku", "sonnet", "gpt-4o", "o1", "o3"]:
-        if key in lower:
-            return _PRICING[key]
-    return _PRICING["sonnet"]
-
 
 def _estimate_cost(tu: TokenUsage, model: str = "") -> float:
-    p = _match_pricing(model)
+    p = match_model_pricing(model)
     cost = 0.0
     cost += tu.input_tokens / 1e6 * p["input"]
     cost += tu.output_tokens / 1e6 * p["output"]
