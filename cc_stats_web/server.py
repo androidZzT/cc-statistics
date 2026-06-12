@@ -795,6 +795,8 @@ def _get_dashboard_payload(
 
 def _get_version_update():
     """检查版本更新（供 Web API 使用）"""
+    if os.environ.get("CC_STATS_DESKTOP_SHELL") == "1":
+        return {"has_update": False}
     try:
         from cc_stats.version_checker import check_for_update
         result = check_for_update()

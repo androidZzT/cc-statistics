@@ -240,6 +240,7 @@ pub fn build_api_command_with_python_source(
         command.arg(arg);
     }
     command.args(["-m", "cc_stats_web", "--no-browser", "--json"]);
+    command.env("CC_STATS_DESKTOP_SHELL", "1");
     apply_python_source_dir(&mut command, python_source_dir);
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
@@ -421,6 +422,16 @@ mod tests {
         assert!(command
             .get_envs()
             .any(|(key, value)| key == "PYTHONPATH" && value.is_some()));
+    }
+
+    #[test]
+    fn api_command_marks_python_dashboard_as_desktop_shell() {
+        let python = vec!["python3".to_string()];
+        let command = build_api_command(&python);
+
+        assert!(command.get_envs().any(|(key, value)| {
+            key == "CC_STATS_DESKTOP_SHELL" && value == Some(std::ffi::OsStr::new("1"))
+        }));
     }
 
     #[test]

@@ -878,6 +878,14 @@ def test_stats_to_dict_omits_zero_token_model_rows():
     assert [row["model"] for row in result["token_by_model"]] == ["gpt-5.5"]
 
 
+def test_version_update_hidden_for_desktop_shell(monkeypatch):
+    monkeypatch.setenv("CC_STATS_DESKTOP_SHELL", "1")
+
+    result = web_server._get_version_update()
+
+    assert result == {"has_update": False}
+
+
 def test_dashboard_html_prefetches_period_payloads():
     html = (Path(web_server._web_dir) / "index.html").read_text(encoding="utf-8")
 
