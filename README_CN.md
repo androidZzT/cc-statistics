@@ -6,7 +6,7 @@
 
   <p>
     <a href="https://pypi.org/project/cc-statistics/"><img src="https://img.shields.io/pypi/v/cc-statistics?color=blue&style=flat-square&logo=python" alt="PyPI"></a>
-    <a href="https://pypi.org/project/cc-statistics/"><img src="https://img.shields.io/pypi/dm/cc-statistics?color=green&style=flat-square" alt="Downloads"></a>
+    <a href="https://pepy.tech/project/cc-statistics"><img src="https://static.pepy.tech/badge/cc-statistics/month" alt="Downloads"></a>
     <a href="https://github.com/androidZzT/cc-statistics/stargazers"><img src="https://img.shields.io/github/stars/androidZzT/cc-statistics?style=flat-square" alt="Stars"></a>
     <a href="LICENSE"><img src="https://img.shields.io/github/license/androidZzT/cc-statistics?style=flat-square" alt="License"></a>
     <img src="https://img.shields.io/badge/零依赖-纯标准库-orange?style=flat-square" alt="Zero Dependencies">
