@@ -498,7 +498,7 @@ mod tests {
     fn capture_stderr_takes_child_pipe_to_prevent_blocking_api() {
         let mut command = if cfg!(windows) {
             let mut command = Command::new("cmd");
-            command.args(["/C", "echo noisy 1>&2"]);
+            command.args(["/C", "echo noisy>&2"]);
             command
         } else {
             let mut command = Command::new("sh");
