@@ -1,11 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{
-    path::PathBuf,
-    sync::Mutex,
-    thread,
-    time::Duration,
-};
+use std::{path::PathBuf, sync::Mutex, thread, time::Duration};
 
 use api_process::{ApiProcessManager, ApiStatus};
 use health::{is_api_healthy, ApiState};

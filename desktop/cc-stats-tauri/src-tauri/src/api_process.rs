@@ -1,10 +1,11 @@
 use std::{
     env,
-    io::{self, BufRead, BufReader},
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::mpsc,
     thread,
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -56,9 +57,7 @@ impl ApiProcessManager {
                 };
                 manager
             }
-            Err(error) => {
-                Self::failed_with_python_source(error, manager.python_source_dir.clone())
-            }
+            Err(error) => Self::failed_with_python_source(error, manager.python_source_dir.clone()),
         }
     }
 
@@ -164,8 +163,7 @@ impl ApiProcessManager {
             if self.status.state == ApiState::Running {
                 self.health_failures = HEALTH_FAILURE_THRESHOLD;
                 self.status.state = ApiState::Failed;
-                self.status.error =
-                    Some("cc_stats_web process is not running".to_string());
+                self.status.error = Some("cc_stats_web process is not running".to_string());
             }
             return;
         }
@@ -214,15 +212,39 @@ impl Drop for ApiProcessManager {
 }
 
 pub fn candidate_python_commands() -> Vec<Vec<String>> {
-    if cfg!(windows) {
-        vec![
-            vec!["pythonw".to_string()],
-            vec!["python".to_string()],
-            vec!["py".to_string(), "-3".to_string()],
-            vec!["python3".to_string()],
-        ]
+    let configured_python = env::var("CC_STATS_PYTHON")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    candidate_python_commands_for_platform(cfg!(windows), configured_python)
+}
+
+pub fn candidate_python_commands_for_platform(
+    is_windows: bool,
+    configured_python: Option<String>,
+) -> Vec<Vec<String>> {
+    let mut commands = Vec::new();
+    if let Some(python) = configured_python {
+        push_python_command(&mut commands, vec![python]);
+    }
+
+    if is_windows {
+        push_python_command(&mut commands, vec!["pythonw".to_string()]);
+        push_python_command(&mut commands, vec!["python".to_string()]);
+        push_python_command(&mut commands, vec!["py".to_string(), "-3".to_string()]);
+        push_python_command(&mut commands, vec!["python3".to_string()]);
     } else {
-        vec![vec!["python3".to_string()], vec!["python".to_string()]]
+        push_python_command(&mut commands, vec!["/opt/homebrew/bin/python3".to_string()]);
+        push_python_command(&mut commands, vec!["/usr/local/bin/python3".to_string()]);
+        push_python_command(&mut commands, vec!["python3".to_string()]);
+        push_python_command(&mut commands, vec!["python".to_string()]);
+    }
+    commands
+}
+
+fn push_python_command(commands: &mut Vec<Vec<String>>, command: Vec<String>) {
+    if !commands.contains(&command) {
+        commands.push(command);
     }
 }
 
@@ -277,13 +299,28 @@ pub fn parse_startup_url(line: &str) -> Option<String> {
 }
 
 fn start_python_api(python_source_dir: Option<&Path>) -> Result<(Child, String), String> {
-    for python in candidate_python_commands() {
-        match spawn_with_python(&python, python_source_dir) {
+    let commands = candidate_python_commands();
+    let mut errors = Vec::new();
+    for python in &commands {
+        match spawn_with_python(python, python_source_dir) {
             Ok(started) => return Ok(started),
-            Err(_) => continue,
+            Err(error) => errors.push(format!("{}: {error}", python.join(" "))),
         }
     }
-    Err("Unable to start cc_stats_web with pythonw, python, py -3, or python3".to_string())
+
+    let attempted = commands
+        .iter()
+        .map(|command| command.join(" "))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if errors.is_empty() {
+        Err(format!("Unable to start cc_stats_web with {attempted}"))
+    } else {
+        Err(format!(
+            "Unable to start cc_stats_web with {attempted}; attempts: {}",
+            errors.join(" | ")
+        ))
+    }
 }
 
 fn spawn_with_python(
@@ -295,7 +332,7 @@ fn spawn_with_python(
     let mut child = command
         .spawn()
         .map_err(|err| format!("failed to spawn {}: {err}", python.join(" ")))?;
-    drain_stderr(&mut child);
+    let stderr_handle = capture_stderr(&mut child);
 
     let stdout = child
         .stdout
@@ -318,25 +355,43 @@ fn spawn_with_python(
     match rx.recv_timeout(Duration::from_secs(8)) {
         Ok(url) => match wait_for_api_health(&mut child, &url) {
             Ok(()) => Ok((child, url)),
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                Err(error)
-            }
+            Err(error) => Err(fail_child_with_stderr(child, stderr_handle, error)),
         },
-        Err(err) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Err(format!("cc_stats_web did not report a startup URL: {err}"))
-        }
+        Err(err) => Err(fail_child_with_stderr(
+            child,
+            stderr_handle,
+            format!("cc_stats_web did not report a startup URL: {err}"),
+        )),
     }
 }
 
-fn drain_stderr(child: &mut Child) {
-    if let Some(mut stderr) = child.stderr.take() {
-        thread::spawn(move || {
-            let _ = io::copy(&mut stderr, &mut io::sink());
-        });
+fn capture_stderr(child: &mut Child) -> Option<JoinHandle<String>> {
+    let stderr = child.stderr.take()?;
+    Some(thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        reader
+            .lines()
+            .map_while(Result::ok)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }))
+}
+
+fn fail_child_with_stderr(
+    mut child: Child,
+    stderr_handle: Option<JoinHandle<String>>,
+    message: String,
+) -> String {
+    let _ = child.kill();
+    let _ = child.wait();
+    let stderr = stderr_handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        message
+    } else {
+        format!("{message}; stderr: {stderr}")
     }
 }
 
@@ -376,7 +431,8 @@ struct StartupPayload {
 mod tests {
     use super::{
         build_api_command, build_api_command_with_python_source, candidate_python_commands,
-        drain_stderr, parse_startup_url, ApiProcessManager, ApiStatus,
+        candidate_python_commands_for_platform, capture_stderr, parse_startup_url,
+        spawn_with_python, ApiProcessManager, ApiStatus,
     };
     use crate::health::ApiState;
     use std::{
@@ -416,7 +472,11 @@ mod tests {
     #[test]
     fn api_command_sets_pythonpath_to_bundled_source_dir() {
         let python = vec!["python3".to_string()];
-        let source_dir = PathBuf::from("C:/cc-statistics/resources/python");
+        let source_dir = if cfg!(windows) {
+            PathBuf::from(r"C:\cc-statistics\resources\python")
+        } else {
+            PathBuf::from("/tmp/cc-statistics/resources/python")
+        };
         let command = build_api_command_with_python_source(&python, Some(&source_dir));
 
         assert!(command
@@ -435,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn drain_stderr_takes_child_pipe_to_prevent_blocking_api() {
+    fn capture_stderr_takes_child_pipe_to_prevent_blocking_api() {
         let mut command = if cfg!(windows) {
             let mut command = Command::new("cmd");
             command.args(["/C", "echo noisy 1>&2"]);
@@ -448,10 +508,14 @@ mod tests {
         command.stderr(Stdio::piped());
         let mut child = command.spawn().unwrap();
 
-        drain_stderr(&mut child);
+        let handle = capture_stderr(&mut child);
 
         assert!(child.stderr.is_none());
         let _ = child.wait();
+        assert_eq!(
+            handle.and_then(|handle| handle.join().ok()).as_deref(),
+            Some("noisy")
+        );
     }
 
     #[test]
@@ -461,9 +525,45 @@ mod tests {
 
     #[test]
     fn windows_prefers_pythonw_to_avoid_console_window() {
-        if cfg!(windows) {
-            assert_eq!(candidate_python_commands()[0], ["pythonw"]);
-        }
+        let commands = candidate_python_commands_for_platform(true, None);
+
+        assert_eq!(commands[0], vec!["pythonw".to_string()]);
+    }
+
+    #[test]
+    fn candidate_python_commands_prefers_configured_python() {
+        let commands =
+            candidate_python_commands_for_platform(false, Some("/custom/bin/python3".to_string()));
+
+        assert_eq!(commands[0], vec!["/custom/bin/python3".to_string()]);
+    }
+
+    #[test]
+    fn candidate_python_commands_include_homebrew_paths_on_macos() {
+        let commands = candidate_python_commands_for_platform(false, None);
+
+        assert!(commands.contains(&vec!["/opt/homebrew/bin/python3".to_string()]));
+        assert!(commands.contains(&vec!["/usr/local/bin/python3".to_string()]));
+    }
+
+    #[test]
+    fn startup_failure_includes_stderr_output() {
+        let command = if cfg!(windows) {
+            vec![
+                "cmd".to_string(),
+                "/C".to_string(),
+                "echo module missing 1>&2 & exit /B 42".to_string(),
+            ]
+        } else {
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "echo 'module missing' >&2; exit 42".to_string(),
+            ]
+        };
+        let err = spawn_with_python(&command, None).unwrap_err();
+
+        assert!(err.contains("module missing"), "{err}");
     }
 
     #[test]

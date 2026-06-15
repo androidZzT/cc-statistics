@@ -38,7 +38,10 @@ pub fn is_api_healthy(api_url: &str) -> bool {
     if stream.read_to_string(&mut response).is_err() {
         return false;
     }
-    let compact = response.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    let compact = response
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
     (response.starts_with("HTTP/1.0 200") || response.starts_with("HTTP/1.1 200"))
         && compact.contains("\"status\":\"ok\"")
 }

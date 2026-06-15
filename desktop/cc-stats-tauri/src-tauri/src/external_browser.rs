@@ -45,13 +45,13 @@ fn is_local_dashboard_url(url: &str) -> bool {
 fn open_url(url: &str) -> Result<(), String> {
     use std::{ffi::OsStr, iter, os::windows::ffi::OsStrExt, ptr};
 
-    use windows_sys::Win32::{
-        UI::Shell::ShellExecuteW,
-        UI::WindowsAndMessaging::SW_SHOWNORMAL,
-    };
+    use windows_sys::Win32::{UI::Shell::ShellExecuteW, UI::WindowsAndMessaging::SW_SHOWNORMAL};
 
     fn wide(value: &str) -> Vec<u16> {
-        OsStr::new(value).encode_wide().chain(iter::once(0)).collect()
+        OsStr::new(value)
+            .encode_wide()
+            .chain(iter::once(0))
+            .collect()
     }
 
     let operation = wide("open");
@@ -69,7 +69,9 @@ fn open_url(url: &str) -> Result<(), String> {
 
     let code = result as isize;
     if code <= 32 {
-        return Err(format!("failed to open dashboard URL: ShellExecuteW returned {code}"));
+        return Err(format!(
+            "failed to open dashboard URL: ShellExecuteW returned {code}"
+        ));
     }
     Ok(())
 }
