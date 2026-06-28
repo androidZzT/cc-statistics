@@ -129,7 +129,7 @@ def match_model_pricing(model: str) -> Pricing:
     if "gemini-2.0-flash" in lower:
         return MODEL_PRICING["gemini-2.0-flash"]
     if "gemini" in lower:
-        return MODEL_PRICING["gemini-2.5-flash"]
+        return MODEL_PRICING["gemini-3.5-flash"]
 
     # Claude
     if "fable" in lower:

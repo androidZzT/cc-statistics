@@ -179,9 +179,6 @@ def _normalized_project_path(path: Path | str) -> str:
 
 
 def _home_dir() -> Path:
-    home = os.environ.get("HOME")
-    if home:
-        return Path(home).expanduser()
     return Path.home()
 
 

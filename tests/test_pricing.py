@@ -14,6 +14,13 @@ def test_match_gpt_55_pro():
     assert p["output"] == 180.0
 
 
+def test_match_gpt_53_codex_exact():
+    p = match_model_pricing("gpt-5.3-codex")
+    assert p["input"] == 1.75
+    assert p["output"] == 14.0
+    assert p["cache_read"] == 0.175
+
+
 def test_match_chat_latest():
     p = match_model_pricing("gpt-5.3-chat-latest")
     assert p["input"] == 5.0
@@ -21,11 +28,10 @@ def test_match_chat_latest():
     assert p["cache_read"] == 0.5
 
 
-def test_match_claude_opus_48():
-    p = match_model_pricing("claude-opus-4-8-20260528")
-    assert p["input"] == 5.0
-    assert p["output"] == 25.0
-    assert p["cache_read"] == 0.5
+def test_match_gpt5_codex_fallback():
+    p = match_model_pricing("gpt-5.2-codex")
+    assert p["input"] == 1.75
+    assert p["output"] == 14.0
 
 
 def test_match_claude_fable_5():
@@ -35,17 +41,11 @@ def test_match_claude_fable_5():
     assert p["cache_read"] == 1.0
 
 
-def test_match_gpt_53_codex_exact():
-    p = match_model_pricing("gpt-5.3-codex")
-    assert p["input"] == 1.75
-    assert p["output"] == 14.0
-    assert p["cache_read"] == 0.175
-
-
-def test_match_gpt5_codex_fallback():
-    p = match_model_pricing("gpt-5.2-codex")
-    assert p["input"] == 1.75
-    assert p["output"] == 14.0
+def test_match_claude_opus_48():
+    p = match_model_pricing("claude-opus-4-8-20260528")
+    assert p["input"] == 5.0
+    assert p["output"] == 25.0
+    assert p["cache_read"] == 0.5
 
 
 def test_match_claude_opus_46():
