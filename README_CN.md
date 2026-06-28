@@ -184,7 +184,7 @@
 
 ### 前置条件
 
-- Python 3.8+
+- Python 3.10+
 - 已安装并使用过以下至少一种工具：Claude Code CLI、Gemini CLI、Codex CLI 或 Cursor
 
 ### 3 步搞定
@@ -210,6 +210,23 @@ pipx install cc-statistics
 
 # Homebrew（macOS / Linux）
 brew install androidZzT/tap/cc-statistics
+```
+
+### Windows 托盘开发预览
+
+Windows 托盘 MVP 位于 `desktop/cc-stats-tauri/`。它是一个 Tauri 平台壳，启动 `python -m cc_stats_web --no-browser --json`，提供托盘菜单，并打开现有 Web 仪表盘。统计、数据源发现、解析、定价和 API 响应仍然由 Python 负责。
+
+这个预览面向开发构建，不替代现有 macOS Swift 应用，也暂不包含 Python 打包、签名、自动更新或安装器打磨。
+
+```bash
+cd desktop/cc-stats-tauri
+npm install
+npm test
+npm run build:web
+
+cd src-tauri
+cargo test
+cargo check
 ```
 
 ---
@@ -243,6 +260,16 @@ cc-stats-app                  # 启动 macOS 状态栏应用
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | Git 变更 | 项目目录的 `git log --numstat` |
+
+### 路径覆盖（跨平台 / 测试）
+
+设置以下环境变量可从自定义位置读取源数据。请使用运行 `cc-stats` 的 shell 或环境可访问的路径。
+
+| 变量 | 作用 |
+|------|------|
+| `CC_STATS_CLAUDE_PROJECTS_DIR` | Claude Code 项目日志目录 |
+| `CC_STATS_CODEX_HOME` | Codex home；读取其下的 `sessions/` |
+| `CC_STATS_GEMINI_HOME` | Gemini home；读取其下的 `tmp/*/chats/` |
 
 ---
 

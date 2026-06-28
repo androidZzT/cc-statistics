@@ -45,6 +45,7 @@ def test_match_claude_opus_48():
     p = match_model_pricing("claude-opus-4-8-20260528")
     assert p["input"] == 5.0
     assert p["output"] == 25.0
+    assert p["cache_read"] == 0.5
 
 
 def test_match_claude_opus_46():

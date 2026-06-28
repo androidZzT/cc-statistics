@@ -73,17 +73,24 @@ class TestComputeCacheStats:
         # savings = 1_000_000 * (3.0 - 0.3) / 1_000_000 = $2.70
         assert result.savings_usd == pytest.approx(2.70)
 
-    def test_gemini_model_no_savings(self):
-        """Gemini 模型不计算节省费用"""
+    def test_gemini_model_savings(self):
+        """Gemini savings use the configured cache-read discount."""
         tu = TokenUsage(input_tokens=200, cache_read_input_tokens=800)
         result = compute_cache_stats(tu, {"gemini-2.5-pro": tu})
-        assert result.savings_usd == 0.0
+        assert result.savings_usd == pytest.approx(0.0009)
         # 但命中率仍然计算
         assert result.hit_rate == 0.8
         assert result.grade == "excellent"
 
+    def test_openai_model_savings(self):
+        """OpenAI cache-read tokens count toward estimated savings."""
+        tu = TokenUsage(input_tokens=200_000, cache_read_input_tokens=1_000_000)
+        result = compute_cache_stats(tu, {"gpt-5.4": tu})
+
+        assert result.savings_usd == pytest.approx(2.25)
+
     def test_mixed_models_savings(self):
-        """混合模型：只对 Claude 模型计算节省费用"""
+        """Mixed-model savings add each model's configured cache discount."""
         claude_tu = TokenUsage(input_tokens=100, cache_read_input_tokens=500)
         gemini_tu = TokenUsage(input_tokens=100, cache_read_input_tokens=500)
         total_tu = TokenUsage(input_tokens=200, cache_read_input_tokens=1000)
@@ -93,8 +100,10 @@ class TestComputeCacheStats:
             "gemini-2.5-pro": gemini_tu,
         }
         result = compute_cache_stats(total_tu, by_model)
-        # 只算 claude 的 500 tokens
-        expected = 500 * (3.0 - 0.3) / 1_000_000
+        expected = (
+            500 * (3.0 - 0.3) / 1_000_000
+            + 500 * (1.25 - 0.125) / 1_000_000
+        )
         assert result.savings_usd == pytest.approx(expected)
 
     def test_by_model_hit_rates(self):

@@ -18,6 +18,7 @@ from cc_stats.git_integration import (
     analyze_git_integration,
     parse_git_log,
 )
+from cc_stats.analyzer import _collect_git_stats
 
 
 def _dt(offset_hours: int = 0) -> datetime:
@@ -209,6 +210,20 @@ class TestParseGitLog:
 
 
 # ── analyze_git_integration ───────────────────────────────────
+
+class TestAnalyzerGitStats:
+    def test_collect_git_stats_decodes_git_output_as_utf8_with_replacement(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+
+        with patch("cc_stats.analyzer.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="")
+
+            _collect_git_stats(str(tmp_path), _dt(0), _dt(1))
+
+        kwargs = mock_run.call_args.kwargs
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
+
 
 class TestAnalyzeGitIntegration:
     def _make_stats(self, start_h: int, end_h: int, inp=1000, out=500, cache=100):

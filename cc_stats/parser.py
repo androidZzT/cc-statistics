@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 
 @dataclass
@@ -164,7 +167,19 @@ def _path_to_dirname(path: Path) -> str:
 
     例如 /Users/foo/bar → -Users-foo-bar
     """
-    return str(path.resolve()).replace("/", "-")
+    return str(path.resolve()).replace("\\", "-").replace("/", "-")
+
+
+def _normalized_project_path(path: Path | str) -> str:
+    try:
+        resolved = str(Path(path).expanduser().resolve())
+    except OSError:
+        resolved = str(Path(path).expanduser())
+    return os.path.normcase(resolved)
+
+
+def _home_dir() -> Path:
+    return Path.home()
 
 
 def _is_subagent_file(path: Path) -> bool:
@@ -203,12 +218,16 @@ def _claude_session_entry_files(project_path: Path) -> list[Path]:
     return top_level + orphan_subagents
 
 
-def find_sessions(project_dir: Path | None = None) -> list[Path]:
+def find_sessions(
+    project_dir: Path | None = None,
+    *,
+    projects_dir: Path | None = None,
+) -> list[Path]:
     """查找 ~/.claude/projects/ 下所有 JSONL 会话文件
 
     如果指定 project_dir，只返回匹配的项目。
     """
-    claude_projects = Path.home() / ".claude" / "projects"
+    claude_projects = projects_dir or _home_dir() / ".claude" / "projects"
     if not claude_projects.exists():
         return []
 
@@ -226,11 +245,15 @@ def find_sessions(project_dir: Path | None = None) -> list[Path]:
     return results
 
 
-def find_sessions_by_keyword(keyword: str) -> list[Path]:
+def find_sessions_by_keyword(
+    keyword: str,
+    *,
+    projects_dir: Path | None = None,
+) -> list[Path]:
     """按关键词模糊匹配项目，在目录名和 JSONL 中的 cwd 中搜索"""
     import json
 
-    claude_projects = Path.home() / ".claude" / "projects"
+    claude_projects = projects_dir or _home_dir() / ".claude" / "projects"
     if not claude_projects.exists():
         return []
 
@@ -683,9 +706,14 @@ def _read_codex_session_meta(path: Path) -> dict[str, Any]:
     return {}
 
 
-def find_codex_sessions(project_dir: Path | None = None) -> list[Path]:
+def find_codex_sessions(
+    project_dir: Path | None = None,
+    *,
+    codex_home_dir: Path | None = None,
+) -> list[Path]:
     """查找 ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl 会话文件"""
-    base = Path.home() / ".codex" / "sessions"
+    codex_home = codex_home_dir or _home_dir() / ".codex"
+    base = codex_home / "sessions"
     if not base.exists():
         return []
 
@@ -693,10 +721,7 @@ def find_codex_sessions(project_dir: Path | None = None) -> list[Path]:
     if project_dir is None:
         return all_files
 
-    try:
-        target = str(project_dir.expanduser().resolve())
-    except OSError:
-        target = str(project_dir)
+    target = _normalized_project_path(project_dir)
 
     results: list[Path] = []
     for path in all_files:
@@ -704,21 +729,22 @@ def find_codex_sessions(project_dir: Path | None = None) -> list[Path]:
         cwd = meta.get("cwd", "")
         if not isinstance(cwd, str) or not cwd:
             continue
-        try:
-            normalized = str(Path(cwd).expanduser().resolve())
-        except OSError:
-            normalized = cwd
+        normalized = _normalized_project_path(cwd)
         if normalized == target:
             results.append(path)
     return results
 
 
-def find_codex_sessions_by_keyword(keyword: str) -> list[Path]:
+def find_codex_sessions_by_keyword(
+    keyword: str,
+    *,
+    codex_home_dir: Path | None = None,
+) -> list[Path]:
     """按关键词搜索 Codex 会话（路径/cwd/用户消息内容）"""
     keyword_lower = keyword.lower()
     results: list[Path] = []
 
-    for path in find_codex_sessions():
+    for path in find_codex_sessions(codex_home_dir=codex_home_dir):
         if keyword_lower in str(path).lower():
             results.append(path)
             continue
@@ -845,6 +871,110 @@ def parse_gemini_json(path: Path) -> Session:
     )
 
 
+def parse_gemini_jsonl(path: Path) -> Session:
+    """Parse Gemini CLI JSONL session files written under ~/.gemini/tmp/*/chats."""
+    session_id = path.stem
+    project_path = ""
+    messages: list[Message] = []
+
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if "sessionId" in record:
+                session_id = record.get("sessionId") or session_id
+                if not project_path:
+                    project_path = _gemini_jsonl_project_path(path)
+                continue
+
+            msg_type = record.get("type", "")
+            timestamp = record.get("timestamp", "")
+            if msg_type == "user":
+                messages.append(Message(
+                    role="user",
+                    timestamp=timestamp,
+                    content=_extract_gemini_content(record.get("content")),
+                    session_id=session_id,
+                    message_id=record.get("id", ""),
+                ))
+            elif msg_type == "gemini":
+                tool_calls: list[ToolCall] = []
+                for tc in record.get("toolCalls", []) or []:
+                    if not isinstance(tc, dict):
+                        continue
+                    raw_name = tc.get("name", "")
+                    mapped_name = _GEMINI_TOOL_MAP.get(raw_name, raw_name)
+                    tool_calls.append(ToolCall(
+                        name=mapped_name,
+                        input=tc.get("args", {}),
+                        timestamp=tc.get("timestamp", timestamp),
+                        tool_use_id=tc.get("id", ""),
+                    ))
+
+                usage: dict[str, Any] = {}
+                tokens = record.get("tokens")
+                if isinstance(tokens, dict):
+                    usage = {
+                        "input_tokens": tokens.get("input", 0),
+                        "output_tokens": tokens.get("output", 0),
+                        "cache_read_input_tokens": tokens.get("cached", 0),
+                        "cache_creation_input_tokens": 0,
+                    }
+
+                messages.append(Message(
+                    role="assistant",
+                    timestamp=timestamp,
+                    content=_extract_gemini_content(record.get("content")),
+                    model=record.get("model"),
+                    usage=usage,
+                    tool_calls=tool_calls,
+                    session_id=session_id,
+                    message_id=record.get("id", ""),
+                ))
+
+    if not project_path:
+        project_path = _gemini_jsonl_project_path(path)
+
+    return Session(
+        session_id=session_id,
+        project_path=project_path,
+        file_path=path,
+        source="gemini",
+        messages=messages,
+    )
+
+
+def _gemini_jsonl_project_path(path: Path) -> str:
+    project_root = path.parent.parent / ".project_root"
+    try:
+        value = project_root.read_text(encoding="utf-8").strip()
+        if value:
+            return value
+    except OSError:
+        pass
+
+    project_slug = path.parent.parent.name
+    projects_json = path.parent.parent.parent.parent / "projects.json"
+    try:
+        data = json.loads(projects_json.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+
+    projects = data.get("projects", {})
+    if not isinstance(projects, dict):
+        return ""
+    for project_path, slug in projects.items():
+        if slug == project_slug:
+            return project_path
+    return ""
+
+
 def _extract_gemini_content(raw: Any) -> Any:
     """提取 Gemini 消息内容（可能是字符串或 Part 列表）"""
     if isinstance(raw, str):
@@ -858,9 +988,13 @@ def _extract_gemini_content(raw: Any) -> Any:
     return raw or ""
 
 
-def find_gemini_sessions() -> list[Path]:
+def find_gemini_sessions(
+    *,
+    gemini_home_dir: Path | None = None,
+) -> list[Path]:
     """查找 ~/.gemini/tmp/*/chats/*.json 会话文件"""
-    gemini_dir = Path.home() / ".gemini" / "tmp"
+    gemini_home = gemini_home_dir or _home_dir() / ".gemini"
+    gemini_dir = gemini_home / "tmp"
     if not gemini_dir.exists():
         return []
 
@@ -868,15 +1002,19 @@ def find_gemini_sessions() -> list[Path]:
     for chats_dir in gemini_dir.glob("*/chats"):
         if not chats_dir.is_dir():
             continue
-        for json_file in sorted(chats_dir.glob("*.json")):
-            results.append(json_file)
+        results.extend(sorted(chats_dir.glob("*.json")))
+        results.extend(sorted(chats_dir.glob("*.jsonl")))
 
     return results
 
 
-def find_gemini_sessions_by_keyword(keyword: str) -> list[Path]:
+def find_gemini_sessions_by_keyword(
+    keyword: str,
+    *,
+    gemini_home_dir: Path | None = None,
+) -> list[Path]:
     """按关键词搜索 Gemini 会话（在 directories 和内容中搜索）"""
-    all_sessions = find_gemini_sessions()
+    all_sessions = find_gemini_sessions(gemini_home_dir=gemini_home_dir)
     if not all_sessions:
         return []
 
@@ -885,25 +1023,338 @@ def find_gemini_sessions_by_keyword(keyword: str) -> list[Path]:
 
     for path in all_sessions:
         try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            dirs = data.get("directories", [])
-            if any(keyword_lower in d.lower() for d in dirs):
+            session = parse_session_file(path)
+            if keyword_lower in session.project_path.lower():
                 results.append(path)
                 continue
-            summary = data.get("summary", "")
-            if summary and keyword_lower in summary.lower():
+            content = "\n".join(
+                str(message.content)
+                for message in session.messages
+                if message.content
+            )
+            if keyword_lower in content.lower():
                 results.append(path)
-        except (json.JSONDecodeError, OSError):
+        except (ValueError, OSError):
             continue
 
     return results
 
 
+def _looks_like_gemini_jsonl(path: Path) -> bool:
+    if path.suffix != ".jsonl" or path.parent.name != "chats":
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                obj = json.loads(line)
+                return "sessionId" in obj and "projectHash" in obj
+    except (json.JSONDecodeError, OSError):
+        return False
+    return False
+
+
+# Cursor SQLite parsing
+
+
+def find_cursor_sessions(
+    *,
+    cursor_state_db_path: Path | None = None,
+) -> list[Path]:
+    db_path = cursor_state_db_path or _home_dir() / ".config" / "Cursor" / "User" / "globalStorage" / "state.vscdb"
+    return [db_path] if db_path.exists() else []
+
+
+def parse_cursor_db(path: Path) -> Session:
+    """Parse Cursor's global SQLite state DB as one aggregate session."""
+    sessions = parse_cursor_sessions(path)
+    messages: list[Message] = []
+    project_path = ""
+    for session in sessions:
+        if not project_path and session.project_path:
+            project_path = session.project_path
+        messages.extend(session.messages)
+    return Session(
+        session_id="cursor",
+        project_path=project_path or "Cursor",
+        file_path=path,
+        source="cursor",
+        messages=messages,
+    )
+
+
+def parse_cursor_sessions(path: Path) -> list[Session]:
+    """Parse Cursor composer sessions from User/globalStorage/state.vscdb."""
+    if not path.exists():
+        return []
+
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return []
+
+    try:
+        rows = con.execute(
+            "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'"
+        ).fetchall()
+        bubbles_by_composer = _cursor_bubbles_by_composer(con)
+        sessions: list[Session] = []
+        for key, raw_value in rows:
+            composer = _cursor_json(raw_value)
+            if not isinstance(composer, dict):
+                continue
+            composer_id = str(composer.get("composerId") or str(key).split(":", 1)[-1])
+            session = _parse_cursor_composer(
+                bubbles_by_composer.get(composer_id, {}),
+                path,
+                str(key),
+                composer,
+            )
+            if session is not None:
+                sessions.append(session)
+        return sorted(
+            sessions,
+            key=lambda s: next((m.timestamp for m in s.messages if m.timestamp), ""),
+        )
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+
+
+def _parse_cursor_composer(
+    bubbles: dict[str, dict[str, Any]],
+    db_path: Path,
+    key: str,
+    composer: dict[str, Any],
+) -> Session | None:
+    composer_id = str(composer.get("composerId") or key.split(":", 1)[-1])
+    if not composer_id:
+        return None
+
+    model = _cursor_model(composer)
+    default_ts = _cursor_timestamp(composer.get("createdAt"))
+    messages: list[Message] = []
+    project_path = ""
+
+    headers = composer.get("fullConversationHeadersOnly")
+    if not isinstance(headers, list) or not headers:
+        conversation_map = composer.get("conversationMap")
+        if isinstance(conversation_map, dict):
+            headers = [
+                {"bubbleId": bubble_id}
+                for bubble_id in conversation_map.keys()
+                if isinstance(bubble_id, str)
+            ]
+        else:
+            headers = []
+
+    for header in headers:
+        if not isinstance(header, dict):
+            continue
+        bubble_id = header.get("bubbleId")
+        if not isinstance(bubble_id, str) or not bubble_id:
+            continue
+        bubble = bubbles.get(bubble_id, {})
+        if not isinstance(bubble, dict):
+            bubble = {}
+        bubble_type = bubble.get("type", header.get("type"))
+        role = "user" if bubble_type == 1 else "assistant" if bubble_type == 2 else ""
+        if not role:
+            continue
+
+        if not project_path:
+            project_path = _cursor_project_path(bubble) or _cursor_project_path(composer)
+
+        timestamp = _cursor_timestamp(bubble.get("createdAt")) or default_ts
+        bubble_model = _cursor_model(bubble) or model
+        usage: dict[str, Any] = {}
+        if role == "assistant":
+            usage = _cursor_usage(bubble.get("tokenCount"))
+
+        messages.append(Message(
+            role=role,
+            timestamp=timestamp,
+            content=_cursor_text(bubble),
+            model=bubble_model or None,
+            usage=usage,
+            session_id=composer_id,
+            message_id=bubble_id,
+        ))
+
+    added = _to_int(composer.get("totalLinesAdded", 0))
+    removed = _to_int(composer.get("totalLinesRemoved", 0))
+    if added or removed:
+        timestamp = _cursor_timestamp(composer.get("lastUpdatedAt")) or default_ts
+        messages.append(Message(
+            role="assistant",
+            timestamp=timestamp,
+            content="",
+            model=model or None,
+            tool_calls=[
+                ToolCall(
+                    name="Edit",
+                    input={
+                        "target_file": "cursor://composer",
+                        "old_string": _cursor_line_blob(removed),
+                        "new_string": _cursor_line_blob(added),
+                    },
+                    timestamp=timestamp,
+                )
+            ],
+            is_meta=True,
+            session_id=composer_id,
+        ))
+
+    if not messages:
+        return None
+    if not project_path:
+        project_path = _cursor_project_path(composer) or "Cursor"
+
+    return Session(
+        session_id=composer_id,
+        project_path=project_path,
+        file_path=db_path,
+        source="cursor",
+        messages=messages,
+    )
+
+
+def _cursor_bubbles_by_composer(
+    con: sqlite3.Connection,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    bubbles: dict[str, dict[str, dict[str, Any]]] = {}
+    try:
+        rows = con.execute(
+            "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%'",
+        ).fetchall()
+    except sqlite3.Error:
+        return bubbles
+
+    for key, raw_value in rows:
+        parts = str(key).split(":", 2)
+        if len(parts) != 3:
+            continue
+        _, composer_id, bubble_id = parts
+        bubble = _cursor_json(raw_value)
+        if isinstance(bubble, dict):
+            bubbles.setdefault(composer_id, {})[bubble_id] = bubble
+    return bubbles
+
+
+def _cursor_json(value: Any) -> Any:
+    if isinstance(value, bytes):
+        text = value.decode("utf-8", errors="replace")
+    else:
+        text = str(value)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _cursor_model(record: dict[str, Any]) -> str:
+    model_info = record.get("modelInfo")
+    if isinstance(model_info, dict):
+        model_name = model_info.get("modelName")
+        if isinstance(model_name, str) and model_name:
+            return model_name
+    model_config = record.get("modelConfig")
+    if isinstance(model_config, dict):
+        model_name = model_config.get("modelName")
+        if isinstance(model_name, str) and model_name:
+            return model_name
+    return ""
+
+
+def _cursor_usage(token_count: Any) -> dict[str, Any]:
+    if not isinstance(token_count, dict):
+        return {}
+    return {
+        "input_tokens": _to_int(token_count.get("inputTokens", 0)),
+        "output_tokens": _to_int(token_count.get("outputTokens", 0)),
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+
+
+def _cursor_timestamp(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        try:
+            from datetime import datetime, timezone
+
+            return datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat()
+        except (OSError, ValueError):
+            return ""
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def _cursor_text(record: dict[str, Any]) -> str:
+    text = record.get("text")
+    if isinstance(text, str) and text:
+        return text
+    rich = record.get("richText")
+    if isinstance(rich, str) and rich:
+        return rich
+    return ""
+
+
+def _cursor_project_path(record: dict[str, Any]) -> str:
+    uris = record.get("workspaceUris")
+    if isinstance(uris, list):
+        for uri in uris:
+            if not isinstance(uri, str):
+                continue
+            path = _file_uri_to_path(uri)
+            if path:
+                return path
+
+    workspace = record.get("workspaceProjectDir")
+    if isinstance(workspace, str) and workspace:
+        return workspace
+
+    attached = record.get("allAttachedFileCodeChunksUris")
+    if isinstance(attached, list):
+        for uri in attached:
+            if isinstance(uri, str):
+                path = _file_uri_to_path(uri)
+                if path:
+                    return str(Path(path).parent)
+
+    return ""
+
+
+def _file_uri_to_path(uri: str) -> str:
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        return ""
+    raw_path = unquote(parsed.path)
+    if os.name == "nt" and raw_path.startswith("/") and len(raw_path) > 2 and raw_path[2] == ":":
+        raw_path = raw_path[1:]
+    return os.path.normpath(raw_path)
+
+
+def _cursor_line_blob(count: int) -> str:
+    if count <= 0:
+        return ""
+    return "\n".join("x" for _ in range(count))
+
+
+def _looks_like_cursor_db(path: Path) -> bool:
+    return path.name == "state.vscdb"
+
+
 def parse_session_file(path: Path) -> Session:
     """自动识别并解析会话文件（Claude / Codex / Gemini）"""
+    if _looks_like_cursor_db(path):
+        return parse_cursor_db(path)
     if path.suffix == ".json":
         return parse_gemini_json(path)
+    if _looks_like_gemini_jsonl(path):
+        return parse_gemini_jsonl(path)
     if _looks_like_codex_jsonl(path):
         return parse_codex_jsonl(path)
     return parse_jsonl(path)

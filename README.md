@@ -184,7 +184,7 @@ Most tools only answer this for Claude Code. cc-statistics answers it for all fo
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.10+
 - At least one of: Claude Code CLI, Gemini CLI, Codex CLI, or Cursor installed and used
 
 ### 3 steps
@@ -210,6 +210,23 @@ pipx install cc-statistics
 
 # Homebrew (macOS / Linux)
 brew install androidZzT/tap/cc-statistics
+```
+
+### Windows Tray Development Preview
+
+A Windows tray MVP lives in `desktop/cc-stats-tauri/`. It is a Tauri shell that starts the Python web dashboard with `python -m cc_stats_web --no-browser --json`, shows a tray menu, and opens the existing dashboard UI. Statistics, source discovery, parsing, pricing, and API responses stay in Python.
+
+This preview is for development builds. It does not replace the macOS Swift app, and it does not bundle Python, signing, automatic updates, or installer polish yet.
+
+```bash
+cd desktop/cc-stats-tauri
+npm install
+npm test
+npm run build:web
+
+cd src-tauri
+cargo test
+cargo check
 ```
 
 ---
@@ -243,6 +260,16 @@ All data is read from local files. Nothing is sent over the network.
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` |
 | Git Changes | `git log --numstat` in project directory |
+
+### Path Overrides (Cross-Platform / Testing)
+
+Set these environment variables to read source data from custom locations. Use paths visible to the shell or environment where `cc-stats` runs.
+
+| Variable | Purpose |
+|----------|---------|
+| `CC_STATS_CLAUDE_PROJECTS_DIR` | Claude Code project log directory |
+| `CC_STATS_CODEX_HOME` | Codex home; `sessions/` is read below it |
+| `CC_STATS_GEMINI_HOME` | Gemini home; `tmp/*/chats/` is read below it |
 
 ---
 

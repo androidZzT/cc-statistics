@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CC Statistics",
+  "version": "0.1.0",
+  "identifier": "com.androidzzt.ccstatistics.windows",
+  "build": {
+    "beforeDevCommand": "npm run dev:web",
+    "beforeBuildCommand": "npm run build:web",
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "CC Statistics",
+        "width": 1100,
+        "height": 780,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../../cc_stats": "python/cc_stats",
+      "../../../cc_stats_web": "python/cc_stats_web"
+    },
+    "targets": "all"
+  }
+}

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .parser import Message, Session, ToolCall
-from .pricing import is_claude_model, match_model_pricing
+from .pricing import match_model_pricing
 
 # 文件扩展名 → 语言映射
 EXT_TO_LANG: dict[str, str] = {
@@ -291,10 +291,8 @@ def compute_cache_stats(
     # savings = cache_read_tokens * (input_price - cache_read_price) / 1M
     savings_usd = 0.0
     for model, usage in token_by_model.items():
-        if not is_claude_model(model):
-            continue
         pricing = match_model_pricing(model)
-        savings_per_million = pricing["input"] - pricing["cache_read"]
+        savings_per_million = max(pricing["input"] - pricing["cache_read"], 0.0)
         savings_usd += usage.cache_read_input_tokens * savings_per_million / 1_000_000
 
     # 按模型拆分命中率
@@ -368,6 +366,8 @@ def _collect_git_stats(
             cwd=project_path,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
         if result.returncode != 0:
@@ -467,7 +467,7 @@ def classify_work_mode(user_message_count: int, total_added: int, total_removed:
     return "Building"
 
 
-def analyze_session(session: Session) -> SessionStats:
+def analyze_session(session: Session, *, include_git: bool = True) -> SessionStats:
     """分析单个会话，返回统计结果"""
     stats = SessionStats(
         session_id=session.session_id,
@@ -721,7 +721,7 @@ def analyze_session(session: Session) -> SessionStats:
     stats.lines_by_lang = dict(lang_stats)
 
     # -------- 4b. Git 变更统计 --------
-    if stats.start_time and stats.end_time and session.project_path:
+    if include_git and stats.start_time and stats.end_time and session.project_path:
         git = _collect_git_stats(
             session.project_path, stats.start_time, stats.end_time
         )
