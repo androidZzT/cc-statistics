@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.1.0 (2026-06-29)
+
+### Windows Tray
+- Add the Windows Tauri tray MVP with a bundled dashboard shell and single-instance guard.
+- Start the Python web dashboard in desktop-shell mode with structured startup output and health monitoring.
+- Add local-only external browser opening and clearer failed/running/stopped status handling.
+
+### Sources & Dashboard
+- Add a shared source registry for Claude, Codex, Gemini, and Cursor session sources.
+- Improve dashboard caching and source/project filtering for the cross-platform shell.
+- Add Gemini JSONL and Cursor composer session parsing coverage.
+
+### Release
+- Sync Windows tray shell package, Cargo, and Tauri versions with the cc-statistics release version.
+- Link WebKit in the macOS release build workflow to match the local wheel build script.
+
 ## v1.0.4 (2026-06-12)
 
 ### Pricing

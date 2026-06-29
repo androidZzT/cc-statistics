@@ -44,6 +44,7 @@ jobs:
               -framework SwiftUI \
               -framework Carbon \
               -framework UserNotifications \
+              -framework WebKit \
               -lsqlite3 \
               -O \
               -target ${{ matrix.arch }}-apple-macosx12.0
