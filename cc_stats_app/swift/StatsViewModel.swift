@@ -69,6 +69,8 @@ final class StatsViewModel: ObservableObject {
     @Published var isTokenExpired: Bool = false
     @Published var burnAlertLevel5h: BurnAlertLevel = .none
     @Published var burnAlertLevel7d: BurnAlertLevel = .none
+    @Published var loadingProgress: Double = 0
+    @Published var loadingPhase: String = ""
 
     enum StatsTab: String, CaseIterable {
         case claudeCode = "Claude Code"
@@ -92,6 +94,11 @@ final class StatsViewModel: ObservableObject {
     private static let hugeDatasetByteThreshold: Int64 = 512 * 1024 * 1024
     private static let hugeDatasetRecentDays = 30
     private static let chartHistoryDays = 14
+    private static let firstPaintFileBatchSize = 24
+    private static let fastInitialFileByteThreshold: Int64 = 2 * 1024 * 1024
+    private static let progressiveInitialDelayNanoseconds: UInt64 = 2_000_000_000
+    private static let progressiveChunkSize = 8
+    private static let progressiveChunkPauseNanoseconds: UInt64 = 900_000_000
     private var refreshTimer: Timer?
     private var refreshTask: Task<Void, Never>?
     /// 刷新代次：每次 refresh/setTimeFilter 递增，
@@ -104,9 +111,15 @@ final class StatsViewModel: ObservableObject {
             guard isPanelVisible != oldValue else { return }
             if isPanelVisible {
                 startAutoRefresh()
-                refresh()
+                triggerProgressiveInitialLoadIfNeeded()
+                // 首次启动仍在解析时不要叠加第二轮全量刷新，否则大数据量会把首屏拖住。
+                if !(isLoading && stats == nil && cachedSessions.isEmpty) {
+                    refresh()
+                }
             } else {
                 pauseAutoRefresh()
+                progressiveLoadTask?.cancel()
+                progressiveLoadTask = nil
             }
         }
     }
@@ -127,6 +140,9 @@ final class StatsViewModel: ObservableObject {
     private var lastRateLimitFetch: Date?
     private var conversationLoadTask: Task<Void, Never>?
     private var historicalLoadTask: Task<Void, Never>?
+    private var progressiveLoadTask: Task<Void, Never>?
+    private var deferredInitialFilePaths: [String] = []
+    private var didFinishInitialRefresh = false
 
     // MARK: - Version Update
     @Published var updateAvailable: String?  // 新版本号（nil = 无更新）
@@ -135,15 +151,26 @@ final class StatsViewModel: ObservableObject {
         // 初始加载数据（状态栏需要），但不启动定时刷新。
         // 定时刷新仅在面板可见时运行（通过 isPanelVisible didSet 控制）。
         isLoading = true
+        updateLoadingProgress(0.04, phase: Self.loadingText(zh: "扫描会话文件", en: "Scanning sessions"))
         let gen = refreshGeneration
-        Task {
-            defer { if gen == refreshGeneration { isLoading = false } }
-            await fullRefresh()
+        refreshTask = Task {
+            defer {
+                if gen == refreshGeneration {
+                    isLoading = false
+                    updateLoadingProgress(1.0, phase: Self.loadingText(zh: "加载完成", en: "Loaded"))
+                }
+                didFinishInitialRefresh = true
+            }
+            await fullRefresh(generation: gen)
         }
         startVersionCheck()
     }
 
     deinit {
+        refreshTask?.cancel()
+        progressiveLoadTask?.cancel()
+        historicalLoadTask?.cancel()
+        conversationLoadTask?.cancel()
         refreshTimer?.invalidate()
         versionCheckTimer?.invalidate()
     }
@@ -154,11 +181,17 @@ final class StatsViewModel: ObservableObject {
     func refresh() {
         refreshTask?.cancel()
         isLoading = true
+        updateLoadingProgress(0.04, phase: Self.loadingText(zh: "扫描会话文件", en: "Scanning sessions"))
         refreshGeneration &+= 1
         let gen = refreshGeneration
         refreshTask = Task {
-            defer { if gen == refreshGeneration { isLoading = false } }
-            await fullRefresh()
+            defer {
+                if gen == refreshGeneration {
+                    isLoading = false
+                    updateLoadingProgress(1.0, phase: Self.loadingText(zh: "加载完成", en: "Loaded"))
+                }
+            }
+            await fullRefresh(generation: gen)
         }
     }
 
@@ -183,10 +216,16 @@ final class StatsViewModel: ObservableObject {
         if !cachedSessions.isEmpty {
             refreshTask?.cancel()
             isLoading = true
+            updateLoadingProgress(0.72, phase: Self.loadingText(zh: "更新筛选结果", en: "Updating filters"))
             refreshGeneration &+= 1
             let gen = refreshGeneration
             refreshTask = Task {
-                defer { if gen == refreshGeneration { isLoading = false } }
+                defer {
+                    if gen == refreshGeneration {
+                        isLoading = false
+                        updateLoadingProgress(1.0, phase: Self.loadingText(zh: "加载完成", en: "Loaded"))
+                    }
+                }
                 await applyFilterAndUpdate()
             }
         } else {
@@ -208,12 +247,26 @@ final class StatsViewModel: ObservableObject {
         }
     }
 
+    private func updateLoadingProgress(_ progress: Double, phase: String) {
+        let clamped = min(max(progress, 0), 1)
+        // 只允许同一轮加载向前走，避免阶段切换时进度条来回跳。
+        if clamped >= loadingProgress || clamped <= 0.05 || !isLoading {
+            loadingProgress = clamped
+        }
+        loadingPhase = phase
+    }
+
+    private static func loadingText(zh: String, en: String) -> String {
+        L10n.isChinese ? zh : en
+    }
+
     // MARK: - Core Refresh Pipeline
 
     /// 完整刷新 = 磁盘加载（重） + 内存筛选（轻）
     /// isLoading 由调用方设置为 true，applyFilterAndUpdate 通过 generation 检查清除。
-    private func fullRefresh() async {
-        await loadData()
+    private func fullRefresh(generation: UInt) async {
+        await loadData(generation: generation)
+        guard !Task.isCancelled else { return }
         await applyFilterAndUpdate()
     }
 
@@ -222,7 +275,7 @@ final class StatsViewModel: ObservableObject {
     /// 从磁盘解析 sessions 并缓存。
     /// - 缓存为空或 source/project 变更时：全量解析
     /// - 缓存存在且 source/project 未变：增量检查文件修改时间，只解析变化文件
-    private func loadData() async {
+    private func loadData(generation: UInt) async {
         let currentSource = selectedSource
         let currentProject = selectedProject
 
@@ -232,10 +285,14 @@ final class StatsViewModel: ObservableObject {
 
         if needFullReparse {
             // 全量解析路径（支持渐进式首屏渲染）
+            progressiveLoadTask?.cancel()
+            progressiveLoadTask = nil
+            deferredInitialFilePaths = []
             if currentProject == nil {
                 let (loadedProjects, currentModTimes, changedFiles) = await Task.detached(priority: .userInitiated) {
                     Self.incrementalCheckForSource(currentSource, project: nil, oldModTimes: [:])
                 }.value
+                updateLoadingProgress(0.18, phase: Self.loadingText(zh: "发现会话文件", en: "Indexing session files"))
 
                 let sortedFiles = changedFiles.sorted {
                     (currentModTimes[$0] ?? .distantPast) > (currentModTimes[$1] ?? .distantPast)
@@ -243,6 +300,7 @@ final class StatsViewModel: ObservableObject {
                 let totalBytes = await Task.detached(priority: .utility) {
                     Self.totalFileBytes(sortedFiles)
                 }.value
+                updateLoadingProgress(0.28, phase: Self.loadingText(zh: "准备首屏数据", en: "Preparing first paint"))
 
                 cachedProjects = loadedProjects
                 cachedSource = currentSource
@@ -274,46 +332,44 @@ final class StatsViewModel: ObservableObject {
                     }
                 }
 
-                let firstBatchSize = min(120, initialFiles.count)
+                initialFiles = Self.prioritizeFastFirstPaintFiles(initialFiles)
+
+                let firstBatchSize = min(Self.firstPaintFileBatchSize, initialFiles.count)
                 let firstBatch = Array(initialFiles.prefix(firstBatchSize))
                 let remaining = Array(initialFiles.dropFirst(firstBatchSize))
 
+                updateLoadingProgress(0.42, phase: Self.loadingText(zh: "解析最近会话", en: "Parsing recent sessions"))
                 let firstSessions = await Task.detached(priority: .userInitiated) {
                     Self.parseSessions(forFiles: firstBatch, source: currentSource, compactForMemory: true)
                 }.value
+                updateLoadingProgress(0.68, phase: Self.loadingText(zh: "生成统计结果", en: "Building statistics"))
 
                 cachedSessions = firstSessions
                 cachedSkillStats = SessionAnalyzer.collectAllSkillStats(firstSessions)
                 deferredHistoricalFilePaths = deferredFiles
 
                 // 先渲染第一屏，避免等待全量文件解析完成
-                if !remaining.isEmpty {
-                    await applyFilterAndUpdate(lightweight: true)
+                await applyFilterAndUpdate(lightweight: true)
+                if generation == refreshGeneration {
+                    isLoading = false
+                    updateLoadingProgress(1.0, phase: Self.loadingText(zh: "首屏已就绪", en: "First paint ready"))
                 }
-
-                if !remaining.isEmpty {
-                    var allSessions = firstSessions
-                    let chunkSize = 220
-                    var idx = 0
-                    while idx < remaining.count {
-                        if Task.isCancelled { return }
-                        let end = min(idx + chunkSize, remaining.count)
-                        let chunk = Array(remaining[idx..<end])
-                        let parsedChunk = await Task.detached(priority: .utility) {
-                            Self.parseSessions(forFiles: chunk, source: currentSource, compactForMemory: true)
-                        }.value
-                        allSessions.append(contentsOf: parsedChunk)
-                        idx = end
-                    }
-                    cachedSessions = allSessions
-                    cachedSkillStats = SessionAnalyzer.collectAllSkillStats(allSessions)
+                deferredInitialFilePaths = remaining
+                if isPanelVisible {
+                    startProgressiveInitialLoad(
+                        remaining,
+                        sourceAtStart: currentSource,
+                        projectAtStart: currentProject
+                    )
                 }
             } else {
                 // 指定项目时按原路径解析，保证路径筛选语义准确
+                updateLoadingProgress(0.32, phase: Self.loadingText(zh: "解析项目会话", en: "Parsing project sessions"))
                 let (loadedProjects, sessions, fileModTimes) = await Task.detached(priority: .userInitiated) {
                     Self.fullParseForSource(currentSource, project: currentProject)
                 }.value
 
+                updateLoadingProgress(0.72, phase: Self.loadingText(zh: "压缩历史会话", en: "Compacting history"))
                 let compacted = await Task.detached(priority: .utility) {
                     Self.compactSessionsForMemory(sessions)
                 }.value
@@ -333,6 +389,7 @@ final class StatsViewModel: ObservableObject {
             // 增量检查路径：source/project 未变，只检查文件是否有变化
             let oldModTimes = cachedFileModTimes
 
+            updateLoadingProgress(0.24, phase: Self.loadingText(zh: "检查新增会话", en: "Checking for changes"))
             let (loadedProjects, currentModTimes, changedFiles) = await Task.detached(priority: .userInitiated) {
                 Self.incrementalCheckForSource(currentSource, project: currentProject, oldModTimes: oldModTimes)
             }.value
@@ -344,6 +401,7 @@ final class StatsViewModel: ObservableObject {
             guard !changedFiles.isEmpty else { return }
 
             // 只解析变化的文件
+            updateLoadingProgress(0.52, phase: Self.loadingText(zh: "解析新增会话", en: "Parsing changes"))
             let newSessions = await Task.detached(priority: .userInitiated) {
                 Self.parseSessions(forFiles: changedFiles, source: currentSource, compactForMemory: true)
             }.value
@@ -376,6 +434,33 @@ final class StatsViewModel: ObservableObject {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         return calendar.date(byAdding: .day, value: -(days - 1), to: today) ?? .distantPast
+    }
+
+    private static func prioritizeFastFirstPaintFiles(_ paths: [String]) -> [String] {
+        guard paths.count > firstPaintFileBatchSize else { return paths }
+
+        var fast: [String] = []
+        var slow: [String] = []
+        for path in paths {
+            if fileByteSize(path) <= fastInitialFileByteThreshold {
+                fast.append(path)
+            } else {
+                slow.append(path)
+            }
+        }
+
+        if fast.isEmpty {
+            return paths.sorted { fileByteSize($0) < fileByteSize($1) }
+        }
+        return fast + slow
+    }
+
+    private static func fileByteSize(_ path: String) -> Int64 {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path) else { return 0 }
+        if let size = attrs[.size] as? NSNumber { return size.int64Value }
+        if let size = attrs[.size] as? Int64 { return size }
+        if let size = attrs[.size] as? Int { return Int64(size) }
+        return 0
     }
 
     nonisolated private static func totalFileBytes(_ paths: [String]) -> Int64 {
@@ -889,7 +974,81 @@ final class StatsViewModel: ObservableObject {
         NotificationManager.shared.send(title: title, body: body)
     }
 
+    private func startProgressiveInitialLoad(
+        _ filePaths: [String],
+        sourceAtStart: DataSource,
+        projectAtStart: ProjectInfo?
+    ) {
+        guard !filePaths.isEmpty else { return }
+        guard isPanelVisible else { return }
+        progressiveLoadTask?.cancel()
+
+        progressiveLoadTask = Task { [filePaths] in
+            defer { self.progressiveLoadTask = nil }
+
+            try? await Task.sleep(nanoseconds: Self.progressiveInitialDelayNanoseconds)
+
+            let chunkSize = Self.progressiveChunkSize
+            var idx = 0
+            var didAppend = false
+
+            while idx < filePaths.count {
+                if Task.isCancelled { return }
+                let end = min(idx + chunkSize, filePaths.count)
+                let chunk = Array(filePaths[idx..<end])
+                self.deferredInitialFilePaths = Array(filePaths[idx..<filePaths.count])
+                let parsedChunk = await Task.detached(priority: .utility) {
+                    Self.parseSessions(forFiles: chunk, source: sourceAtStart, compactForMemory: true)
+                }.value
+                if Task.isCancelled { return }
+                guard self.selectedSource == sourceAtStart, self.selectedProject == projectAtStart else { return }
+                guard self.isPanelVisible else { return }
+
+                if !parsedChunk.isEmpty {
+                    self.cachedSessions.append(contentsOf: parsedChunk)
+                    didAppend = true
+                }
+
+                idx = end
+                self.deferredInitialFilePaths = Array(filePaths[idx..<filePaths.count])
+                try? await Task.sleep(nanoseconds: Self.progressiveChunkPauseNanoseconds)
+            }
+
+            guard didAppend else { return }
+            guard self.selectedSource == sourceAtStart, self.selectedProject == projectAtStart else { return }
+
+            let sessions = self.cachedSessions
+            let skillStats = await Task.detached(priority: .utility) {
+                SessionAnalyzer.collectAllSkillStats(sessions)
+            }.value
+            if Task.isCancelled { return }
+            guard self.selectedSource == sourceAtStart, self.selectedProject == projectAtStart else { return }
+
+            self.cachedSkillStats = skillStats
+            Self.releaseMemoryPressureIfPossible()
+            await self.applyFilterAndUpdate()
+        }
+    }
+
+    private func triggerProgressiveInitialLoadIfNeeded() {
+        guard isPanelVisible else { return }
+        guard progressiveLoadTask == nil else { return }
+        guard !deferredInitialFilePaths.isEmpty else { return }
+
+        let paths = deferredInitialFilePaths
+        startProgressiveInitialLoad(
+            paths,
+            sourceAtStart: selectedSource,
+            projectAtStart: selectedProject
+        )
+    }
+
     private func triggerDeferredHistoricalLoadIfNeeded() {
+        // Keep menu-bar startup lightweight. Historical backfill can be expensive
+        // on large Codex datasets, so only run it when the visible dashboard
+        // explicitly needs all-time history.
+        guard didFinishInitialRefresh else { return }
+        guard isPanelVisible, timeFilter == .all else { return }
         guard historicalLoadTask == nil else { return }
         guard !deferredHistoricalFilePaths.isEmpty else { return }
 
@@ -988,11 +1147,14 @@ final class StatsViewModel: ObservableObject {
         cachedProject = nil
         cachedFileModTimes = [:]
         cachedSkillStats = [:]
+        deferredInitialFilePaths = []
         deferredHistoricalFilePaths = []
         conversationLoadTask?.cancel()
         conversationLoadTask = nil
         historicalLoadTask?.cancel()
         historicalLoadTask = nil
+        progressiveLoadTask?.cancel()
+        progressiveLoadTask = nil
         conversationSessions = []
         isConversationLoading = false
         GitStatsCollector.shared.clearCache()

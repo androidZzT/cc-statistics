@@ -142,27 +142,33 @@ struct DashboardView: View {
             // Loading overlay
             ZStack {
                 if viewModel.isLoading && viewModel.stats != nil {
-                    Color.black.opacity(0.4)
-                        .ignoresSafeArea()
-
-                    VStack(spacing: 16) {
+                    HStack(spacing: 8) {
                         TimelineView(.animation) { timeline in
                             Circle()
                                 .trim(from: 0, to: 0.7)
                                 .stroke(Theme.cyan, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                                .frame(width: 40, height: 40)
+                                .frame(width: 14, height: 14)
                                 .rotationEffect(.degrees(timeline.date.timeIntervalSince1970.truncatingRemainder(dividingBy: 3.6) * 100))
                         }
 
-                        Text(L10n.loading)
-                            .font(.system(size: 13, weight: .semibold))
+                        Text(viewModel.loadingPhase.isEmpty ? L10n.loading : viewModel.loadingPhase)
+                            .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(Theme.textPrimary)
                     }
-                    .padding(28)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                     .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        Capsule(style: .continuous)
                             .fill(Theme.cardBackground.opacity(0.95))
+                            .shadow(color: .black.opacity(0.22), radius: 14, x: 0, y: 6)
                     )
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(Theme.border.opacity(0.75), lineWidth: 1)
+                    )
+                    .padding(14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .allowsHitTesting(false)
                 }
             }
         }
@@ -1077,6 +1083,45 @@ struct DashboardView: View {
 
     private var loadingState: some View {
         VStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(viewModel.loadingPhase.isEmpty ? L10n.loading : viewModel.loadingPhase)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Theme.textSecondary)
+                    Spacer()
+                    Text("\(Int(viewModel.loadingProgress * 100))%")
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.cyan)
+                }
+
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Theme.border.opacity(0.55))
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Theme.cyan, Theme.purple],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .frame(width: max(8, proxy.size.width * viewModel.loadingProgress))
+                            .animation(.easeInOut(duration: 0.45), value: viewModel.loadingProgress)
+                    }
+                }
+                .frame(height: 7)
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Theme.cardBackground.opacity(0.82))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Theme.border.opacity(0.8), lineWidth: 1)
+            )
+
             ForEach(0..<4, id: \.self) { _ in
                 ShimmerView()
                     .frame(height: 60)

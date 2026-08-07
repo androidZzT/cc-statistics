@@ -1577,7 +1577,7 @@ private struct ClawdAnimatedAvatar: View {
     ]
 
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
             ZStack {
                 avatarImage

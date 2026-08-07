@@ -114,9 +114,27 @@ final class CodexParser {
         var messages: [Message] = []
         var projectPath: String?
         var latestModel: String?
+        var observedModels: [String] = []
         var seenUserKeys = Set<String>()
         var seenAssistantKeys = Set<String>()
         var lastTotalTokens: Int?
+        var timestampCache: [String: Date] = [:]
+
+        func parsedTimestamp(_ raw: String?) -> Date? {
+            guard let raw, !raw.isEmpty else { return nil }
+            if let cached = timestampCache[raw] { return cached }
+            guard let parsed = self.parseTimestamp(raw) else { return nil }
+            timestampCache[raw] = parsed
+            return parsed
+        }
+
+        func rememberModel(_ model: String?) {
+            guard let model, !model.isEmpty else { return }
+            latestModel = model
+            if !observedModels.contains(model) {
+                observedModels.append(model)
+            }
+        }
 
         JSONLLineReader.forEachLine(in: filePath) { line in
             guard !line.isEmpty,
@@ -127,7 +145,6 @@ final class CodexParser {
 
             autoreleasepool {
                 let tsString = json["timestamp"] as? String
-                let ts = self.parseTimestamp(tsString)
                 let type = json["type"] as? String ?? ""
                 let payload = json["payload"] as? [String: Any]
 
@@ -140,9 +157,7 @@ final class CodexParser {
                     } else if let cwd = json["cwd"] as? String {
                         projectPath = cwd
                     }
-                    if let model = self.extractModel(from: payload) {
-                        latestModel = model
-                    }
+                    rememberModel(self.extractModel(from: payload))
 
                 case "event_msg":
                     guard let eventPayload = payload else { return }
@@ -168,7 +183,7 @@ final class CodexParser {
                                 messages[idx] = Message(
                                     role: original.role,
                                     content: original.content,
-                                    model: original.model ?? latestModel ?? "unknown",
+                                    model: original.model ?? latestModel,
                                     timestamp: original.timestamp,
                                     toolCalls: original.toolCalls,
                                     toolResultInfos: original.toolResultInfos,
@@ -181,8 +196,8 @@ final class CodexParser {
                                 messages.append(Message(
                                     role: "assistant",
                                     content: "",
-                                    model: latestModel ?? "unknown",
-                                    timestamp: ts,
+                                    model: latestModel,
+                                    timestamp: parsedTimestamp(tsString),
                                     tokenUsage: usage,
                                     isMeta: true
                                 ))
@@ -197,8 +212,10 @@ final class CodexParser {
                         messages.append(Message(
                             role: "user",
                             content: self.truncate(content, maxChars: CodexParser.maxMessageChars),
-                            timestamp: ts
+                            timestamp: parsedTimestamp(tsString)
                         ))
+                    } else if eventType == "thread_settings_applied" {
+                        rememberModel(self.extractModel(from: eventPayload))
                     } else if eventType == "agent_message" {
                         let content = eventPayload["message"] as? String ?? ""
                         guard !content.isEmpty else { return }
@@ -209,7 +226,7 @@ final class CodexParser {
                             role: "assistant",
                             content: self.truncate(content, maxChars: CodexParser.maxMessageChars),
                             model: latestModel,
-                            timestamp: ts
+                            timestamp: parsedTimestamp(tsString)
                         ))
                     }
 
@@ -241,7 +258,7 @@ final class CodexParser {
 
                         let toolCall = ToolCall(
                             name: mapped,
-                            timestamp: ts,
+                            timestamp: parsedTimestamp(tsString),
                             inputLength: inputLength,
                             input: input,
                             toolUseId: item["call_id"] as? String
@@ -250,7 +267,7 @@ final class CodexParser {
                             role: "assistant",
                             content: "",
                             model: latestModel,
-                            timestamp: ts,
+                            timestamp: parsedTimestamp(tsString),
                             toolCalls: [toolCall]
                         ))
                         return
@@ -260,14 +277,14 @@ final class CodexParser {
                         let action = item["action"] as? [String: Any] ?? [:]
                         let toolCall = ToolCall(
                             name: "WebSearch",
-                            timestamp: ts,
+                            timestamp: parsedTimestamp(tsString),
                             input: action
                         )
                         messages.append(Message(
                             role: "assistant",
                             content: "",
                             model: latestModel,
-                            timestamp: ts,
+                            timestamp: parsedTimestamp(tsString),
                             toolCalls: [toolCall]
                         ))
                         return
@@ -275,8 +292,8 @@ final class CodexParser {
 
                     if itemType == "message" {
                         let role = item["role"] as? String ?? "assistant"
-                        let itemModel = item["model"] as? String
-                        if let m = itemModel { latestModel = m }
+                        let itemModel = self.extractModel(from: item)
+                        rememberModel(itemModel)
 
                         let textContent = self.extractTextContent(item["content"])
                         if role == "user" {
@@ -289,7 +306,7 @@ final class CodexParser {
                             messages.append(Message(
                                 role: "user",
                                 content: self.truncate(textContent, maxChars: CodexParser.maxMessageChars),
-                                timestamp: ts
+                                timestamp: parsedTimestamp(tsString)
                             ))
                         } else if role == "assistant" {
                             guard !textContent.isEmpty else { return }
@@ -300,16 +317,14 @@ final class CodexParser {
                                 role: "assistant",
                                 content: self.truncate(textContent, maxChars: CodexParser.maxMessageChars),
                                 model: itemModel ?? latestModel,
-                                timestamp: ts
+                                timestamp: parsedTimestamp(tsString)
                             ))
                         }
                     }
 
                 case "turn_context":
                     // turn_context has the active model for this turn.
-                    if let model = self.extractModel(from: payload) {
-                        latestModel = model
-                    }
+                    rememberModel(self.extractModel(from: payload))
 
                 default:
                     break
@@ -319,6 +334,28 @@ final class CodexParser {
         }
 
         guard !messages.isEmpty else { return nil }
+
+        let fallbackModel = observedModels.count == 1 ? observedModels[0] : nil
+        for idx in messages.indices {
+            let original = messages[idx]
+            let hasModel = !(original.model ?? "").isEmpty
+            guard original.role == "assistant", !hasModel else { continue }
+            guard original.tokenUsage != nil || !original.toolCalls.isEmpty || !original.content.isEmpty else {
+                continue
+            }
+            messages[idx] = Message(
+                role: original.role,
+                content: original.content,
+                model: fallbackModel ?? "unknown",
+                timestamp: original.timestamp,
+                toolCalls: original.toolCalls,
+                toolResultInfos: original.toolResultInfos,
+                tokenUsage: original.tokenUsage,
+                isToolResult: original.isToolResult,
+                isMeta: original.isMeta,
+                messageId: original.messageId
+            )
+        }
 
         return Session(
             filePath: filePath,
@@ -402,14 +439,21 @@ final class CodexParser {
     private func extractModel(from payload: [String: Any]?) -> String? {
         guard let payload = payload else { return nil }
 
-        if let model = payload["model"] as? String, !model.isEmpty {
-            return model
+        for key in ["model", "model_name", "modelName", "model_slug", "modelSlug"] {
+            if let model = payload[key] as? String, !model.isEmpty {
+                return model
+            }
         }
 
         if let collab = payload["collaboration_mode"] as? [String: Any],
            let settings = collab["settings"] as? [String: Any],
            let model = settings["model"] as? String,
            !model.isEmpty {
+            return model
+        }
+
+        if let threadSettings = payload["thread_settings"] as? [String: Any],
+           let model = extractModel(from: threadSettings) {
             return model
         }
 

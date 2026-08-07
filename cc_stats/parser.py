@@ -437,9 +437,10 @@ def _extract_codex_token_usage(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_codex_model(payload: dict[str, Any]) -> str:
-    model = payload.get("model")
-    if isinstance(model, str) and model:
-        return model
+    for key in ("model", "model_name", "modelName", "model_slug", "modelSlug"):
+        model = payload.get(key)
+        if isinstance(model, str) and model:
+            return model
 
     collab = payload.get("collaboration_mode")
     if isinstance(collab, dict):
@@ -448,6 +449,12 @@ def _extract_codex_model(payload: dict[str, Any]) -> str:
             setting_model = settings.get("model")
             if isinstance(setting_model, str) and setting_model:
                 return setting_model
+
+    thread_settings = payload.get("thread_settings")
+    if isinstance(thread_settings, dict):
+        setting_model = _extract_codex_model(thread_settings)
+        if setting_model:
+            return setting_model
 
     return ""
 
@@ -462,6 +469,15 @@ def parse_codex_jsonl(path: Path) -> Session:
     seen_assistant: set[tuple[str, str]] = set()
     last_total_tokens: int | None = None
     latest_model = ""
+    observed_models: list[str] = []
+
+    def remember_model(model: str) -> None:
+        nonlocal latest_model
+        if not model:
+            return
+        latest_model = model
+        if model not in observed_models:
+            observed_models.append(model)
 
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -488,17 +504,23 @@ def parse_codex_jsonl(path: Path) -> Session:
                     project_path = cwd
                 model = _extract_codex_model(payload)
                 if model:
-                    latest_model = model
+                    remember_model(model)
                 continue
 
             if obj_type == "turn_context":
                 model = _extract_codex_model(payload)
                 if model:
-                    latest_model = model
+                    remember_model(model)
                 continue
 
             if obj_type == "event_msg":
                 ev_type = payload.get("type", "")
+
+                if ev_type == "thread_settings_applied":
+                    model = _extract_codex_model(payload)
+                    if model:
+                        remember_model(model)
+                    continue
 
                 if ev_type == "user_message":
                     text = payload.get("message", "")
@@ -607,6 +629,7 @@ def parse_codex_jsonl(path: Path) -> Session:
                         role="assistant",
                         timestamp=timestamp,
                         content="",
+                        model=latest_model or None,
                         tool_calls=[tc],
                         session_id=session_id,
                     ))
@@ -614,6 +637,9 @@ def parse_codex_jsonl(path: Path) -> Session:
                     continue
 
                 if item_type == "message":
+                    model = _extract_codex_model(payload)
+                    if model:
+                        remember_model(model)
                     role = payload.get("role", "")
                     content = _extract_codex_text(payload.get("content"))
                     if not content:
@@ -644,6 +670,16 @@ def parse_codex_jsonl(path: Path) -> Session:
                             session_id=session_id,
                         ))
                         assistant_indices.append(len(messages) - 1)
+
+    if len(observed_models) == 1:
+        fallback_model = observed_models[0]
+        for msg in messages:
+            if (
+                msg.role == "assistant"
+                and not msg.model
+                and (msg.usage or msg.tool_calls or msg.content)
+            ):
+                msg.model = fallback_model
 
     return Session(
         session_id=session_id,

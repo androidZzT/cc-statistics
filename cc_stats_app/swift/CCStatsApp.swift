@@ -308,8 +308,9 @@ class StatusBarController {
             button.action = #selector(handleClick(_:))
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.imagePosition = .imageOnly
+            button.imagePosition = .imageLeft
             button.image = initialIcon
+            button.title = "CCStats"
         }
     }
 
@@ -451,8 +452,8 @@ class StatusBarController {
         // 无数据时仅显示图标
         if line1.isEmpty && line2.isEmpty {
             button.image = icon
-            button.title = ""
-            button.imagePosition = .imageOnly
+            button.title = "CCStats"
+            button.imagePosition = .imageLeft
             statusItem.length = NSStatusItem.variableLength
             return
         }
@@ -564,6 +565,7 @@ class StatusBarController {
     /// and drawn centered to prevent status bar jitter during animation.
     static let iconCanvasSize = NSSize(width: 30, height: 18)
     static let staticStatusBarIconSize = NSSize(width: 20, height: 12)
+    private static let clawdImageCache = NSCache<NSString, NSImage>()
 
     private static func loadClawdRawImage(frameName: String) -> NSImage? {
         var rawImage: NSImage?
@@ -598,6 +600,11 @@ class StatusBarController {
     /// Search order: bundle Resources/clawd/ → dev source directory → nil.
     /// All images are normalized to a fixed canvas size to prevent layout jitter.
     static func loadClawdImage(frameName: String) -> NSImage? {
+        let cacheKey = frameName as NSString
+        if let cached = clawdImageCache.object(forKey: cacheKey) {
+            return cached
+        }
+
         guard let raw = loadClawdRawImage(frameName: frameName) else { return nil }
 
         // Scale to fit within canvas, preserving aspect ratio
@@ -624,6 +631,7 @@ class StatusBarController {
             return true
         }
         canvas.isTemplate = false
+        clawdImageCache.setObject(canvas, forKey: cacheKey)
         return canvas
     }
 
