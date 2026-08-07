@@ -1882,14 +1882,21 @@ private struct ClawdMotionOverlay: View {
     }
 
     private var carryingOverlay: some View {
-        RoundedRectangle(cornerRadius: 1.4, style: .continuous)
-            .fill(sand.opacity(0.92))
-            .frame(width: size.width * 0.28, height: size.height * 0.26)
-            .overlay(
-                RoundedRectangle(cornerRadius: 1.2, style: .continuous)
-                    .stroke(clay.opacity(0.85), lineWidth: 0.75)
-            )
-            .offset(x: size.width * 0.36, y: size.height * (0.23 - positiveWave(period: 0.5) * 0.08))
+        let boxWidth = size.width * 0.28
+        let boxHeight = size.height * 0.26
+        let offsetX = size.width * 0.36
+        let offsetY = size.height * (0.23 - positiveWave(period: 0.5) * 0.08)
+
+        return ZStack {
+            RoundedRectangle(cornerRadius: 1.4, style: .continuous)
+                .fill(sand.opacity(0.92))
+                .frame(width: boxWidth, height: boxHeight)
+
+            RoundedRectangle(cornerRadius: 1.2, style: .continuous)
+                .stroke(clay.opacity(0.85), lineWidth: 0.75)
+                .frame(width: boxWidth, height: boxHeight)
+        }
+        .offset(x: offsetX, y: offsetY)
     }
 
     private var sleepingOverlay: some View {
