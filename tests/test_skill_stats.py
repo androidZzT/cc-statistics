@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from cc_stats.analyzer import (
     merge_stats,
 )
 from cc_stats.formatter import format_skill_stats
-from cc_stats.parser import Message, Session, ToolCall
+from cc_stats.parser import Message, Session, ToolCall, parse_jsonl
 
 
 def _make_session(messages: list[Message]) -> Session:
@@ -371,3 +372,80 @@ class TestParserToolUseId:
         )
         assert msg.tool_results["tu_1"] is False
         assert msg.tool_results["tu_2"] is True
+
+    def test_duplicate_assistant_rows_merge_tool_calls(self, tmp_path):
+        """同一 message_id 分行写入时，去重不能丢失 Skill tool_use"""
+        path = tmp_path / "session.jsonl"
+        rows = [
+            {
+                "type": "assistant",
+                "timestamp": "2026-03-15T10:01:00+00:00",
+                "cwd": "/tmp/test-project",
+                "message": {
+                    "id": "msg_same",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "I'll use a skill."}],
+                    "usage": {"input_tokens": 10, "output_tokens": 20},
+                },
+            },
+            {
+                "type": "assistant",
+                "timestamp": "2026-03-15T10:01:01+00:00",
+                "cwd": "/tmp/test-project",
+                "message": {
+                    "id": "msg_same",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tu_skill_1",
+                            "name": "Skill",
+                            "input": {"skill": "humanizer-zh"},
+                        }
+                    ],
+                    "usage": {"input_tokens": 10, "output_tokens": 20},
+                },
+            },
+            {
+                "type": "assistant",
+                "timestamp": "2026-03-15T10:01:02+00:00",
+                "cwd": "/tmp/test-project",
+                "message": {
+                    "id": "msg_same",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tu_skill_1",
+                            "name": "Skill",
+                            "input": {"skill": "humanizer-zh"},
+                        }
+                    ],
+                    "usage": {"input_tokens": 10, "output_tokens": 20},
+                },
+            },
+            {
+                "type": "user",
+                "timestamp": "2026-03-15T10:02:00+00:00",
+                "cwd": "/tmp/test-project",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tu_skill_1",
+                            "content": "done",
+                            "is_error": False,
+                        }
+                    ],
+                },
+            },
+        ]
+        path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+        session = parse_jsonl(path)
+        stats = analyze_session(session)
+
+        assert len([tc for msg in session.messages for tc in msg.tool_calls if tc.name == "Skill"]) == 1
+        assert stats.skill_stats["humanizer-zh"].call_count == 1
+        assert stats.skill_stats["humanizer-zh"].success_count == 1

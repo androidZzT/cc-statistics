@@ -48,6 +48,7 @@ final class StatsViewModel: ObservableObject {
     @Published var timeFilter: TimeFilter = .today
     @Published var stats: SessionStats?
     @Published var isLoading = false
+    @Published var loadingDetail: LoadingProgressState = .idle
     @Published var lastRefreshed: Date?
     @Published var recentSessions: [Session] = []
     @Published var showConversationPanel: Bool = false
@@ -135,7 +136,6 @@ final class StatsViewModel: ObservableObject {
     private var currentFilteredSessions: [Session] = []
     /// 上次完整解析时各 JSONL 文件的修改时间快照。key = 文件绝对路径。
     private var cachedFileModTimes: [String: Date] = [:]
-    private var cachedSkillStats: [String: SkillUsage] = [:]
     private var deferredHistoricalFilePaths: [String] = []
     private var lastRateLimitFetch: Date?
     private var conversationLoadTask: Task<Void, Never>?
@@ -173,6 +173,23 @@ final class StatsViewModel: ObservableObject {
         conversationLoadTask?.cancel()
         refreshTimer?.invalidate()
         versionCheckTimer?.invalidate()
+    }
+
+    // MARK: - Loading Progress
+
+    private func updateLoadingProgress(
+        stage: String,
+        detail: String = "",
+        completed: Int = 0,
+        total: Int = 0,
+        fraction: Double? = nil
+    ) {
+        guard isLoading, !Task.isCancelled else { return }
+        updateLoadingProgress(fraction ?? loadingProgress, phase: stage)
+        loadingDetail = LoadingProgressState(
+            stage: stage, detail: detail, completed: completed,
+            total: total, fraction: loadingProgress
+        )
     }
 
     // MARK: - Public API
@@ -254,6 +271,7 @@ final class StatsViewModel: ObservableObject {
             loadingProgress = clamped
         }
         loadingPhase = phase
+        loadingDetail = LoadingProgressState(stage: phase, fraction: loadingProgress)
     }
 
     private static func loadingText(zh: String, en: String) -> String {
@@ -278,6 +296,11 @@ final class StatsViewModel: ObservableObject {
     private func loadData(generation: UInt) async {
         let currentSource = selectedSource
         let currentProject = selectedProject
+        updateLoadingProgress(
+            stage: L10n.loadingScanning,
+            detail: currentSource.displayName,
+            fraction: 0.05
+        )
 
         let needFullReparse = cachedSessions.isEmpty
             || cachedSource != currentSource
@@ -293,6 +316,14 @@ final class StatsViewModel: ObservableObject {
                     Self.incrementalCheckForSource(currentSource, project: nil, oldModTimes: [:])
                 }.value
                 updateLoadingProgress(0.18, phase: Self.loadingText(zh: "发现会话文件", en: "Indexing session files"))
+
+                updateLoadingProgress(
+                    stage: L10n.loadingScanning,
+                    detail: L10n.loadingFilesFound(changedFiles.count),
+                    completed: 0,
+                    total: changedFiles.count,
+                    fraction: 0.12
+                )
 
                 let sortedFiles = changedFiles.sorted {
                     (currentModTimes[$0] ?? .distantPast) > (currentModTimes[$1] ?? .distantPast)
@@ -311,8 +342,12 @@ final class StatsViewModel: ObservableObject {
 
                 guard !sortedFiles.isEmpty else {
                     cachedSessions = []
-                    cachedSkillStats = [:]
                     deferredHistoricalFilePaths = []
+                    updateLoadingProgress(
+                        stage: L10n.loadingAggregating,
+                        detail: L10n.loadingNoChanges,
+                        fraction: 0.85
+                    )
                     return
                 }
 
@@ -339,13 +374,14 @@ final class StatsViewModel: ObservableObject {
                 let remaining = Array(initialFiles.dropFirst(firstBatchSize))
 
                 updateLoadingProgress(0.42, phase: Self.loadingText(zh: "解析最近会话", en: "Parsing recent sessions"))
-                let firstSessions = await Task.detached(priority: .userInitiated) {
-                    Self.parseSessions(forFiles: firstBatch, source: currentSource, compactForMemory: true)
-                }.value
+                let firstSessions = await parseFilesWithProgress(
+                    firstBatch, source: currentSource, compactForMemory: true,
+                    priority: .userInitiated, stage: L10n.loadingInitialBatch,
+                    baseProgress: 0.42, progressSpan: 0.24, chunkSize: 40
+                )
                 updateLoadingProgress(0.68, phase: Self.loadingText(zh: "生成统计结果", en: "Building statistics"))
 
                 cachedSessions = firstSessions
-                cachedSkillStats = SessionAnalyzer.collectAllSkillStats(firstSessions)
                 deferredHistoricalFilePaths = deferredFiles
 
                 // 先渲染第一屏，避免等待全量文件解析完成
@@ -379,7 +415,6 @@ final class StatsViewModel: ObservableObject {
                 cachedSource = currentSource
                 cachedProject = currentProject
                 cachedFileModTimes = fileModTimes
-                cachedSkillStats = SessionAnalyzer.collectAllSkillStats(compacted)
                 deferredHistoricalFilePaths = []
                 historicalLoadTask?.cancel()
                 historicalLoadTask = nil
@@ -394,17 +429,34 @@ final class StatsViewModel: ObservableObject {
                 Self.incrementalCheckForSource(currentSource, project: currentProject, oldModTimes: oldModTimes)
             }.value
 
+            updateLoadingProgress(
+                stage: L10n.loadingScanning,
+                detail: L10n.loadingFilesFound(changedFiles.count),
+                completed: 0,
+                total: changedFiles.count,
+                fraction: 0.15
+            )
+
             // 更新 projects 列表（轻量操作，始终刷新）
             cachedProjects = loadedProjects
 
             // 如果没有任何文件变化，纯缓存命中，直接 return
-            guard !changedFiles.isEmpty else { return }
+            guard !changedFiles.isEmpty else {
+                updateLoadingProgress(
+                    stage: L10n.loadingAggregating,
+                    detail: L10n.loadingNoChanges,
+                    fraction: 0.78
+                )
+                return
+            }
 
             // 只解析变化的文件
             updateLoadingProgress(0.52, phase: Self.loadingText(zh: "解析新增会话", en: "Parsing changes"))
-            let newSessions = await Task.detached(priority: .userInitiated) {
-                Self.parseSessions(forFiles: changedFiles, source: currentSource, compactForMemory: true)
-            }.value
+            let newSessions = await parseFilesWithProgress(
+                changedFiles, source: currentSource, compactForMemory: true,
+                priority: .userInitiated, stage: L10n.loadingRemaining,
+                baseProgress: 0.52, progressSpan: 0.25, chunkSize: 80
+            )
 
             // 将变化文件的路径收集为 Set，用于替换/追加
             let changedPaths = Set(changedFiles)
@@ -414,7 +466,6 @@ final class StatsViewModel: ObservableObject {
             updated.append(contentsOf: newSessions)
             cachedSessions = updated
             cachedFileModTimes = currentModTimes
-            cachedSkillStats = SessionAnalyzer.collectAllSkillStats(updated)
             if !deferredHistoricalFilePaths.isEmpty {
                 deferredHistoricalFilePaths.removeAll { changedPaths.contains($0) }
             }
@@ -423,6 +474,46 @@ final class StatsViewModel: ObservableObject {
     }
 
     // MARK: - Static Parse Helpers (called from Task.detached)
+
+    private func parseFilesWithProgress(
+        _ files: [String],
+        source: DataSource,
+        compactForMemory: Bool,
+        priority: TaskPriority,
+        stage: String,
+        baseProgress: Double,
+        progressSpan: Double,
+        chunkSize: Int
+    ) async -> [Session] {
+        guard !files.isEmpty else { return [] }
+
+        var parsed: [Session] = []
+        parsed.reserveCapacity(files.count)
+
+        var idx = 0
+        while idx < files.count {
+            if Task.isCancelled { return parsed }
+            let end = min(idx + chunkSize, files.count)
+            let chunk = Array(files[idx..<end])
+            let parsedChunk = await Task.detached(priority: priority) {
+                Self.parseSessions(forFiles: chunk, source: source, compactForMemory: compactForMemory)
+            }.value
+            guard !Task.isCancelled else { return parsed }
+            parsed.append(contentsOf: parsedChunk)
+            idx = end
+
+            let chunkFraction = Double(idx) / Double(max(files.count, 1))
+            updateLoadingProgress(
+                stage: stage,
+                detail: L10n.loadingParsedFiles(idx, files.count),
+                completed: idx,
+                total: files.count,
+                fraction: baseProgress + progressSpan * chunkFraction
+            )
+        }
+
+        return parsed
+    }
 
     private static func initialLoadCutoff(for filter: TimeFilter) -> Date? {
         guard let filterStart = filter.startDate else { return nil }
@@ -764,12 +855,16 @@ final class StatsViewModel: ObservableObject {
 
     /// 基于缓存 sessions 做时间过滤、统计分析、日统计。无磁盘 I/O。
     private func applyFilterAndUpdate(lightweight: Bool = false) async {
+        updateLoadingProgress(
+            stage: L10n.loadingAggregating,
+            detail: L10n.loadingSessionsFound(cachedSessions.count),
+            fraction: lightweight ? 0.51 : 0.82
+        )
 
         let sessions = cachedSessions
         let loadedProjects = cachedProjects
         let currentFilter = timeFilter
         let currentSource = selectedSource
-        let skillStats = cachedSkillStats
         let previousDaily = dailyStats
         let previousTodayTokens = todayTokens
         let previousTodayCost = todayCost
@@ -787,14 +882,10 @@ final class StatsViewModel: ObservableObject {
                 }
             }
 
-            var stats = SessionAnalyzer.analyze(
+            let stats = SessionAnalyzer.analyze(
                 sessions: filteredSessions,
                 since: currentFilter.startDate
             )
-
-            // Skill 统计始终基于全量 sessions（不受时间筛选），
-            // 因为 Skill 使用模式在全时间维度更有意义。复用 loadData 阶段的缓存。
-            stats.skillStats = skillStats
 
             // 会话列表按最近活跃时间排序（不受时间筛选影响）
             let recent = sessions
@@ -846,6 +937,11 @@ final class StatsViewModel: ObservableObject {
         if !lightweight {
             // Parse Cursor stats only when relevant
             if currentSource == .cursor || currentSource == .all {
+                updateLoadingProgress(
+                    stage: L10n.loadingCursor,
+                    detail: "",
+                    fraction: 0.92
+                )
                 let cursorSince = currentFilter.startDate
                 let cursorResult: CursorStats = await Task.detached(priority: .userInitiated) {
                     CursorParser.parse(since: cursorSince)
@@ -858,6 +954,11 @@ final class StatsViewModel: ObservableObject {
 
         self.currentFilteredSessions = result.filteredSessions
         self.lastRefreshed = Date()
+        updateLoadingProgress(
+            stage: L10n.loadingDone,
+            detail: L10n.loadingSessionsFound(result.filteredSessions.count),
+            fraction: 0.98
+        )
 
         if showConversationPanel {
             prepareConversationSessions()
@@ -1017,14 +1118,6 @@ final class StatsViewModel: ObservableObject {
             guard didAppend else { return }
             guard self.selectedSource == sourceAtStart, self.selectedProject == projectAtStart else { return }
 
-            let sessions = self.cachedSessions
-            let skillStats = await Task.detached(priority: .utility) {
-                SessionAnalyzer.collectAllSkillStats(sessions)
-            }.value
-            if Task.isCancelled { return }
-            guard self.selectedSource == sourceAtStart, self.selectedProject == projectAtStart else { return }
-
-            self.cachedSkillStats = skillStats
             Self.releaseMemoryPressureIfPossible()
             await self.applyFilterAndUpdate()
         }
@@ -1097,7 +1190,6 @@ final class StatsViewModel: ObservableObject {
             guard !appended.isEmpty else { return }
 
             self.cachedSessions.append(contentsOf: appended)
-            self.cachedSkillStats = SessionAnalyzer.collectAllSkillStats(self.cachedSessions)
             Self.releaseMemoryPressureIfPossible()
             await self.applyFilterAndUpdate()
         }
@@ -1146,7 +1238,6 @@ final class StatsViewModel: ObservableObject {
         cachedSource = nil
         cachedProject = nil
         cachedFileModTimes = [:]
-        cachedSkillStats = [:]
         deferredInitialFilePaths = []
         deferredHistoricalFilePaths = []
         conversationLoadTask?.cancel()

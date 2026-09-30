@@ -1,0 +1,44 @@
+name: AI Triage
+
+"on":
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  issues:
+    types: [opened, reopened, edited, labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: ai-triage-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    name: Review and triage
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'issue_comment' ||
+      contains(github.event.comment.body, '/cc ')
+    steps:
+      # For pull_request_target this checks out trusted base-branch workflow code.
+      # The job only reads PR metadata/files through the GitHub API and never executes fork code.
+      - name: Checkout trusted workflow code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run CCStats triage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/github_triage.py

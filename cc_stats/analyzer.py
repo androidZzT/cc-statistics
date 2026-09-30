@@ -224,6 +224,8 @@ class SessionStats:
 
     # 6. Skill 使用统计
     skill_stats: dict[str, SkillUsage] = field(default_factory=dict)
+    # Compact call records let range filters reuse analyzed sessions.
+    skill_calls: list[tuple[datetime, str, bool | None]] = field(default_factory=list)
 
     # 7. 按日期分配的 Token（跨日 session 按消息时间戳归日）
     # key: "YYYY-MM-DD" 本地日期, value: 该日的 TokenUsage
@@ -541,7 +543,8 @@ def analyze_session(session: Session, *, include_git: bool = True) -> SessionSta
                         su.unknown_count += 1
 
                     # 时间分布
-                    call_ts = _parse_ts(tc.timestamp)
+                    call_ts = _parse_ts(tc.timestamp) or ts
+                    stats.skill_calls.append((call_ts, skill_name, tool_result_errors.get(tc.tool_use_id)))
                     if call_ts:
                         local_ts = call_ts.astimezone()
                         hour = local_ts.hour
@@ -764,6 +767,7 @@ def merge_stats(all_stats: list[SessionStats]) -> SessionStats:
     all_ends = []
 
     for s in all_stats:
+        merged.skill_calls.extend(s.skill_calls)
         merged.user_message_count += s.user_message_count
         merged.tool_call_total += s.tool_call_total
 

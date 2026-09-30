@@ -270,33 +270,85 @@ final class SessionParser {
         )
     }
 
-    /// 按 messageId 去重 assistant 消息，保留 outputTokens 最大的记录。
-    /// Claude Code 流式写入时，同一条消息会产生 prefill（outputTokens=1）+ final（实际值）多条记录。
+    /// 按 messageId 去重 assistant 消息，并合并同一消息的 tool_use 块。
+    /// Claude Code 流式写入时，同一条消息可能分多条 JSONL 记录写入：
+    /// 一条带最终 token usage，另一条带 Skill/tool_use。只保留最大 token 行会漏掉工具调用。
     private func deduplicateMessages(_ messages: [Message]) -> [Message] {
-        var bestByMsgId: [String: (index: Int, outputTokens: Int)] = [:]
-        var indicesToRemove = Set<Int>()
+        var merged: [Message] = []
+        var indexByMsgId: [String: Int] = [:]
 
-        for (i, msg) in messages.enumerated() {
+        for msg in messages {
             guard msg.role == "assistant",
                   let msgId = msg.messageId,
-                  let usage = msg.tokenUsage else {
+                  !msgId.isEmpty else {
+                merged.append(msg)
                 continue
             }
 
-            if let existing = bestByMsgId[msgId] {
-                if usage.outputTokens > existing.outputTokens {
-                    indicesToRemove.insert(existing.index)
-                    bestByMsgId[msgId] = (index: i, outputTokens: usage.outputTokens)
-                } else {
-                    indicesToRemove.insert(i)
-                }
+            if let existingIndex = indexByMsgId[msgId] {
+                merged[existingIndex] = mergeAssistantMessage(merged[existingIndex], with: msg)
             } else {
-                bestByMsgId[msgId] = (index: i, outputTokens: usage.outputTokens)
+                indexByMsgId[msgId] = merged.count
+                merged.append(msg)
             }
         }
 
-        guard !indicesToRemove.isEmpty else { return messages }
-        return messages.enumerated().compactMap { indicesToRemove.contains($0.offset) ? nil : $0.element }
+        return merged
+    }
+
+    private func mergeAssistantMessage(_ existing: Message, with incoming: Message) -> Message {
+        var toolCalls = existing.toolCalls
+        var seenToolCalls = Set(toolCalls.map(toolCallDedupKey))
+        for call in incoming.toolCalls {
+            let key = toolCallDedupKey(call)
+            if !seenToolCalls.contains(key) {
+                toolCalls.append(call)
+                seenToolCalls.insert(key)
+            }
+        }
+
+        var toolResultInfos = existing.toolResultInfos
+        var seenResultIds = Set(toolResultInfos.map(\.toolUseId))
+        for info in incoming.toolResultInfos where !seenResultIds.contains(info.toolUseId) {
+            toolResultInfos.append(info)
+            seenResultIds.insert(info.toolUseId)
+        }
+
+        let tokenUsage = preferredTokenUsage(existing.tokenUsage, incoming.tokenUsage)
+        let content = incoming.content.count > existing.content.count ? incoming.content : existing.content
+
+        return Message(
+            role: existing.role,
+            content: content,
+            model: existing.model ?? incoming.model,
+            timestamp: existing.timestamp ?? incoming.timestamp,
+            toolCalls: toolCalls,
+            toolResultInfos: toolResultInfos,
+            tokenUsage: tokenUsage,
+            isToolResult: existing.isToolResult || incoming.isToolResult,
+            isMeta: existing.isMeta && incoming.isMeta,
+            messageId: existing.messageId ?? incoming.messageId
+        )
+    }
+
+    private func preferredTokenUsage(_ lhs: TokenDetail?, _ rhs: TokenDetail?) -> TokenDetail? {
+        guard let lhs else { return rhs }
+        guard let rhs else { return lhs }
+        let leftScore = (lhs.outputTokens, lhs.totalTokens)
+        let rightScore = (rhs.outputTokens, rhs.totalTokens)
+        return rightScore > leftScore ? rhs : lhs
+    }
+
+    private func toolCallDedupKey(_ call: ToolCall) -> String {
+        if let toolUseId = call.toolUseId, !toolUseId.isEmpty {
+            return "id:\(toolUseId)"
+        }
+        let skill = call.input["skill"] as? String ?? ""
+        let filePath = (call.input["file_path"] as? String)
+            ?? (call.input["target_file"] as? String)
+            ?? ""
+        let timestamp = call.timestamp?.timeIntervalSince1970 ?? 0
+        return "sig:\(call.name)|\(skill)|\(filePath)|\(call.inputLength)|\(timestamp)"
     }
 
     /// Check if message content contains tool_result blocks

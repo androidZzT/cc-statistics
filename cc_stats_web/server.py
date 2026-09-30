@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 from cc_stats.cli import _trim_stats_by_date_range
 from cc_stats.analyzer import (
     SessionStats,
+    SkillUsage,
     TokenUsage,
     analyze_session,
     compute_cache_stats,
@@ -668,47 +669,36 @@ def _daily_stats_from_analyzed(
 
 
 def _get_skill_stats(project_dir_name=None, since_days=None, source: str | None = None):
-    """Return skill usage statistics as a list sorted by call_count.
-
-    Skill stats always cover ALL sessions (ignoring since_days) because
-    skill usage patterns are more meaningful at the all-time level.
-    """
-    files = _collect_session_files(project_dir_name, source=source)
-    if not files:
-        return []
-
-    files.sort(key=lambda f: f.stat().st_mtime)
-
-    all_stats = _analyze_session_files(files, project_dir_name=project_dir_name)
-
-    if not all_stats:
-        return []
-
-    result = _merged_stats(all_stats)
-    if result is None:
-        return []
-
-    skills = []
-    for name, su in sorted(
-        result.skill_stats.items(), key=lambda x: x[1].call_count, reverse=True
-    ):
-        resolved = su.success_count + su.error_count
-        success_rate = (
-            round(su.success_count / resolved * 100) if resolved > 0 else None
-        )
-        skills.append({
-            "name": name,
-            "call_count": su.call_count,
-            "success_count": su.success_count,
-            "error_count": su.error_count,
-            "unknown_count": su.unknown_count,
-            "success_rate": success_rate,
-        })
-    return skills
+    """Filter skill calls while reusing the cached session analysis."""
+    since_dt = datetime.now(tz=timezone.utc) - timedelta(days=since_days) if since_days else None
+    return _skill_stats_from_analyzed(
+        _get_cached_analyzed_stats(project_dir_name, source=source), since_dt=since_dt
+    )
 
 
-def _skill_stats_from_analyzed(all_stats: list[SessionStats]) -> list[dict]:
-    result = _merged_stats(all_stats)
+def _skill_stats_from_analyzed(
+    all_stats: list[SessionStats], since_dt: datetime | None = None,
+    since_date: str | None = None, until_date: str | None = None,
+) -> list[dict]:
+    if since_dt is not None or since_date is not None or until_date is not None:
+        result = SessionStats(session_id="skills", project_path="")
+        for stats in all_stats:
+            for timestamp, name, is_error in stats.skill_calls:
+                timestamp = timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=timezone.utc)
+                if since_dt is not None and timestamp < since_dt:
+                    continue
+                if not _date_key_in_range(timestamp.astimezone().strftime("%Y-%m-%d"), since_date, until_date):
+                    continue
+                usage = result.skill_stats.setdefault(name, SkillUsage(name=name))
+                usage.call_count += 1
+                if is_error is None:
+                    usage.unknown_count += 1
+                elif is_error:
+                    usage.error_count += 1
+                else:
+                    usage.success_count += 1
+    else:
+        result = _merged_stats(all_stats)
     if result is None:
         return []
 
@@ -789,7 +779,11 @@ def _get_dashboard_payload(
     return {
         "stats": stats_payload,
         "daily_stats": _daily_stats_from_analyzed(daily_source_stats, daily_since, daily_days),
-        "skills": _skill_stats_from_analyzed(all_stats),
+        "skills": _skill_stats_from_analyzed(
+            all_stats, since_dt=since_dt,
+            since_date=period_range.since_date if period_range else None,
+            until_date=period_range.until_date if period_range else None,
+        ),
     }
 
 

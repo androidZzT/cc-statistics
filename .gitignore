@@ -11,3 +11,11 @@ cc_stats_app/swift/CCStats.app/
 cc_stats_app/swift/.binary_version
 .DS_Store
 marketing/
+
+# Local build and test artifacts
+.coverage
+*.app/
+Info.plist.tmp
+cc_stats_app/swift/CCStats-*.zip
+cc_island_ios/.derived/
+**/xcuserdata/

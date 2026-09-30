@@ -115,8 +115,8 @@ final class CodexParser {
         var projectPath: String?
         var latestModel: String?
         var observedModels: [String] = []
-        var seenUserKeys = Set<String>()
-        var seenAssistantKeys = Set<String>()
+        var seenUserTexts: [String: Int] = [:]
+        var seenAssistantTexts: [String: Int] = [:]
         var lastTotalTokens: Int?
         var timestampCache: [String: Date] = [:]
 
@@ -205,10 +205,9 @@ final class CodexParser {
                         }
                     } else if eventType == "user_message" {
                         let content = eventPayload["message"] as? String ?? ""
-                        guard !content.isEmpty else { return }
-                        let key = "\(tsString ?? "")|u|\(content)"
-                        if seenUserKeys.contains(key) { return }
-                        seenUserKeys.insert(key)
+                        guard self.shouldAppendConversationText(content, role: "user", origin: "event", seen: &seenUserTexts) else {
+                            return
+                        }
                         messages.append(Message(
                             role: "user",
                             content: self.truncate(content, maxChars: CodexParser.maxMessageChars),
@@ -218,10 +217,9 @@ final class CodexParser {
                         rememberModel(self.extractModel(from: eventPayload))
                     } else if eventType == "agent_message" {
                         let content = eventPayload["message"] as? String ?? ""
-                        guard !content.isEmpty else { return }
-                        let key = "\(tsString ?? "")|a|\(content)"
-                        if seenAssistantKeys.contains(key) { return }
-                        seenAssistantKeys.insert(key)
+                        guard self.shouldAppendConversationText(content, role: "assistant", origin: "event", seen: &seenAssistantTexts) else {
+                            return
+                        }
                         messages.append(Message(
                             role: "assistant",
                             content: self.truncate(content, maxChars: CodexParser.maxMessageChars),
@@ -297,22 +295,18 @@ final class CodexParser {
 
                         let textContent = self.extractTextContent(item["content"])
                         if role == "user" {
-                            if textContent.isEmpty || self.isMetaUserText(textContent) {
+                            guard self.shouldAppendConversationText(textContent, role: "user", origin: "response", seen: &seenUserTexts) else {
                                 return
                             }
-                            let key = "\(tsString ?? "")|u|\(textContent)"
-                            if seenUserKeys.contains(key) { return }
-                            seenUserKeys.insert(key)
                             messages.append(Message(
                                 role: "user",
                                 content: self.truncate(textContent, maxChars: CodexParser.maxMessageChars),
                                 timestamp: parsedTimestamp(tsString)
                             ))
                         } else if role == "assistant" {
-                            guard !textContent.isEmpty else { return }
-                            let key = "\(tsString ?? "")|a|\(textContent)"
-                            if seenAssistantKeys.contains(key) { return }
-                            seenAssistantKeys.insert(key)
+                            guard self.shouldAppendConversationText(textContent, role: "assistant", origin: "response", seen: &seenAssistantTexts) else {
+                                return
+                            }
                             messages.append(Message(
                                 role: "assistant",
                                 content: self.truncate(textContent, maxChars: CodexParser.maxMessageChars),
@@ -511,6 +505,34 @@ final class CodexParser {
         return s.hasPrefix("<environment_context>")
             || s.hasPrefix("<permissions instructions>")
             || s.hasPrefix("<app-context>")
+            || s.hasPrefix("<collaboration_mode>")
+            || s.hasPrefix("<personality_spec>")
+            || s.hasPrefix("<plugins_instructions>")
+            || s.hasPrefix("<skills_instructions>")
+            || s.hasPrefix("<developer")
+            || s.hasPrefix("<system")
+            || s.hasPrefix("<skill>")
+            || s.hasPrefix("<skills>")
+            || s.hasPrefix("# AGENTS.md instructions")
+            || s.hasPrefix("<INSTRUCTIONS>")
+    }
+
+    private func shouldAppendConversationText(_ text: String, role: String, origin: String, seen: inout [String: Int]) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if role == "user", isMetaUserText(trimmed) { return false }
+
+        // Codex Desktop writes both event_msg and response_item rows for the same
+        // visible turn. Their timestamps can differ by a few ms, so de-dupe by
+        // normalized text rather than timestamp.
+        let key = trimmed
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let ownKey = origin + "\0" + key
+        let otherKey = (origin == "event" ? "response" : "event") + "\0" + key
+        let count = seen[ownKey, default: 0] + 1
+        seen[ownKey] = count
+        return count > seen[otherKey, default: 0]
     }
 
     private func parseApplyPatchInput(_ rawArguments: Any?) -> [String: Any] {

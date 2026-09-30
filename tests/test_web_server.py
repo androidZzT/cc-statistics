@@ -907,3 +907,33 @@ def test_warm_dashboard_cache_primes_projects_and_analyzed_stats(monkeypatch):
     web_server._warm_dashboard_cache()
 
     assert calls == ["stats", "projects"]
+
+
+def test_skill_ranges_reuse_cached_analysis_and_filter_calls(tmp_path, monkeypatch):
+    from cc_stats.parser import Session, Message, ToolCall
+    from cc_stats.analyzer import analyze_session
+
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=10)
+    session = Session(session_id='skill-range', project_path='/tmp/demo',
+        file_path=tmp_path / 'skills.jsonl', messages=[
+            Message(role='assistant', timestamp=old.isoformat(), content='', tool_calls=[
+                ToolCall(name='Skill', input={'skill': 'old'}, timestamp=old.isoformat(), tool_use_id='old')]),
+            Message(role='assistant', timestamp=now.isoformat(), content='', tool_calls=[
+                ToolCall(name='Skill', input={'skill': 'new'}, timestamp=now.isoformat(), tool_use_id='new')]),
+            Message(role='user', timestamp=now.isoformat(), content=[], is_tool_result=True,
+                    tool_results={'old': False, 'new': True}),
+        ])
+    stats = analyze_session(session, include_git=False)
+    monkeypatch.setattr(web_server, '_get_cached_analyzed_stats', lambda *a, **kw: [stats])
+    monkeypatch.setattr(web_server, '_parse_sessions_from_file',
+                        lambda *a: (_ for _ in ()).throw(AssertionError('must reuse cache')))
+    all_skills = web_server._get_skill_stats()
+    recent = web_server._get_skill_stats(since_days=7)
+    assert {item['name'] for item in all_skills} == {'old', 'new'}
+    assert [item['name'] for item in recent] == ['new']
+    assert recent[0]['error_count'] == 1
+    assert recent[0]['call_count'] == 1
+    dashboard = web_server._get_dashboard_payload(since_days=7)
+    assert dashboard['skills'] == recent
+    assert len(stats.skill_stats) == 2  # filtering must not mutate the cache

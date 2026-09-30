@@ -1083,44 +1083,7 @@ struct DashboardView: View {
 
     private var loadingState: some View {
         VStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(viewModel.loadingPhase.isEmpty ? L10n.loading : viewModel.loadingPhase)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(Theme.textSecondary)
-                    Spacer()
-                    Text("\(Int(viewModel.loadingProgress * 100))%")
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(Theme.cyan)
-                }
-
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Theme.border.opacity(0.55))
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: [Theme.cyan, Theme.purple],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: max(8, proxy.size.width * viewModel.loadingProgress))
-                            .animation(.easeInOut(duration: 0.45), value: viewModel.loadingProgress)
-                    }
-                }
-                .frame(height: 7)
-            }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Theme.cardBackground.opacity(0.82))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Theme.border.opacity(0.8), lineWidth: 1)
-            )
+            loadingProgressCard
 
             ForEach(0..<4, id: \.self) { _ in
                 ShimmerView()
@@ -1129,6 +1092,10 @@ struct DashboardView: View {
         }
         .padding(16)
         .frame(maxHeight: .infinity)
+    }
+
+    private var loadingProgressCard: some View {
+        SmoothLoadingProgressCard(progress: viewModel.loadingDetail)
     }
 
     private var emptyState: some View {
@@ -1609,6 +1576,103 @@ struct DashboardView: View {
         withAnimation { toastMessage = L10n.exportedToDesktop }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation { toastMessage = nil }
+        }
+    }
+}
+
+private struct SmoothLoadingProgressCard: View {
+    let progress: LoadingProgressState
+    @State private var displayedFraction: Double = 0
+
+    private var displayedPercentText: String {
+        "\(Int((LoadingProgressSmoothing.clamped(displayedFraction) * 100).rounded()))%"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                TimelineView(.animation) { timeline in
+                    Circle()
+                        .trim(from: 0, to: 0.72)
+                        .stroke(Theme.cyan, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .frame(width: 20, height: 20)
+                        .rotationEffect(.degrees(timeline.date.timeIntervalSince1970.truncatingRemainder(dividingBy: 3.6) * 100))
+                }
+                .frame(width: 22, height: 22)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(progress.stage.isEmpty ? L10n.loading : progress.stage)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    if !progress.detail.isEmpty {
+                        Text(progress.detail)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(Theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                Text(displayedPercentText)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundColor(Theme.cyan)
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Theme.border.opacity(0.9))
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [Theme.cyan, Theme.purple],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(CGFloat(8), geo.size.width * CGFloat(LoadingProgressSmoothing.clamped(displayedFraction))))
+                }
+            }
+            .frame(height: 8)
+
+            if let countText = progress.countText {
+                Text(countText)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Theme.textSecondary)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Theme.cardBackground.opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Theme.border.opacity(0.8), lineWidth: 1)
+                )
+        )
+        .onAppear {
+            displayedFraction = min(progress.fraction, 0.08)
+            DispatchQueue.main.async {
+                moveDisplay(to: progress.fraction)
+            }
+        }
+        .onChange(of: progress.fraction) { target in
+            moveDisplay(to: target)
+        }
+    }
+
+    private func moveDisplay(to rawTarget: Double) {
+        let target = LoadingProgressSmoothing.clamped(rawTarget)
+        if LoadingProgressSmoothing.shouldResetDisplay(from: displayedFraction, to: target) {
+            displayedFraction = target
+            return
+        }
+
+        let next = max(displayedFraction, target)
+        let duration = LoadingProgressSmoothing.animationDuration(from: displayedFraction, to: next)
+        withAnimation(.easeOut(duration: duration)) {
+            displayedFraction = next
         }
     }
 }

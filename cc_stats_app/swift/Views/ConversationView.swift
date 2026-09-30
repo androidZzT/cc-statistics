@@ -56,6 +56,182 @@ private enum ShareExportPreset: String, CaseIterable, Identifiable {
     }
 }
 
+private enum ConversationSessionSource: Sendable {
+    case claudeCode
+    case codex
+    case gemini
+    case unknown
+
+    static func infer(from session: Session) -> ConversationSessionSource {
+        let path = session.filePath.lowercased()
+        if path.contains("/.codex/") { return .codex }
+        if path.contains("/.gemini/") { return .gemini }
+        if path.contains("/.claude/") { return .claudeCode }
+        return .unknown
+    }
+
+    var title: String {
+        switch self {
+        case .claudeCode: return "Claude Code"
+        case .codex: return "Codex"
+        case .gemini: return "Gemini CLI"
+        case .unknown: return L10n.assistant
+        }
+    }
+
+    var assistantRole: String {
+        switch self {
+        case .claudeCode: return "Claude"
+        case .codex: return "Codex"
+        case .gemini: return "Gemini"
+        case .unknown: return L10n.assistant
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .claudeCode: return "Claude"
+        case .codex: return "Codex"
+        case .gemini: return "Gemini"
+        case .unknown: return "AI"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .claudeCode: return "sparkles"
+        case .codex: return "chevron.left.forwardslash.chevron.right"
+        case .gemini: return "diamond"
+        case .unknown: return "cpu"
+        }
+    }
+
+    var accent: Color {
+        switch self {
+        case .claudeCode: return Theme.purple
+        case .codex: return Theme.green
+        case .gemini: return Theme.cyan
+        case .unknown: return Theme.purple
+        }
+    }
+
+    var shareSlug: String {
+        switch self {
+        case .claudeCode: return "claude"
+        case .codex: return "codex"
+        case .gemini: return "gemini"
+        case .unknown: return "ai"
+        }
+    }
+}
+
+private enum ConversationSummaryError: LocalizedError {
+    case unsupportedSource
+    case commandFailed(String)
+    case timedOut
+    case emptyOutput
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedSource:
+            return L10n.isChinese ? "当前来源暂不支持一键总结" : "This source is not supported yet"
+        case .commandFailed(let message):
+            return message.isEmpty
+                ? (L10n.isChinese ? "总结命令执行失败" : "Summary command failed")
+                : message
+        case .timedOut:
+            return L10n.isChinese ? "总结超时，请稍后重试" : "Summary timed out"
+        case .emptyOutput:
+            return L10n.isChinese ? "总结结果为空" : "Summary output is empty"
+        }
+    }
+}
+
+private enum ConversationSummaryRunner {
+    static func run(prompt: String, source: ConversationSessionSource, cwd: String?) throws -> String {
+        let args: [String]
+        switch source {
+        case .claudeCode:
+            args = [
+                "claude",
+                "-p",
+                "--output-format", "text",
+                "--no-session-persistence",
+                "--tools", "",
+            ]
+        case .codex:
+            args = [
+                "codex",
+                "exec",
+                "--skip-git-repo-check",
+                "--ephemeral",
+                "--sandbox", "read-only",
+                "-",
+            ]
+        case .gemini, .unknown:
+            throw ConversationSummaryError.unsupportedSource
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = args
+        var environment = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        environment["PATH"] = [home + "/.local/bin", home + "/.cargo/bin", "/opt/homebrew/bin",
+                               "/usr/local/bin", environment["PATH"] ?? "/usr/bin:/bin"]
+            .joined(separator: ":")
+        process.environment = environment
+        if let cwd, FileManager.default.fileExists(atPath: cwd) {
+            process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        }
+
+        let workDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ccstats-summary-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true,
+                                               attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: workDirectory) }
+        let inputURL = workDirectory.appendingPathComponent("input")
+        let outputURL = workDirectory.appendingPathComponent("output")
+        let errorURL = workDirectory.appendingPathComponent("error")
+        try Data(prompt.utf8).write(to: inputURL)
+        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        FileManager.default.createFile(atPath: errorURL.path, contents: nil)
+        let inputHandle = try FileHandle(forReadingFrom: inputURL)
+        let outputHandle = try FileHandle(forWritingTo: outputURL)
+        let errorHandle = try FileHandle(forWritingTo: errorURL)
+        defer {
+            try? inputHandle.close()
+            try? outputHandle.close()
+            try? errorHandle.close()
+        }
+        process.standardInput = inputHandle
+        process.standardOutput = outputHandle
+        process.standardError = errorHandle
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        try process.run()
+        if exited.wait(timeout: .now() + 120) == .timedOut {
+            process.terminate()
+            if exited.wait(timeout: .now() + 2) == .timedOut, process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+                exited.wait()
+            }
+            throw ConversationSummaryError.timedOut
+        }
+        let output = String(decoding: try Data(contentsOf: outputURL), as: UTF8.self)
+        let error = String(decoding: try Data(contentsOf: errorURL), as: UTF8.self)
+        if process.terminationStatus != 0 {
+            throw ConversationSummaryError.commandFailed(error.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            throw ConversationSummaryError.emptyOutput
+        }
+        return trimmed
+    }
+}
+
 // MARK: - ConversationView
 
 struct ConversationView: View {
@@ -69,6 +245,10 @@ struct ConversationView: View {
     @State private var selectedMessageIDs: Set<UUID> = []
     @State private var sharePreset: ShareExportPreset = .balanced
     @State private var isExportingShare = false
+    @State private var isSummarizingSession = false
+    @State private var summarySessionPath: String?
+    @State private var summaryText: String?
+    @State private var summaryError: String?
     private var sessions: [Session] { viewModel.conversationSessions }
     private var isLoading: Bool { viewModel.isConversationLoading }
 
@@ -216,8 +396,11 @@ struct ConversationView: View {
 
     private func sessionRow(_ session: Session) -> some View {
         let isSelected = selectedSession?.id == session.id
-        let userMessages = session.messages.filter { $0.role == "human" || $0.role == "user" }
+        let source = source(for: session)
+        let visible = visibleMessages(in: session)
+        let userMessages = visible.filter { isUserMessage($0) }
         let preview = userMessages.first(where: { !$0.content.isEmpty }).map { String($0.content.prefix(80)) }
+            ?? visible.first(where: { !$0.content.isEmpty }).map { String($0.content.prefix(80)) }
             ?? String(session.sessionName.prefix(80))
 
         return Button {
@@ -226,18 +409,10 @@ struct ConversationView: View {
             isSelectMode = false
             selectedMessageIDs.removeAll()
 
-            // Copy resume command
-            let cmd = "claude --resume \"\(session.sessionName)\""
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(cmd, forType: .string)
-
-            withAnimation {
-                toastMessage = "\(L10n.copied): claude --resume"
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                withAnimation {
-                    toastMessage = nil
-                }
+            if let resume = resumeCommand(for: session) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(resume.command, forType: .string)
+                showShareToast("\(L10n.copied): \(resume.label)")
             }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
@@ -264,6 +439,20 @@ struct ConversationView: View {
                     .lineLimit(2)
 
                 HStack(spacing: 6) {
+                    HStack(spacing: 3) {
+                        Image(systemName: source.icon)
+                            .font(.system(size: 7, weight: .bold))
+                        Text(source.shortLabel)
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundColor(source.accent)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(source.accent.opacity(0.12))
+                    )
+
                     Text(session.sessionName.prefix(8) + "...")
                         .font(.system(size: 8, weight: .medium, design: .monospaced))
                         .foregroundColor(Theme.textTertiary.opacity(0.6))
@@ -271,7 +460,7 @@ struct ConversationView: View {
                     Spacer()
 
                     Label("\(userMessages.count)", systemImage: "text.bubble")
-                    Label("\(session.messages.count)", systemImage: "message")
+                    Label("\(visible.count)", systemImage: "message")
 
                     // Context usage badge
                     let ctxPct = session.contextUsagePercent
@@ -307,16 +496,32 @@ struct ConversationView: View {
     // MARK: - Message Detail
 
     private func messageDetail(session: Session) -> some View {
-        VStack(spacing: 0) {
+        let source = source(for: session)
+        let visible = visibleMessages(in: session)
+        let visibleIDs = Set(visible.map(\.id))
+        let selectedVisibleCount = selectedMessageIDs.intersection(visibleIDs).count
+        let allVisibleSelected = !visibleIDs.isEmpty && visibleIDs.isSubset(of: selectedMessageIDs)
+
+        return VStack(spacing: 0) {
             // Header
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    if let start = session.startTime {
-                        Text(start, format: .dateTime.month().day().hour().minute())
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(Theme.textPrimary)
+                    HStack(spacing: 6) {
+                        HStack(spacing: 4) {
+                            Image(systemName: source.icon)
+                                .font(.system(size: 8, weight: .bold))
+                            Text(source.title)
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundColor(source.accent)
+
+                        if let start = session.startTime {
+                            Text(start, format: .dateTime.month().day().hour().minute())
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(Theme.textPrimary)
+                        }
                     }
-                    Text("\(session.messages.count) \(L10n.messagesCount)")
+                    Text("\(visible.count) \(L10n.messagesCount)")
                         .font(.system(size: 10))
                         .foregroundColor(Theme.textTertiary)
                 }
@@ -375,24 +580,46 @@ struct ConversationView: View {
                     .buttonStyle(.plain)
 
                     Button {
+                        toggleAllVisibleMessages(in: session)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: allVisibleSelected ? "xmark.circle" : "checkmark.circle.fill")
+                                .font(.system(size: 9))
+                            Text(allVisibleSelected
+                                 ? (L10n.isChinese ? "取消全选" : "Deselect All")
+                                 : (L10n.isChinese ? "全选" : "Select All"))
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(visibleIDs.isEmpty ? Theme.textTertiary : Theme.amber)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(visibleIDs.isEmpty ? Theme.cardBackground : Theme.amber.opacity(0.12))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(visibleIDs.isEmpty || isExportingShare)
+
+                    Button {
                         shareSelectedMessages(session: session)
                     } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "square.and.arrow.up")
                                 .font(.system(size: 9))
-                            Text(L10n.isChinese ? "分享(\(selectedMessageIDs.count))" : "Share(\(selectedMessageIDs.count))")
+                            Text(L10n.isChinese ? "分享(\(selectedVisibleCount))" : "Share(\(selectedVisibleCount))")
                                 .font(.system(size: 10, weight: .semibold))
                         }
-                        .foregroundColor(selectedMessageIDs.isEmpty ? Theme.textTertiary : Theme.cyan)
+                        .foregroundColor(selectedVisibleCount == 0 ? Theme.textTertiary : Theme.cyan)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(
                             RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(selectedMessageIDs.isEmpty ? Theme.cardBackground : Theme.cyan.opacity(0.12))
+                                .fill(selectedVisibleCount == 0 ? Theme.cardBackground : Theme.cyan.opacity(0.12))
                         )
                     }
                     .buttonStyle(.plain)
-                    .disabled(selectedMessageIDs.isEmpty || isExportingShare)
+                    .disabled(selectedVisibleCount == 0 || isExportingShare)
 
                     Button {
                         exportSelectedMessagesPDF(session: session)
@@ -403,16 +630,16 @@ struct ConversationView: View {
                             Text("PDF")
                                 .font(.system(size: 10, weight: .semibold))
                         }
-                        .foregroundColor(selectedMessageIDs.isEmpty ? Theme.textTertiary : Theme.green)
+                        .foregroundColor(selectedVisibleCount == 0 ? Theme.textTertiary : Theme.green)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(
                             RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(selectedMessageIDs.isEmpty ? Theme.cardBackground : Theme.green.opacity(0.12))
+                                .fill(selectedVisibleCount == 0 ? Theme.cardBackground : Theme.green.opacity(0.12))
                         )
                     }
                     .buttonStyle(.plain)
-                    .disabled(selectedMessageIDs.isEmpty || isExportingShare)
+                    .disabled(selectedVisibleCount == 0 || isExportingShare)
 
                     Button {
                         isSelectMode = false
@@ -426,6 +653,33 @@ struct ConversationView: View {
                     }
                     .buttonStyle(.plain)
                 } else {
+                    Button {
+                        summarizeSession(session)
+                    } label: {
+                        HStack(spacing: 3) {
+                            if isSummarizingSession && summarySessionPath == session.filePath {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .scaleEffect(0.55)
+                                    .frame(width: 10, height: 10)
+                            } else {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 9))
+                            }
+                            Text(L10n.isChinese ? "总结" : "Summarize")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .foregroundColor(visible.isEmpty ? Theme.textTertiary : source.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(visible.isEmpty ? Theme.cardBackground : source.accent.opacity(0.12))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(visible.isEmpty || isSummarizingSession)
+
                     Button {
                         isSelectMode = true
                         selectedMessageIDs.removeAll()
@@ -466,12 +720,7 @@ struct ConversationView: View {
 
             // Messages
             ScrollView(.vertical, showsIndicators: true) {
-                let visibleMessages = session.messages.filter {
-                    !$0.isToolResult
-                        && !$0.isMeta
-                        && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                }
-                if visibleMessages.isEmpty {
+                if visible.isEmpty {
                     VStack(spacing: 8) {
                         if isLoading {
                             ProgressView()
@@ -490,7 +739,12 @@ struct ConversationView: View {
                     .padding(.top, 18)
                 } else {
                     LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(visibleMessages) { message in
+                        if summarySessionPath == session.filePath,
+                           isSummarizingSession || summaryText != nil || summaryError != nil {
+                            summaryCard(source: source)
+                        }
+
+                        ForEach(visible) { message in
                             HStack(spacing: 6) {
                                 if isSelectMode {
                                     Button {
@@ -507,7 +761,7 @@ struct ConversationView: View {
                                     .buttonStyle(.plain)
                                 }
 
-                                messageBubble(message)
+                                messageBubble(message, source: source)
                             }
                         }
                     }
@@ -526,14 +780,119 @@ struct ConversationView: View {
         }
     }
 
+    private func summarizeSession(_ session: Session) {
+        guard !isSummarizingSession else { return }
+        let source = source(for: session)
+        let messages = visibleMessages(in: session)
+        guard !messages.isEmpty else { return }
+
+        let prompt = buildSummaryPrompt(session: session, source: source, messages: messages)
+        let cwd = session.projectPath
+        summarySessionPath = session.filePath
+        summaryText = nil
+        summaryError = nil
+        isSummarizingSession = true
+
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                Result {
+                    try ConversationSummaryRunner.run(prompt: prompt, source: source, cwd: cwd)
+                }
+            }.value
+
+            guard summarySessionPath == session.filePath else { return }
+            isSummarizingSession = false
+
+            switch result {
+            case .success(let text):
+                summaryText = text
+                summaryError = nil
+                showShareToast(L10n.isChinese ? "会话总结已生成" : "Summary generated")
+            case .failure(let error):
+                summaryText = nil
+                summaryError = (error as? LocalizedError)?.errorDescription
+                    ?? (L10n.isChinese ? "总结失败" : "Summary failed")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func summaryCard(source: ConversationSessionSource) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(source.accent)
+                Text(L10n.isChinese ? "会话精简总结" : "Session Summary")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Theme.textPrimary)
+                Spacer()
+
+                if let summaryText, !summaryText.isEmpty {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(summaryText, forType: .string)
+                        showShareToast(L10n.isChinese ? "已复制总结" : "Summary copied")
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button {
+                    summaryText = nil
+                    summaryError = nil
+                    summarySessionPath = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if isSummarizingSession {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(L10n.isChinese ? "正在调用 \(source.title) 生成总结..." : "Generating with \(source.title)...")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.textSecondary)
+                }
+            } else if let summaryError {
+                Text(summaryError)
+                    .font(.system(size: 10))
+                    .foregroundColor(Theme.red)
+            } else if let summaryText {
+                ConversationMarkdownView(text: summaryText)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(source.accent.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(source.accent.opacity(0.22), lineWidth: 0.6)
+                )
+        )
+    }
+
     private func shareSelectedMessages(session: Session) {
-        let selected = session.messages.filter { selectedMessageIDs.contains($0.id) }
+        let visible = visibleMessages(in: session)
+        selectedMessageIDs.formIntersection(Set(visible.map(\.id)))
+        let selected = visible.filter { selectedMessageIDs.contains($0.id) }
         guard !selected.isEmpty else { return }
         Task { await exportSelectedMessages(session: session, selectedMessages: selected, asPDF: false) }
     }
 
     private func exportSelectedMessagesPDF(session: Session) {
-        let selected = session.messages.filter { selectedMessageIDs.contains($0.id) }
+        let visible = visibleMessages(in: session)
+        selectedMessageIDs.formIntersection(Set(visible.map(\.id)))
+        let selected = visible.filter { selectedMessageIDs.contains($0.id) }
         guard !selected.isEmpty else { return }
         Task { await exportSelectedMessages(session: session, selectedMessages: selected, asPDF: true) }
     }
@@ -548,10 +907,12 @@ struct ConversationView: View {
         defer { isExportingShare = false }
 
         let projectName = session.projectPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? ""
+        let source = source(for: session)
         let html = buildShareHTML(
             messages: selectedMessages,
             projectName: projectName,
             startTime: session.startTime,
+            source: source,
             preset: sharePreset
         )
 
@@ -567,7 +928,7 @@ struct ConversationView: View {
 
             if asPDF {
                 let pdfData = try await renderer.renderPDFData()
-                let fileName = "chat-share-\(selectedMessages.count)msgs-\(sharePreset.slug)-\(stamp).pdf"
+                let fileName = "\(source.shareSlug)-chat-share-\(selectedMessages.count)msgs-\(sharePreset.slug)-\(stamp).pdf"
                 let filePath = desktop.appendingPathComponent(fileName)
                 try pdfData.write(to: filePath, options: .atomic)
                 isSelectMode = false
@@ -586,7 +947,7 @@ struct ConversationView: View {
             var outputURLs: [URL] = []
             for (index, pngData) in pages.enumerated() {
                 let pageSuffix = pages.count > 1 ? "-p\(index + 1)" : ""
-                let fileName = "chat-share-\(selectedMessages.count)msgs-\(sharePreset.slug)-\(stamp)\(pageSuffix).png"
+                let fileName = "\(source.shareSlug)-chat-share-\(selectedMessages.count)msgs-\(sharePreset.slug)-\(stamp)\(pageSuffix).png"
                 let filePath = desktop.appendingPathComponent(fileName)
                 try pngData.write(to: filePath, options: .atomic)
                 outputURLs.append(filePath)
@@ -617,6 +978,7 @@ struct ConversationView: View {
         messages: [Message],
         projectName: String,
         startTime: Date?,
+        source: ConversationSessionSource,
         preset: ShareExportPreset
     ) -> String {
         let formatter = DateFormatter()
@@ -624,8 +986,8 @@ struct ConversationView: View {
         let start = startTime.map { formatter.string(from: $0) } ?? ""
 
         let messageHTML = messages.map { msg in
-            let isUser = msg.role == "human" || msg.role == "user"
-            let role = isUser ? "You" : "Claude"
+            let isUser = isUserMessage(msg)
+            let role = isUser ? "You" : source.assistantRole
             let roleClass = isUser ? "user" : "assistant"
             let timeText: String
             if let ts = msg.timestamp {
@@ -825,7 +1187,7 @@ struct ConversationView: View {
         <body class="theme-\(preset.slug)">
           <main class="card">
             <header class="top">
-              <h1 class="title">Claude Code</h1>
+              <h1 class="title">\(escapeHTML(source.title))</h1>
               <div class="sub">
                 <span class="preset">\(escapeHTML(preset.label))</span>
                 <span>\(escapeHTML(projectName))</span>
@@ -871,16 +1233,17 @@ struct ConversationView: View {
         }
     }
 
-    private func messageBubble(_ message: Message) -> some View {
-        let isUser = message.role == "human" || message.role == "user"
-        let bubbleColor = isUser ? Theme.cyan.opacity(0.1) : Theme.purple.opacity(0.1)
-        let borderColor = isUser ? Theme.cyan.opacity(0.2) : Theme.purple.opacity(0.2)
-        let roleLabel = isUser ? L10n.you : L10n.assistant
-        let roleColor = isUser ? Theme.cyan : Theme.purple
+    private func messageBubble(_ message: Message, source: ConversationSessionSource) -> some View {
+        let isUser = isUserMessage(message)
+        let assistantColor = source.accent
+        let bubbleColor = isUser ? Theme.cyan.opacity(0.1) : assistantColor.opacity(0.1)
+        let borderColor = isUser ? Theme.cyan.opacity(0.2) : assistantColor.opacity(0.2)
+        let roleLabel = isUser ? L10n.you : source.assistantRole
+        let roleColor = isUser ? Theme.cyan : assistantColor
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: isUser ? "person.fill" : "cpu")
+                Image(systemName: isUser ? "person.fill" : source.icon)
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(roleColor)
                 Text(roleLabel)
@@ -933,6 +1296,158 @@ struct ConversationView: View {
     }
 
     // MARK: - Helpers
+
+    private func source(for session: Session) -> ConversationSessionSource {
+        ConversationSessionSource.infer(from: session)
+    }
+
+    private func isUserMessage(_ message: Message) -> Bool {
+        message.role == "human" || message.role == "user"
+    }
+
+    private func isVisibleMessage(_ message: Message) -> Bool {
+        !message.isToolResult
+            && !message.isMeta
+            && !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func visibleMessages(in session: Session) -> [Message] {
+        session.messages.filter(isVisibleMessage)
+    }
+
+    private func toggleAllVisibleMessages(in session: Session) {
+        let ids = Set(visibleMessages(in: session).map(\.id))
+        guard !ids.isEmpty else { return }
+        selectedMessageIDs.formIntersection(ids)
+        if ids.isSubset(of: selectedMessageIDs) {
+            selectedMessageIDs.subtract(ids)
+        } else {
+            selectedMessageIDs.formUnion(ids)
+        }
+    }
+
+    private func buildSummaryPrompt(
+        session: Session,
+        source: ConversationSessionSource,
+        messages: [Message]
+    ) -> String {
+        let projectName = session.projectPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Unknown"
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        let start = session.startTime.map { formatter.string(from: $0) } ?? "Unknown"
+        let transcript = compactTranscript(messages: messages, source: source)
+
+        return """
+        你是一个严谨的 AI Coding 会话整理助手。请只基于下面的会话内容，把原始对话压缩成一份“过程型精简记录”。不要调用工具，不要读取文件，不要执行命令。
+
+        输出要求：
+        - 使用中文。
+        - 控制在 800-1200 字以内；如果会话很短，可以更短。
+        - 用 Markdown。
+        - 重点展示“我们是怎么一路聊到结果的”，而不是只写最终任务报告。
+        - 保留用户诉求的变化、用户指出的问题、我们做出的判断、关键决策、最终落地结果。
+        - 精简冗余工具过程、重复确认、编译/安装流水账；只有影响决策或结论时才提。
+        - 对“关键决策”要单独列出，写清为什么这么定。
+        - 如果 transcript 中间被省略，不要假装看到了省略内容。
+        - 不要编造会话中没有的信息。
+
+        会话来源：\(source.title)
+        项目：\(projectName)
+        开始时间：\(start)
+        可见消息数：\(messages.count)
+
+        请按这个结构输出：
+        ## 一句话概括
+        ## 对话过程
+        按时间线用 4-8 条 bullet 写出用户诉求如何推进、问题如何暴露、方案如何调整。
+        ## 关键决策
+        用 bullet 保留关键拍板及原因。
+        ## 最终状态
+        说明已经完成什么、还剩什么风险或下一步。
+
+        <transcript>
+        \(transcript)
+        </transcript>
+        """
+    }
+
+    private func compactTranscript(messages: [Message], source: ConversationSessionSource) -> String {
+        let maxMessageChars = 1_800
+        let maxTotalChars = 60_000
+        let headBudget = 36_000
+        let tailBudget = 24_000
+
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm"
+
+        let entries = messages.enumerated().map { index, message -> String in
+            let role = isUserMessage(message) ? "User" : source.assistantRole
+            var content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if content.count > maxMessageChars {
+                content = String(content.prefix(maxMessageChars)) + "\n...[message truncated]"
+            }
+            let time = message.timestamp.map { timeFormatter.string(from: $0) } ?? "--:--"
+            return "### \(String(format: "%03d", index + 1)) \(time) \(role)\n\(content)"
+        }
+
+        let full = entries.joined(separator: "\n\n")
+        guard full.count > maxTotalChars else { return full }
+
+        var head: [String] = []
+        var headCount = 0
+        for entry in entries {
+            let nextCount = headCount + entry.count + 2
+            if nextCount > headBudget { break }
+            head.append(entry)
+            headCount = nextCount
+        }
+
+        var tail: [String] = []
+        var tailCount = 0
+        for entry in entries.reversed() {
+            let nextCount = tailCount + entry.count + 2
+            if nextCount > tailBudget { break }
+            tail.insert(entry, at: 0)
+            tailCount = nextCount
+        }
+
+        return """
+        \(head.joined(separator: "\n\n"))
+
+        ...[middle of transcript omitted to keep the summary prompt compact]...
+
+        \(tail.joined(separator: "\n\n"))
+        """
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+    }
+
+    private func resumeCommand(for session: Session) -> (command: String, label: String)? {
+        switch source(for: session) {
+        case .claudeCode:
+            return ("claude --resume \(shellQuote(session.sessionName))", "claude --resume")
+        case .codex:
+            return ("codex resume \(shellQuote(codexSessionID(from: session)))", "codex resume")
+        case .gemini, .unknown:
+            return nil
+        }
+    }
+
+    private func codexSessionID(from session: Session) -> String {
+        let name = session.sessionName
+        if let range = name.range(
+            of: #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#,
+            options: .regularExpression
+        ) {
+            return String(name[range])
+        }
+        if name.hasPrefix("rollout-") {
+            return String(name.dropFirst("rollout-".count))
+        }
+        return name
+    }
 
     private func formattedDuration(_ seconds: TimeInterval) -> String? {
         guard seconds > 0 else { return nil }

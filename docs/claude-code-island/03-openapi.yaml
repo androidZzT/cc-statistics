@@ -1,0 +1,275 @@
+openapi: 3.0.3
+info:
+  title: Claude Code Island Bridge API
+  version: 0.1.0
+  description: >
+    本地 bridge 与 iOS Companion 间的 MVP API。用于任务状态订阅与审批回传。
+servers:
+  - url: http://127.0.0.1:8765
+paths:
+  /v1/health:
+    get:
+      summary: 健康检查
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+  /v1/tasks/current:
+    get:
+      summary: 获取当前活动任务
+      responses:
+        '200':
+          description: 当前任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskState'
+  /v1/tasks:
+    get:
+      summary: 获取最近任务列表
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 20
+      responses:
+        '200':
+          description: 任务列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tasks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TaskState'
+  /v1/events/stream:
+    get:
+      summary: 订阅事件流（SSE）
+      parameters:
+        - in: header
+          name: Last-Event-ID
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: text/event-stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /v1/events:
+    post:
+      summary: 注入标准事件（用于 hooks / 外部桥接）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventEnvelope'
+      responses:
+        '200':
+          description: 事件已接收
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: boolean
+                  event_id:
+                    type: string
+        '422':
+          description: 参数不合法
+  /v1/approvals:
+    get:
+      summary: 获取待审批动作列表
+      responses:
+        '200':
+          description: 待审批列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApprovalItem'
+  /v1/approvals/{approvalId}:resolve:
+    post:
+      summary: 回传审批决策
+      parameters:
+        - in: path
+          name: approvalId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveApprovalRequest'
+      responses:
+        '200':
+          description: 决策生效
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: boolean
+                  approval_id:
+                    type: string
+                  approved:
+                    type: boolean
+                  event_id:
+                    type: string
+                  effective_at:
+                    type: string
+                    format: date-time
+        '409':
+          description: 已过期或已决策
+        '422':
+          description: 参数不合法
+
+components:
+  schemas:
+    Usage:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+          minimum: 0
+        output_tokens:
+          type: integer
+          minimum: 0
+        cost_usd:
+          type: number
+          format: double
+          minimum: 0
+    TaskState:
+      type: object
+      required:
+        - task_id
+        - status
+        - title
+      properties:
+        task_id:
+          type: string
+        session_id:
+          type: string
+        title:
+          type: string
+        repo:
+          type: string
+        model:
+          type: string
+        status:
+          type: string
+          enum: [IDLE, RUNNING, WAITING_APPROVAL, COMPLETED, FAILED, CANCELED]
+        phase:
+          type: string
+        duration_sec:
+          type: integer
+          minimum: 0
+        summary:
+          type: string
+        usage:
+          $ref: '#/components/schemas/Usage'
+    ApprovalItem:
+      type: object
+      required:
+        - approval_id
+        - task_id
+        - tool
+        - action
+        - risk
+        - expires_at
+      properties:
+        approval_id:
+          type: string
+        task_id:
+          type: string
+        tool:
+          type: string
+        action:
+          type: string
+        risk:
+          type: string
+          enum: [low, medium, high]
+        reason:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+    ResolveApprovalRequest:
+      type: object
+      required:
+        - approved
+        - timestamp
+        - nonce
+        - signature
+      properties:
+        approved:
+          type: boolean
+        timestamp:
+          type: string
+          format: date-time
+        nonce:
+          type: string
+        signature:
+          type: string
+        resolver:
+          type: string
+          example: ios_device
+    EventEnvelope:
+      type: object
+      required:
+        - version
+        - event_id
+        - type
+        - task_id
+        - timestamp
+        - payload
+      properties:
+        version:
+          type: integer
+          enum: [1]
+        event_id:
+          type: string
+        type:
+          type: string
+          enum:
+            - task_started
+            - task_progress
+            - approval_required
+            - approval_resolved
+            - task_completed
+            - task_failed
+            - task_canceled
+        task_id:
+          type: string
+        session_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        source:
+          type: string
+        payload:
+          type: object

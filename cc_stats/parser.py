@@ -138,28 +138,99 @@ def parse_jsonl(path: Path) -> Session:
     )
 
 
+def _usage_score(usage: dict[str, Any]) -> tuple[int, int]:
+    """Prefer the completed usage record without summing duplicate stream writes."""
+    output = _to_int(usage.get("output_tokens", 0))
+    total = sum(
+        _to_int(usage.get(k, 0))
+        for k in (
+            "input_tokens",
+            "output_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+        )
+    )
+    return (output, total)
+
+
+def _content_score(content: Any) -> int:
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        score = 0
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            text = block.get("text") or block.get("content")
+            if isinstance(text, str):
+                score += len(text)
+        return score
+    return 0
+
+
+def _tool_call_key(tc: ToolCall) -> str:
+    if tc.tool_use_id:
+        return f"id:{tc.tool_use_id}"
+    return json.dumps(
+        {
+            "name": tc.name,
+            "input": tc.input,
+            "timestamp": tc.timestamp,
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+def _merge_assistant_message(existing: Message, incoming: Message) -> Message:
+    """Merge duplicate Claude stream rows while preserving unique tool calls."""
+    seen = {_tool_call_key(tc) for tc in existing.tool_calls}
+    for tc in incoming.tool_calls:
+        key = _tool_call_key(tc)
+        if key not in seen:
+            existing.tool_calls.append(tc)
+            seen.add(key)
+
+    existing.tool_results.update(incoming.tool_results)
+    existing.is_tool_result = existing.is_tool_result or incoming.is_tool_result
+    existing.is_meta = existing.is_meta and incoming.is_meta
+
+    if not existing.model and incoming.model:
+        existing.model = incoming.model
+    if _usage_score(incoming.usage) > _usage_score(existing.usage):
+        existing.usage = dict(incoming.usage)
+    if _content_score(incoming.content) > _content_score(existing.content):
+        existing.content = incoming.content
+
+    return existing
+
+
 def _deduplicate_messages(messages: list[Message]) -> list[Message]:
-    """按 message_id 去重 assistant 消息，保留 output_tokens 最大的记录"""
-    best: dict[str, tuple[int, int]] = {}  # message_id -> (index, output_tokens)
-    to_remove: set[int] = set()
+    """按 message_id 去重 assistant 消息，并合并同一消息的 tool_use 块。
 
-    for i, msg in enumerate(messages):
+    Claude Code may write the same assistant message multiple times: one row can
+    carry the final token usage while another row with the same message_id carries
+    the Skill/tool_use block. Dropping all but the "largest" row loses tool calls,
+    so keep one message for token accounting and merge unique tool calls into it.
+    """
+    merged: list[Message] = []
+    index_by_message_id: dict[str, int] = {}
+
+    for msg in messages:
         if msg.role != "assistant" or not msg.message_id:
+            merged.append(msg)
             continue
-        out = msg.usage.get("output_tokens", 0) or 0
-        if msg.message_id in best:
-            old_idx, old_out = best[msg.message_id]
-            if out > old_out:
-                to_remove.add(old_idx)
-                best[msg.message_id] = (i, out)
-            else:
-                to_remove.add(i)
-        else:
-            best[msg.message_id] = (i, out)
 
-    if not to_remove:
-        return messages
-    return [m for i, m in enumerate(messages) if i not in to_remove]
+        existing_idx = index_by_message_id.get(msg.message_id)
+        if existing_idx is None:
+            index_by_message_id[msg.message_id] = len(merged)
+            merged.append(msg)
+            continue
+
+        merged[existing_idx] = _merge_assistant_message(merged[existing_idx], msg)
+
+    return merged
 
 
 def _path_to_dirname(path: Path) -> str:

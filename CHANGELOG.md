@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.3] - 2026-09-30
+
+### Added
+- Add source labels, message selection, share controls, and Claude/Codex session summaries to the macOS conversation view.
+- Show detailed loading stages, file counts, and smooth progress while retaining progressive background loading.
+- Add rule-based GitHub issue/PR triage with maintainer plan/fix commands.
+- Include iOS Island protocol, integration documentation, and shared Xcode scheme.
+
+### Fixed
+- Preserve Skill/tool calls when merging duplicate Claude streaming records.
+- Apply date filters to Skill statistics without re-reading unchanged sessions in the web dashboard.
+- Pair duplicate Codex event/response records without dropping repeated user turns; hide injected context from the conversation view.
+- Quote copied resume commands and avoid subprocess output pipe deadlocks when generating summaries.
+
+
 ## [1.1.2] - 2026-09-30
 
 ### Fixed

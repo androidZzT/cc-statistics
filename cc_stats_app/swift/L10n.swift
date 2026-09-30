@@ -153,6 +153,25 @@ enum L10n {
 
     // MARK: - Loading
     static var loading: String { isChinese ? "加载中..." : "Loading..." }
+    static var loadingPreparing: String { isChinese ? "准备加载" : "Preparing" }
+    static var loadingScanning: String { isChinese ? "扫描会话文件" : "Scanning sessions" }
+    static var loadingInitialBatch: String { isChinese ? "解析首屏会话" : "Parsing first batch" }
+    static var loadingRemaining: String { isChinese ? "解析剩余会话" : "Parsing remaining sessions" }
+    static var loadingAggregating: String { isChinese ? "生成统计" : "Building stats" }
+    static var loadingCursor: String { isChinese ? "读取 Cursor 数据" : "Reading Cursor data" }
+    static var loadingHistory: String { isChinese ? "补全历史会话" : "Loading history" }
+    static var loadingDone: String { isChinese ? "加载完成" : "Loaded" }
+    static var loadingUsingCache: String { isChinese ? "使用缓存快速刷新" : "Refreshing from cache" }
+    static var loadingNoChanges: String { isChinese ? "没有发现变更" : "No changes found" }
+    static func loadingFilesFound(_ count: Int) -> String {
+        isChinese ? "发现 \(count) 个会话文件" : "Found \(count) session files"
+    }
+    static func loadingParsedFiles(_ completed: Int, _ total: Int) -> String {
+        isChinese ? "已处理 \(completed)/\(total) 个文件" : "Processed \(completed)/\(total) files"
+    }
+    static func loadingSessionsFound(_ count: Int) -> String {
+        isChinese ? "已加载 \(count) 个会话" : "Loaded \(count) sessions"
+    }
 
     // MARK: - Efficiency
     static var efficiency: String { isChinese ? "效率评分" : "Efficiency" }
