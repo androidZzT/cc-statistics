@@ -59,6 +59,11 @@ jobs:
           mv CCStats "$APP/Contents/MacOS/CCStats"
           chmod +x "$APP/Contents/MacOS/CCStats"
 
+      - name: Sign and verify app bundle
+        run: |
+          codesign --force --deep --sign - cc_stats_app/swift/CCStats.app
+          codesign --verify --deep --strict cc_stats_app/swift/CCStats.app
+
       - name: Package as zip (preserves permissions)
         run: |
           ditto -c -k --keepParent cc_stats_app/swift/CCStats.app CCStats-${{ matrix.arch }}.zip

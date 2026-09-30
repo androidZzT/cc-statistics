@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-const event = process.argv[2];
+let event = process.argv[2];
 if (!event) process.exit(0);
 
 const EVENT_TO_STATE = {
@@ -30,7 +30,18 @@ const EVENT_TO_STATE = {
   SessionEnd: "idle",
 };
 
-const state = EVENT_TO_STATE[event];
+let payload = {};
+try {
+  const input = JSON.parse(fs.readFileSync(0, "utf8"));
+  if (input && typeof input === "object" && !Array.isArray(input)) payload = input;
+} catch {}
+const mode = [payload.permission_mode, payload.permissionMode,
+  payload.meta?.permission_mode, payload.meta?.permissionMode, payload.permissions?.mode]
+  .find(value => typeof value === "string" && value.trim()) || "";
+const bypass = mode.trim().replace(/[_-]/g, "").toLowerCase().startsWith("bypass");
+if (event === "PermissionRequest" && bypass) event = "PreToolUse";
+const state = event === "Notification" && payload.notification_type === "idle_prompt"
+  ? "idle" : EVENT_TO_STATE[event];
 if (!state) process.exit(0);
 
 const STATE_DIR = path.join(os.homedir(), ".cc-stats");
@@ -42,6 +53,9 @@ try {
     state,
     event,
     timestamp: Date.now(),
+    approval_required: event === "PermissionRequest",
+    session_id: typeof payload.session_id === "string" ? payload.session_id : "",
+    notification_type: payload.notification_type,
   }));
 } catch {}
 

@@ -29,6 +29,8 @@ from typing import Any
 from urllib import error, request
 from uuid import uuid4
 
+from .permissions import _is_bypass_permission_mode
+
 _DEFAULT_BRIDGE_BASE_URL = "http://127.0.0.1:8765"
 _ACTIVE_EVENTS = {
     "UserPromptSubmit",
@@ -140,31 +142,6 @@ def _approval_id_from_event(event: dict[str, Any]) -> str:
     return f"apr_{uuid4().hex}"
 
 
-def _permission_mode_from_event(event: dict[str, Any]) -> str:
-    for key in ("permission_mode", "permissionMode"):
-        value = event.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    meta = event.get("meta")
-    if isinstance(meta, dict):
-        for key in ("permission_mode", "permissionMode"):
-            value = meta.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    permissions = event.get("permissions")
-    if isinstance(permissions, dict):
-        value = permissions.get("mode")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return ""
-
-
-def _is_bypass_permission_mode(event: dict[str, Any]) -> bool:
-    mode = _permission_mode_from_event(event)
-    normalized = mode.replace("_", "").replace("-", "").lower()
-    return normalized.startswith("bypass")
-
-
 def _env_int(name: str, default: int) -> int:
     value = os.environ.get(name)
     if value is None:
@@ -185,13 +162,6 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _derive_activity_state(event: dict[str, Any], event_name: str) -> str | None:
     if event_name == "Notification":
         notification_type = str(event.get("notification_type") or "")
@@ -208,7 +178,8 @@ def _read_existing_activity_state(state_file: Path) -> dict[str, Any]:
     try:
         if not state_file.exists():
             return {}
-        return json.loads(state_file.read_text(encoding="utf-8"))
+        payload = json.loads(state_file.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
     except (json.JSONDecodeError, OSError):
         return {}
 
@@ -225,7 +196,9 @@ def _should_preserve_waiting_approval(
     if event_name != "Notification":
         return False
     notification_type = str(event.get("notification_type") or "")
-    return notification_type == "idle_prompt"
+    return (notification_type == "idle_prompt"
+            and previous_payload.get("session_id") == event.get("session_id")
+            and not _is_bypass_permission_mode(event))
 
 
 def _write_activity_state(event: dict[str, Any], event_name: str) -> None:
@@ -247,6 +220,10 @@ def _write_activity_state(event: dict[str, Any], event_name: str) -> None:
         "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
         "bridge_enabled": bool(_bridge_base_url()),
     }
+    payload["approval_required"] = event_name == "PermissionRequest"
+    session_id = event.get("session_id")
+    if isinstance(session_id, str):
+        payload["session_id"] = session_id
     approval_id = str(event.get("approval_id") or "")
     if approval_id:
         payload["approval_id"] = approval_id
@@ -402,16 +379,11 @@ def handle_pre_tool_use(event: dict[str, Any]) -> None:
 
     注意：PreToolUse 在实际运行中会覆盖常规工具调用（例如 Read），
     不应默认视为“需要确权”。权限提醒应由 PermissionRequest 事件触发。
-    如需兼容旧行为，可设置环境变量 CC_STATS_NOTIFY_PRE_TOOL_USE=1。
     """
-    from .notifier import notify_permission_request
-
     tool_name = event.get("tool_name", "")
     tool_input = event.get("tool_input", {})
     description = _extract_action_description(tool_input)
 
-    if _env_bool("CC_STATS_NOTIFY_PRE_TOOL_USE", False):
-        notify_permission_request(tool_name, description)
     _publish_bridge_event(
         raw_event=event,
         event_type="task_progress",
@@ -498,6 +470,13 @@ def handle_permission_request(event: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     approved, message = decision
+    # Do not leave a resolved approval visible until the next tool event.
+    state_file = Path.home() / ".cc-stats" / "activity-state.json"
+    previous = _read_existing_activity_state(state_file)
+    if previous.get("approval_id") == approval_id:
+        resolved_event = dict(event)
+        resolved_event.pop("approval_id", None)
+        _write_activity_state(resolved_event, "PostToolUse" if approved else "PermissionDenied")
     if approved:
         return {
             "hookSpecificOutput": {
@@ -574,7 +553,7 @@ def handle_notification(event: dict[str, Any]) -> None:
         send_notification(
             "Claude Code 等待输入",
             message or "Claude Code is waiting for your input",
-            notify_type="permission_request",
+            notify_type="general",
             sound="Ping",
         )
         _publish_bridge_event(
@@ -597,6 +576,8 @@ def process_hook_event(event: dict[str, Any]) -> dict[str, Any] | None:
         mutable_event["approval_id"] = _approval_id_from_event(mutable_event)
 
     if event_type == "PermissionRequest" and _is_bypass_permission_mode(mutable_event):
+        mutable_event.pop("approval_id", None)
+        _write_activity_state(mutable_event, "PreToolUse")
         tool_name = str(mutable_event.get("tool_name") or "")
         tool_input = mutable_event.get("tool_input", {})
         description = _extract_action_description(tool_input)

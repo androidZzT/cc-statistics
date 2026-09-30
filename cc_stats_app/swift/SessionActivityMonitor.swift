@@ -88,13 +88,15 @@ final class SessionActivityMonitor {
         hookEvent: String?,
         hookTimestamp: TimeInterval?,
         now: TimeInterval,
-        thresholds: Thresholds
+        thresholds: Thresholds,
+        approvalRequired: Bool? = nil
     ) -> SessionActivityState {
         guard let ts = hookTimestamp else { return .sleeping }
 
         let elapsed = now - ts / 1000.0  // timestamp is in ms
 
-        if hookEvent == "PermissionRequest", elapsed <= thresholds.approvalTimeout {
+        if hookEvent == "PermissionRequest", approvalRequired != false,
+           elapsed >= 0, elapsed <= thresholds.approvalTimeout {
             return .waitingApproval
         }
 
@@ -123,6 +125,7 @@ final class SessionActivityMonitor {
         var hookState: String?
         var hookEvent: String?
         var hookTimestamp: TimeInterval?
+        var approvalRequired: Bool?
         var bridgeEnabled = false
         var approvalId: String?
         var toolName: String?
@@ -130,6 +133,7 @@ final class SessionActivityMonitor {
 
         if let data = FileManager.default.contents(atPath: stateFilePath),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            approvalRequired = json["approval_required"] as? Bool
             hookState = json["state"] as? String
             hookEvent = json["event"] as? String
             hookTimestamp = json["timestamp"] as? TimeInterval
@@ -144,7 +148,8 @@ final class SessionActivityMonitor {
             hookEvent: hookEvent,
             hookTimestamp: hookTimestamp,
             now: Date().timeIntervalSince1970,
-            thresholds: thresholds
+            thresholds: thresholds,
+            approvalRequired: approvalRequired
         )
 
         let snapshot = SessionActivitySnapshot(

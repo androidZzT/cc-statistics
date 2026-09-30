@@ -253,3 +253,12 @@ def test_resolve_approval_with_event_appends_timeline_event() -> None:
     assert evt.payload["approval_id"] == "apr_42"
     assert evt.payload["approved"] is True
     assert evt.payload["resolved_by"] == "ios_device"
+
+
+def test_completed_task_has_no_pending_approval() -> None:
+    store = BridgeStateStore()
+    store.apply_event(_event('evt_01', EventType.APPROVAL_REQUIRED,
+                             {'approval_id': 'stale', 'action': 'Run command'}))
+    assert len(store.pending_approvals()) == 1
+    store.apply_event(_event('evt_02', EventType.TASK_COMPLETED, {}))
+    assert store.pending_approvals() == []

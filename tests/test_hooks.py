@@ -327,8 +327,9 @@ class TestPermissionRequestHook(unittest.TestCase):
                 state_file = Path(tmpdir) / ".cc-stats" / "activity-state.json"
                 assert state_file.exists()
                 state = json.loads(state_file.read_text(encoding="utf-8"))
-                assert state["event"] == "PermissionRequest"
-                assert state["approval_id"] == "tool_abc"
+                assert state["event"] == "PostToolUse"
+                assert state["approval_required"] is False
+                assert "approval_id" not in state
 
     @patch("cc_stats.hooks._publish_bridge_event")
     @patch("cc_stats.hooks._wait_bridge_approval_decision")
@@ -351,7 +352,9 @@ class TestPermissionRequestHook(unittest.TestCase):
                 wait_mock.assert_not_called()
                 publish_mock.assert_called_once()
                 state_file = Path(tmpdir) / ".cc-stats" / "activity-state.json"
-                assert not state_file.exists()
+                state = json.loads(state_file.read_text())
+                assert state["event"] == "PreToolUse"
+                assert state["approval_required"] is False
 
 
 class TestPreToolUseHook(unittest.TestCase):
@@ -370,7 +373,7 @@ class TestPreToolUseHook(unittest.TestCase):
 
     @patch("cc_stats.hooks._publish_bridge_event")
     @patch("cc_stats.notifier.notify_permission_request")
-    def test_pre_tool_use_legacy_opt_in_notification(self, notify_mock, _publish_mock):
+    def test_pre_tool_use_legacy_flag_does_not_trigger_permission_notification(self, notify_mock, _publish_mock):
         event = {
             "event": "PreToolUse",
             "session_id": "session_pre_2",
@@ -380,7 +383,7 @@ class TestPreToolUseHook(unittest.TestCase):
         with patch.dict(os.environ, {"CC_STATS_NOTIFY_PRE_TOOL_USE": "1"}):
             out = process_hook_event(event)
         assert out is None
-        notify_mock.assert_called_once()
+        notify_mock.assert_not_called()
 
 
 class TestLiveBridgeHookEvents(unittest.TestCase):

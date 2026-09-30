@@ -50,7 +50,9 @@ class BridgeStateStore:
     def pending_approvals(self) -> list[ApprovalItem]:
         with self._lock:
             self._expire_stale_approvals_locked()
-            return [item for item in self._approvals.values() if not item.resolved]
+            return [item for item in self._approvals.values()
+                    if not item.resolved
+                    and self._tasks[item.task_id].status == TaskStatus.WAITING_APPROVAL]
 
     def get_approval(self, approval_id: str) -> ApprovalItem | None:
         with self._lock:

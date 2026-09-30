@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.2] - 2026-09-30
+
+### Fixed
+- Stop treating ordinary tool calls as permission prompts, including when the legacy notification flag is set.
+- Read bypass permission metadata consistently in Python, JavaScript hooks, and bridge ingestion.
+- Clear resolved approval indicators and hide pending approvals for completed tasks.
+- Keep idle input notifications separate from permission notifications and respect explicit non-pending approval state on macOS.
+- Sign macOS app bundles before packaging release archives and wheels.
+
+
 ## v1.1.0 (2026-06-29)
 
 ### Windows Tray

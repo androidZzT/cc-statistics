@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Mapping
 from uuid import uuid4
 
+from ..permissions import _permission_mode_from_event as _extract_permission_mode, _is_bypass_permission_mode
+
 from .models import Event, EventType
 from .state_store import BridgeStateStore
 
@@ -195,30 +197,6 @@ def _extract_model(payload: Mapping[str, Any]) -> str:
     return ""
 
 
-def _extract_permission_mode(payload: Mapping[str, Any]) -> str:
-    mode = payload.get("permission_mode")
-    if isinstance(mode, str):
-        return mode
-    mode = payload.get("permissionMode")
-    if isinstance(mode, str):
-        return mode
-    meta = payload.get("meta")
-    if isinstance(meta, Mapping):
-        mode = meta.get("permission_mode")
-        if isinstance(mode, str):
-            return mode
-        mode = meta.get("permissionMode")
-        if isinstance(mode, str):
-            return mode
-    return ""
-
-
-def _is_bypass_permission_mode(payload: Mapping[str, Any]) -> bool:
-    mode = _extract_permission_mode(payload)
-    normalized = mode.replace("_", "").replace("-", "").lower()
-    return normalized.startswith("bypass")
-
-
 def _extract_usage(payload: Mapping[str, Any]) -> dict[str, Any]:
     usage = payload.get("usage")
     if isinstance(usage, Mapping):
@@ -301,7 +279,7 @@ def _extract_last_tool(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _extract_approval(payload: Mapping[str, Any]) -> dict[str, Any] | None:
-    if _is_bypass_permission_mode(payload):
+    if payload.get("approval_required") is False or _is_bypass_permission_mode(payload):
         return None
     raw_type = str(payload.get("type", "")).lower()
     raw_event = str(payload.get("event", "")).lower()
