@@ -6,6 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const { randomUUID } = require("crypto");
 
 let event = process.argv[2];
 if (!event) process.exit(0);
@@ -46,17 +47,33 @@ if (!state) process.exit(0);
 
 const STATE_DIR = path.join(os.homedir(), ".cc-stats");
 const STATE_FILE = path.join(STATE_DIR, "activity-state.json");
+const TEMP_FILE = path.join(STATE_DIR, `.activity-state.${process.pid}.${randomUUID()}.tmp`);
+let ownsTempFile = false;
 
 try {
   fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify({
-    state,
-    event,
-    timestamp: Date.now(),
-    approval_required: event === "PermissionRequest",
-    session_id: typeof payload.session_id === "string" ? payload.session_id : "",
-    notification_type: payload.notification_type,
-  }));
-} catch {}
+  // Exclusive creation and a unique name keep concurrent hook writers separate.
+  const fd = fs.openSync(TEMP_FILE, "wx", 0o600);
+  ownsTempFile = true;
+  try {
+    fs.writeFileSync(fd, JSON.stringify({
+      state,
+      event,
+      timestamp: Date.now(),
+      approval_required: event === "PermissionRequest",
+      session_id: typeof payload.session_id === "string" ? payload.session_id : "",
+      notification_type: payload.notification_type,
+    }));
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(TEMP_FILE, STATE_FILE);
+} catch {
+  // Activity tracking must not interrupt Claude or Codex.
+} finally {
+  if (ownsTempFile) {
+    try { fs.unlinkSync(TEMP_FILE); } catch {}
+  }
+}
 
 process.exit(0);

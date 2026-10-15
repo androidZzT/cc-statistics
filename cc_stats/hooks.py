@@ -22,6 +22,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -180,7 +181,7 @@ def _read_existing_activity_state(state_file: Path) -> dict[str, Any]:
             return {}
         payload = json.loads(state_file.read_text(encoding="utf-8"))
         return payload if isinstance(payload, dict) else {}
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, UnicodeError):
         return {}
 
 
@@ -235,12 +236,29 @@ def _write_activity_state(event: dict[str, Any], event_name: str) -> None:
     if notification_type:
         payload["notification_type"] = notification_type
 
+    temporary_path: Path | None = None
     try:
         state_file.parent.mkdir(parents=True, exist_ok=True)
-        state_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    except OSError:
-        # State file is best-effort only; do not block Claude hooks.
+        # Each concurrent hook writes a separate file on the same filesystem.
+        # Readers see either the previous complete state or the new complete state.
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=state_file.parent,
+            prefix=".activity-state.", suffix=".tmp", delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            json.dump(payload, temporary_file, ensure_ascii=False)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, state_file)
+    except (OSError, UnicodeError):
+        # State file is best-effort only; do not block Claude or Codex hooks.
         return
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def handle_stop(event: dict[str, Any]) -> None:
