@@ -249,7 +249,7 @@ final class IslandOverlayController {
             return
         }
 
-        model.payload = payload
+        if changed { model.payload = payload }
         if changed || layoutNeedsSync || visibilityNeedsSync {
             render(payload)
         } else {
@@ -1145,8 +1145,12 @@ private struct IslandCapsuleView: View {
         ZStack(alignment: .top) {
             Color.clear
 
-            notchShell
-                .frame(width: model.layout.islandWidth, height: model.layout.islandHeight, alignment: .top)
+            // Ordering an NSPanel out does not unmount its SwiftUI content.
+            // Remove animated subviews once the fade-out completes.
+            if model.payload.state != .hidden {
+                notchShell
+                    .frame(width: model.layout.islandWidth, height: model.layout.islandHeight, alignment: .top)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -1543,8 +1547,7 @@ private struct ClawdAnimatedAvatar: View {
     var motion: IslandAvatarMotion
     var size: CGSize
 
-    @State private var frameIndex = 0
-    @State private var timer: Timer?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let motionFrames: [IslandAvatarMotion: [String]] = [
         .idle: ["clawd-idle-f0", "clawd-idle-f1"],
@@ -1577,10 +1580,12 @@ private struct ClawdAnimatedAvatar: View {
     ]
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
-            let time = timeline.date.timeIntervalSinceReferenceDate
+        // One clock drives both the sprite and motion overlays. Pixel art does
+        // not need display-rate updates, especially for idle/sleeping states.
+        TimelineView(.animation(minimumInterval: animationInterval, paused: reduceMotion)) { timeline in
+            let time = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
             ZStack {
-                avatarImage
+                avatarImage(at: time)
                     .scaleEffect(avatarScale(at: time))
                     .rotationEffect(.degrees(avatarRotation(at: time)))
                     .offset(avatarOffset(at: time))
@@ -1590,17 +1595,18 @@ private struct ClawdAnimatedAvatar: View {
             .frame(width: size.width, height: size.height)
         }
         .frame(width: size.width, height: size.height)
-        .onAppear { startAnimation() }
-        .onDisappear { stopAnimation() }
-        .onChange(of: motion) { _ in
-            frameIndex = 0
-            startAnimation()
+    }
+
+    private var animationInterval: TimeInterval {
+        switch motion {
+        case .idle, .sleeping: return 1.0 / 4.0
+        default: return 1.0 / 12.0
         }
     }
 
     @ViewBuilder
-    private var avatarImage: some View {
-        if let image = currentImage {
+    private func avatarImage(at time: TimeInterval) -> some View {
+        if let image = currentImage(at: time) {
             Image(nsImage: image)
                 .resizable()
                 .interpolation(.none)
@@ -1629,10 +1635,12 @@ private struct ClawdAnimatedAvatar: View {
         }
     }
 
-    private var currentImage: NSImage? {
+    private func currentImage(at time: TimeInterval) -> NSImage? {
         let frames = Self.motionFrames[motion] ?? Self.motionFrames[.idle] ?? []
         guard !frames.isEmpty else { return nil }
-        let frameName = frames[frameIndex % frames.count]
+        let interval = Self.frameIntervals[motion] ?? 0.2
+        let frameIndex = Int(time / interval) % frames.count
+        let frameName = frames[frameIndex]
         return StatusBarController.loadClawdImage(frameName: frameName)
     }
 
@@ -1677,24 +1685,6 @@ private struct ClawdAnimatedAvatar: View {
         default:
             return .zero
         }
-    }
-
-    private func startAnimation() {
-        stopAnimation()
-        let frames = Self.motionFrames[motion] ?? []
-        guard frames.count > 1 else { return }
-        let interval = Self.frameIntervals[motion] ?? 0.2
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
-            frameIndex = (frameIndex + 1) % frames.count
-        }
-        if let timer {
-            RunLoop.main.add(timer, forMode: .common)
-        }
-    }
-
-    private func stopAnimation() {
-        timer?.invalidate()
-        timer = nil
     }
 
     private func wave(_ time: TimeInterval, period: Double, phase: Double = 0) -> CGFloat {

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.4] - 2026-10-21
+
+### Performance
+- Drive island avatar sprites and motion from one throttled animation clock; unmount animations when the island is hidden and respect Reduce Motion.
+- Pause historical parsing when the dashboard closes, propagate cancellation to background parsers, and retain completed chunks when resuming.
+- Scan JSONL bytes once instead of repeatedly searching accumulated long lines and removing buffer prefixes.
+
+### Fixed
+- Prevent canceled background loads from clearing newer task handles.
+- Recover malformed hook activity state and write updates atomically.
+
+### Validation
+- Add regressions for background loading pause/resume and JSONL chunk boundaries, UTF-8, malformed rows, early termination, and cancellation.
+- On the test machine, a 40-second resident CPU sample averaged 5.0%, compared with 97.7% for the previously installed v1.0.4; this comparison includes changes between those versions. Data loading can still briefly approach one CPU core.
+- A synthetic file containing an 8 MiB line and 50,000 short lines read in 0.019 seconds versus 7.86 seconds before the reader change; results depend on workload and hardware.
+
 ## [1.1.3] - 2026-09-30
 
 ### Added

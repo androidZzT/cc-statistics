@@ -121,6 +121,9 @@ final class StatsViewModel: ObservableObject {
                 pauseAutoRefresh()
                 progressiveLoadTask?.cancel()
                 progressiveLoadTask = nil
+                historicalLoadTask?.cancel()
+                historicalLoadTask = nil
+                historicalLoadID = nil
             }
         }
     }
@@ -140,7 +143,9 @@ final class StatsViewModel: ObservableObject {
     private var lastRateLimitFetch: Date?
     private var conversationLoadTask: Task<Void, Never>?
     private var historicalLoadTask: Task<Void, Never>?
+    private var historicalLoadID: UUID?
     private var progressiveLoadTask: Task<Void, Never>?
+    private var progressiveLoadID: UUID?
     private var deferredInitialFilePaths: [String] = []
     private var didFinishInitialRefresh = false
 
@@ -283,6 +288,7 @@ final class StatsViewModel: ObservableObject {
     /// 完整刷新 = 磁盘加载（重） + 内存筛选（轻）
     /// isLoading 由调用方设置为 true，applyFilterAndUpdate 通过 generation 检查清除。
     private func fullRefresh(generation: UInt) async {
+        guard !Task.isCancelled else { return }
         await loadData(generation: generation)
         guard !Task.isCancelled else { return }
         await applyFilterAndUpdate()
@@ -1084,8 +1090,15 @@ final class StatsViewModel: ObservableObject {
         guard isPanelVisible else { return }
         progressiveLoadTask?.cancel()
 
+        let loadID = UUID()
+        progressiveLoadID = loadID
         progressiveLoadTask = Task { [filePaths] in
-            defer { self.progressiveLoadTask = nil }
+            defer {
+                if self.progressiveLoadID == loadID {
+                    self.progressiveLoadTask = nil
+                    self.progressiveLoadID = nil
+                }
+            }
 
             try? await Task.sleep(nanoseconds: Self.progressiveInitialDelayNanoseconds)
 
@@ -1098,9 +1111,14 @@ final class StatsViewModel: ObservableObject {
                 let end = min(idx + chunkSize, filePaths.count)
                 let chunk = Array(filePaths[idx..<end])
                 self.deferredInitialFilePaths = Array(filePaths[idx..<filePaths.count])
-                let parsedChunk = await Task.detached(priority: .utility) {
+                let parseTask = Task.detached(priority: .utility) {
                     Self.parseSessions(forFiles: chunk, source: sourceAtStart, compactForMemory: true)
-                }.value
+                }
+                let parsedChunk = await withTaskCancellationHandler {
+                    await parseTask.value
+                } onCancel: {
+                    parseTask.cancel()
+                }
                 if Task.isCancelled { return }
                 guard self.selectedSource == sourceAtStart, self.selectedProject == projectAtStart else { return }
                 guard self.isPanelVisible else { return }
@@ -1145,51 +1163,63 @@ final class StatsViewModel: ObservableObject {
         guard historicalLoadTask == nil else { return }
         guard !deferredHistoricalFilePaths.isEmpty else { return }
 
-        let cutoff = timeFilter.startDate
-        let deferredPaths: [String]
-        if let cutoff {
-            deferredPaths = deferredHistoricalFilePaths.filter {
-                (cachedFileModTimes[$0] ?? .distantPast) >= cutoff
-            }
-            guard !deferredPaths.isEmpty else { return }
-            let loadingSet = Set(deferredPaths)
-            deferredHistoricalFilePaths.removeAll { loadingSet.contains($0) }
-        } else {
-            deferredPaths = deferredHistoricalFilePaths
+        let cachedPaths = Set(cachedSessions.map(\.filePath))
+        let deferredPaths = deferredHistoricalFilePaths.filter { !cachedPaths.contains($0) }
+        guard !deferredPaths.isEmpty else {
             deferredHistoricalFilePaths = []
+            return
         }
         let sourceAtStart = selectedSource
         let projectAtStart = selectedProject
+        let loadID = UUID()
+        historicalLoadID = loadID
 
         historicalLoadTask = Task { [deferredPaths] in
-            defer { self.historicalLoadTask = nil }
+            defer {
+                // A canceled task must not clear a newer load's handle.
+                if self.historicalLoadID == loadID {
+                    self.historicalLoadTask = nil
+                    self.historicalLoadID = nil
+                }
+            }
 
-            var parsedAll: [Session] = []
-            parsedAll.reserveCapacity(deferredPaths.count)
-            let chunkSize = 260
+            var existingPaths = Set(self.cachedSessions.map(\.filePath))
+            let chunkSize = Self.progressiveChunkSize
             var idx = 0
 
             while idx < deferredPaths.count {
-                if Task.isCancelled { return }
+                guard !Task.isCancelled, self.isPanelVisible else { return }
                 let end = min(idx + chunkSize, deferredPaths.count)
                 let chunk = Array(deferredPaths[idx..<end])
-                let parsedChunk = await Task.detached(priority: .utility) {
+                let parseTask = Task.detached(priority: .utility) {
                     Self.parseSessions(forFiles: chunk, source: sourceAtStart, compactForMemory: true)
-                }.value
-                if Task.isCancelled { return }
-                parsedAll.append(contentsOf: parsedChunk)
+                }
+                let parsedChunk = await withTaskCancellationHandler {
+                    await parseTask.value
+                } onCancel: {
+                    parseTask.cancel()
+                }
+                guard !Task.isCancelled, self.isPanelVisible else { return }
+                guard self.selectedSource == sourceAtStart, self.selectedProject == projectAtStart else { return }
+
+                // Commit completed chunks so closing/reopening the panel resumes
+                // pending files instead of discarding work or losing history.
+                for session in parsedChunk where existingPaths.insert(session.filePath).inserted {
+                    self.cachedSessions.append(session)
+                }
                 idx = end
+                do {
+                    try await Task.sleep(nanoseconds: Self.progressiveChunkPauseNanoseconds)
+                } catch {
+                    return
+                }
             }
 
-            guard !Task.isCancelled else { return }
-            guard self.selectedSource == sourceAtStart, self.selectedProject == projectAtStart else { return }
-            guard !parsedAll.isEmpty else { return }
-
-            let existingPaths = Set(self.cachedSessions.map(\.filePath))
-            let appended = parsedAll.filter { !existingPaths.contains($0.filePath) }
-            guard !appended.isEmpty else { return }
-
-            self.cachedSessions.append(contentsOf: appended)
+            guard !Task.isCancelled, self.isPanelVisible else { return }
+            // Empty or malformed files have also been attempted; do not keep
+            // retrying them on every refresh when they yield no Session.
+            let completedPaths = existingPaths.union(deferredPaths)
+            self.deferredHistoricalFilePaths.removeAll { completedPaths.contains($0) }
             Self.releaseMemoryPressureIfPossible()
             await self.applyFilterAndUpdate()
         }
